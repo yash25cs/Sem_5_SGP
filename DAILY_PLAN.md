@@ -60,8 +60,9 @@ feat(ai): add cited syllabus chat function
 
 **Commit:** `feat(materials): process uploads into searchable chunks`
 
-**Status:** written 2026-08-20 — `supabase/functions/embed-material/`. Needs
-`GEMINI_API_KEY` and a `functions deploy` before it runs.
+**Status:** written 2026-08-20 — `supabase/functions/embed-material/`. Deployed
+and verified end to end on 2026-08-22: a real PDF becomes unit-labelled chunks
+with `status = embedded` in 7.4 s.
 
 - Create the authenticated `embed-material` Edge Function.
 - Extract text, chunk it, generate embeddings, and update material status.
@@ -71,8 +72,9 @@ feat(ai): add cited syllabus chat function
 
 **Commit:** `feat(chat): answer syllabus questions with citations`
 
-**Status:** written 2026-08-20 — `supabase/functions/chat/`. Deploys together
-with `embed-material`.
+**Status:** written 2026-08-20 — `supabase/functions/chat/`. Deployed with
+`embed-material` and verified on 2026-08-22: answers cite the student's own
+chunks in 5.4–7.5 s.
 
 - Create the `chat` Edge Function.
 - Retrieve only the caller’s chunks through RLS-scoped search.
@@ -80,11 +82,24 @@ with `embed-material`.
 
 ## Day 6 — AI-generated practice
 
-**Commit:** `feat(practice): generate quizzes and flashcards`
+**Commit:** `feat(practice): generate roadmaps, quizzes and flashcards`
 
-- Add `generate-flashcards` and `generate-quiz` Edge Functions.
-- Validate generated data before saving it.
-- Connect the existing Cards and Quiz screens to generated content.
+**Status:** written 2026-09-01. Three functions, not two — the day's title named
+quizzes and flashcards, but the roadmap was blocked by the same `0008` revoke and
+had a dead button waiting for it, so `generate-roadmap` shipped in the same pass.
+`flutter analyze` clean, `flutter test` 7/7, `flutter build apk --debug` exit 0.
+Deployed and verified end to end on the hosted project: 7 milestones / 28 tasks
+from a goal, a 5-question quiz scored 5/5 for +50 XP through
+`finish_quiz_attempt`, 10 cards due immediately and rescheduled by
+`apply_sr_grade`, and `404` for a second account on all three.
+
+- Add `generate-roadmap`, `generate-quiz` and `generate-flashcards` Edge
+  Functions. Only the first two need the service-role key, and only for the
+  inserts the schema forbids a student to make (`DECISIONS.md` D-019).
+- Validate generated data before saving it: drop the malformed item, keep the
+  rest, and refuse to save a stub (D-021).
+- Connect the Roadmap, Cards and Quiz screens to generated content through one
+  shared `GenerateSheet` that offers embedded materials only.
 
 ## Day 7 — Mobile release readiness
 

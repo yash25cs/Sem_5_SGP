@@ -9,7 +9,7 @@ supabase/
   config.toml          # local/dev project config
   migrations/          # ordered SQL — apply 0001 → 0009
   all_migrations.sql   # GENERATED: all nine concatenated, for the SQL editor
-  functions/           # Edge Functions: embed-material, chat, _shared/
+  functions/           # Edge Functions: embed-material, chat, generate-*, _shared/
 ```
 
 ## What's in the migrations
@@ -102,20 +102,46 @@ the policies themselves, query PostgREST with a real user JWT.
 
 ## Edge Functions
 
-Two are written, both under `functions/`:
+Five are written, all under `functions/`:
 
 | Function | Body | Does |
 |---|---|---|
 | `embed-material` | `{materialId, force?}` | Downloads the file from the private `materials` bucket, splits it into sections (PDF via Gemini's document vision, `.txt`/`.md` locally), embeds each at 768 dimensions, replaces that material's `material_chunks` rows, then flips `status` to `embedded`. |
 | `chat` | `{threadId, question, subjectId?}` | Embeds the question, retrieves through `match_material_chunks`, answers from those excerpts only, and writes **both** turns to `chat_messages` plus `chat_citations`. |
+| `generate-roadmap` | `{goalId}` | Reads the goal, its subjects and the distinct `unit_label`s across the student's materials, writes a weekly plan (2–12 weeks from `exam_date`/`pace`), **replaces** the goal's `milestones` + `milestone_tasks`, and sets `goals.roadmap_days` / `current_day`. |
+| `generate-quiz` | `{materialId, length?}` | Reads one material's chunks in order, writes a 5/10/15-question MCQ set into `quizzes` + `quiz_questions`. Appends — `quiz_attempts` history hangs off the quiz row. |
+| `generate-flashcards` | `{materialId, count?}` | Same source, writes a new `flashcard_decks` row plus 10/20/30 `flashcards`, each pointing back at the chunk it came from. Every card lands due immediately. |
 
-Neither uses the `service_role` key. Each builds a `supabase-js` client that
-forwards the caller's `Authorization` header, so RLS decides what they can see
-and `match_material_chunks` — security-invoker, `where c.user_id = auth.uid()` —
-resolves to the right student without a `user_id` in the body. The later
-`generate-quiz` / `generate-roadmap` will need the service key, because
-`0008_rewards.sql` revokes `insert` on `quizzes`, `quiz_questions`, `milestones`
-and `milestone_tasks` from `authenticated`.
+All five verify the JWT (`verify_jwt = true` in `config.toml`) and take the
+caller's identity from it. A `user_id` in the request body is never read.
+
+### The `service_role` boundary
+
+`embed-material`, `chat` and `generate-flashcards` use **no** elevated key. Each
+builds a `supabase-js` client that forwards the caller's `Authorization` header,
+so RLS decides what they can see and `match_material_chunks` — security-invoker,
+`where c.user_id = auth.uid()` — resolves to the right student. Every table they
+write is owner-insertable, `flashcards` and `flashcard_decks` included
+(`0008_rewards.sql` grants `insert (user_id, deck_id, unit_label, front, back,
+source_chunk_id) on flashcards`), so an elevated key would buy nothing.
+
+`generate-roadmap` and `generate-quiz` are the two exceptions, because
+`0008_rewards.sql` revokes `insert` on `milestones`, `milestone_tasks`, `quizzes`
+and `quiz_questions` from `anon, authenticated` — all four are XP-bearing if
+forged. They call `adminClient()` in `_shared/supa.ts`, which reads the
+auto-injected `SUPABASE_SERVICE_ROLE_KEY`; nothing to set, no migration. The rule
+that keeps ownership intact once that key is in the room:
+
+- every read and every ownership check still goes through the caller's client, so
+  a goal or material that isn't theirs comes back empty and the function answers
+  `404` before any write;
+- every `user_id` written comes from the verified JWT;
+- if the child insert fails, the parent rows just written are deleted, so a
+  task-less milestone or an empty quiz never survives.
+
+Deleting is not one of the exceptions: `delete on milestones` is still granted,
+and the FK cascade removes `milestone_tasks` past their revoked `delete`. That is
+what makes regenerating a roadmap replace rather than duplicate it.
 
 Chunks are inserted **before** `status` becomes `embedded`, not after:
 `app_private.material_status_guard()` (`0009_atomicity.sql`) raises `23514` on an
@@ -174,7 +200,7 @@ npx --yes supabase@latest login
 ```
 
 ```bash
-npx --yes supabase@latest functions deploy embed-material chat --use-api --project-ref tmakrbqggezkxtygythc
+npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards --use-api --project-ref tmakrbqggezkxtygythc
 ```
 
 The deploy is also the first real syntax check — nothing here can be type-checked
@@ -182,10 +208,9 @@ locally. Logs are in the dashboard under **Edge Functions → chat /
 embed-material → Logs**; every handled failure logs the upstream reason there and
 returns `{"error": "…"}`, which the app shows verbatim in a snackbar.
 
-### Still to write
-
-`generate-flashcards`, `generate-quiz`, `generate-roadmap`. Until they exist the
-Roadmap tab and the quiz list stay empty — nothing else inserts those rows.
+The generators are the ones worth watching in the logs: a model that returns
+malformed items has them dropped per item (D-021), and the count that was dropped
+is logged rather than surfaced, so "I asked for 15 and got 12" is answered there.
 
 ## Regenerating `all_migrations.sql`
 

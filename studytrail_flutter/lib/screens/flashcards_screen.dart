@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/generate_sheet.dart';
 
 /// Cards tab — a flashcard review session with flip + deck picker.
 class FlashcardsScreen extends StatefulWidget {
@@ -58,6 +59,33 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
         const SnackBar(content: Text('Nothing due right now — well done.')),
       );
     }
+  }
+
+  /// Writes a new deck from a file the student picks.
+  ///
+  /// Every generated card is due immediately, so the deck's due count — and the
+  /// header's total — jump as soon as the list refreshes.
+  Future<void> _generate() async {
+    final made = await showGenerateSheet<FlashcardStore>(
+      context,
+      title: 'Generate flashcards',
+      subtitle: 'Written from one file you uploaded',
+      actionLabel: 'Generate cards',
+      unit: 'cards',
+      counts: const [10, 20, 30],
+      onGenerate: (store, materialId, count) =>
+          store.generateDeck(materialId: materialId, count: count),
+    );
+    if (!made || !mounted) return;
+
+    final saved = context.read<FlashcardStore>().generatedCards;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved == 0
+            ? 'Deck created.'
+            : '$saved card${saved == 1 ? '' : 's'} added — all due now.'),
+      ),
+    );
   }
 
   @override
@@ -211,7 +239,13 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
           ],
 
           // decks
-          CardHeader('Your decks'),
+          CardHeader(
+            'Your decks',
+            action: PillButton('New',
+                icon: Symbols.auto_awesome,
+                expand: false,
+                onTap: store.busy ? null : _generate),
+          ),
           if (store.loading && !store.loaded)
             const LoadingBlock(height: 74)
           else if (store.decks.isEmpty)
@@ -219,7 +253,9 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
               icon: Symbols.style,
               title: 'No decks yet',
               message:
-                  'Generate cards from your syllabus, or create a deck to add your own.',
+                  'Generate cards from a file you uploaded, and review them here.',
+              actionLabel: store.busy ? null : 'Generate cards',
+              onAction: store.busy ? null : _generate,
             )
           else
             for (final deck in store.decks)

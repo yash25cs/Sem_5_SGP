@@ -108,6 +108,8 @@ non-trivial choice.
   pattern: `0008_rewards.sql` revokes `insert` on their tables from
   `authenticated`, so they will need the service-role key and must verify the
   JWT themselves before writing.
+- **Extended by D-019** on 2026-09-01, which is that trade-off arriving.
+  `generate-flashcards` turned out to belong on this side of the line.
 
 ### D-012 — Read PDFs with Gemini's document vision, not a Deno PDF parser
 
@@ -201,6 +203,103 @@ non-trivial choice.
 - **Trade-off:** A student with more than a semester's material has to remove
   something. Enforced client-side, so it is a guardrail rather than a security
   boundary; the real limits are the bucket quota and RLS.
+
+### D-018 — Every request carries a deadline, and a failed startup gets a page
+
+- **Decision:** Two layers. `TimeoutHttpClient` is passed to
+  `Supabase.initialize`, so auth, REST, storage, and the functions all inherit a
+  cap — 20 s for a plain round trip, 180 s where the work is legitimately long
+  (`/functions/v1/`, `/storage/v1/`). On top of that, `RootFlow`'s entry check
+  gets its own 10 s deadline and, if it fails, renders `ErrorScreen` with a
+  **Try again** button instead of falling through to onboarding.
+- **Why:** Opening the app with no internet left it on the splash spinner
+  forever. Nothing in the Supabase Dart packages sets a timeout and neither does
+  Dart's own client, so two things hang indefinitely: a network that accepts the
+  connection and never answers (a captive portal, or full bars with no data),
+  and an expired persisted session — `SupabaseClient` refreshes the token before
+  every query and gotrue retries that refresh on a backoff ladder. Separately,
+  `_resolveEntryStage`'s `catch` swallowed the failure and landed on the upload
+  screen, so a returning student on a train was told to upload their syllabus
+  again and every write they tried then failed.
+- **Trade-off:** A genuinely slow-but-working connection can now be cut off at
+  the deadline, which is why uploads and AI calls get 180 s rather than 20 s —
+  `embed-material` alone budgets 90 s to read a PDF. The startup probe's 10 s is
+  the tightest of the three because it sits between a student and their first
+  frame; it covers a token refresh plus one `select … limit 1` and nothing more.
+  Deliberately no `connectivity_plus`: it reports "Wi-Fi is connected", not
+  "the internet works", so it would add manifest surface for a worse signal
+  than a request that actually failed. The offline screen offers no **Sign out**:
+  it would work (gotrue clears the local session before it tries to revoke it
+  server-side) but it leads nowhere, because signing back in needs the network
+  that just failed. It is offered on the non-network screen, where retrying
+  can't help and a different account might.
+
+### D-019 — `service_role` only where the schema forbids the student to write
+
+- **Decision:** `_shared/supa.ts` gains `adminClient()`, and exactly two
+  functions use it: `generate-roadmap` and `generate-quiz`, and only for the
+  artefact inserts. Every read, every ownership check, and the `user_id` on every
+  inserted row still come from `requireUser()`'s caller-scoped client — a
+  `user_id` in the request body is never read. `generate-flashcards` gets no
+  admin client at all, because `insert (user_id, deck_id, unit_label, front,
+  back, source_chunk_id) on flashcards` is granted to `authenticated`; it lives
+  server-side for the Gemini key, not for the write.
+- **Why:** This is D-011's predicted trade-off arriving. `0008_rewards.sql`
+  revokes `insert` on `milestones`, `milestone_tasks`, `quizzes` and
+  `quiz_questions` from `anon, authenticated` — all four are XP-bearing if
+  forged, and a self-authored quiz with known answers would be 10 XP a question
+  — so there is no client path to a roadmap or a quiz at all. Its own comment
+  prescribes the fix: write with the service-role key *after* verifying the JWT.
+  `SUPABASE_SERVICE_ROLE_KEY` is injected into the Edge Runtime automatically, so
+  this needs no secret to set and no migration.
+- **Trade-off:** Two functions now hold a key that bypasses RLS, so their
+  ownership checks are load-bearing in a way `chat`'s aren't: a missing
+  `.eq('id', …)` on the caller's client would become a cross-account write rather
+  than an empty result. Both keep `verify_jwt = true`, both scope the write to
+  `Caller.userId`, and both delete what they just inserted if the child rows
+  fail, so a partial artefact never survives. Rejected: a `SECURITY DEFINER` RPC
+  in a new migration — it keeps the key out of the function environment entirely
+  but needs another SQL-editor step on the hosted project and duplicates the
+  validation into PL/pgSQL.
+
+### D-020 — Generated practice reads one named material, not a vector search
+
+- **Decision:** The student picks a file; `generate-quiz` and
+  `generate-flashcards` read `material_chunks where material_id = ? order by
+  chunk_index` and pass the text to Gemini. No `embedTexts` call and no
+  `match_material_chunks`. `generate-roadmap` is the exception — being
+  goal-shaped, it reads the goal, its subjects, and the distinct `unit_label`s
+  across the student's materials (headings only, no chunk bodies).
+- **Why:** With the file already chosen there is nothing to search *for*.
+  Retrieval would return the 6 best fragments, and a 15-question quiz drawn from
+  6 fragments is a quiz about whichever passage embedded best. Reading the
+  document in order also sidesteps a live gap: `embed-material` writes
+  `subject_id: null` on every chunk, so any subject-scoped retrieval matches
+  nothing.
+- **Trade-off:** A long book has to be trimmed to fit the prompt, so
+  `_shared/material.ts` caps the source at ~60k characters by **sampling evenly
+  across the chunks** rather than truncating at the front — deliberately, because
+  head truncation would make every quiz a quiz about chapter 1. Generation is
+  therefore per-file: "quiz me on everything" isn't offered, and generated
+  quizzes and decks carry no `subject_id` until materials are associated with
+  subjects.
+
+### D-021 — Validate and drop per item, then insist on a minimum
+
+- **Decision:** Every generated item is checked in Deno before the insert and bad
+  ones are dropped: a question needs exactly four distinct non-empty options and
+  an integer `correct_index` in 0–3; a card needs a front and a back, deduped by
+  front; a milestone needs a title and at least one task. If fewer than 3
+  questions (4 cards, 2 milestones) survive, the function fails with a readable
+  message instead of saving a stub.
+- **Why:** `quiz_questions` carries `check (array_length(options,1) = 4)` and
+  `check (correct_index between 0 and 3)`, and Postgres applies them to the whole
+  batch — one malformed question would reject all fifteen, turning a mostly-good
+  generation into a total failure. Dropping the bad item saves the rest.
+- **Trade-off:** A student can ask for 15 questions and get 12, so the client
+  reports what actually landed (`FlashcardStore.generatedCards`, the quiz's own
+  `length`) rather than what was requested. Roadmap weeks are renumbered after
+  the drop, so a plan never reads Week 1, 2, 4.
 
 ## Update rule
 

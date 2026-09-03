@@ -14,9 +14,17 @@ class RoadmapStore extends AsyncStore {
 
   Goal? _goal;
   List<Milestone> _milestones = const [];
+  bool _generating = false;
 
   Goal? get goal => _goal;
   List<Milestone> get milestones => _milestones;
+
+  /// True only while [generate] is in flight.
+  ///
+  /// Separate from [busy] because ticking a task is a mutation too: keying the
+  /// screen's "writing your plan" notice off `busy` would flash it on every
+  /// checkbox.
+  bool get generating => _generating;
 
   bool get isEmpty => loaded && _milestones.isEmpty;
 
@@ -34,6 +42,38 @@ class RoadmapStore extends AsyncStore {
         _milestones =
             goalId == null ? const [] : await _roadmap.getMilestones(goalId);
       });
+
+  /// Asks the server to write this goal's weekly plan, then reads it back.
+  ///
+  /// Replaces rather than appends — `generate-roadmap` clears the goal's
+  /// existing milestones first, so generating twice doesn't produce two plans.
+  /// That is also why the screen confirms before calling this: a student who has
+  /// ticked half of week two loses those ticks.
+  ///
+  /// Reloads inside the mutation rather than calling [load], so the screen shows
+  /// its existing roadmap dimmed under a busy button instead of dropping back to
+  /// a skeleton.
+  Future<bool> generate() async {
+    final goalId = _goal?.id;
+    if (goalId == null) {
+      setError('Set a study goal first, then generate a roadmap.');
+      return false;
+    }
+    _generating = true;
+    notifyListeners();
+    try {
+      return await runMutation(() async {
+        await _roadmap.generateRoadmap(goalId);
+        _milestones = await _roadmap.getMilestones(goalId);
+        // `roadmap_days` and `current_day` are written by the same function, and
+        // the header reads them.
+        _goal = await _goals.getActiveGoal();
+      });
+    } finally {
+      _generating = false;
+      notifyListeners();
+    }
+  }
 
   /// Optimistic checkbox flip. On success the milestone's derived state
   /// (upcoming / active / done) comes back from the repository.

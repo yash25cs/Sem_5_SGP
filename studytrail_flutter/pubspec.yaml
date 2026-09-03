@@ -37,6 +37,9 @@ dependencies:
   supabase_flutter: ^2.17.1
   file_picker: ^11.0.3
   shared_preferences: ^2.5.5
+  # Direct because `TimeoutHttpClient` subclasses `BaseClient`. Already present
+  # transitively via supabase_flutter; named here so the import is declared.
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

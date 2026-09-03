@@ -7,6 +7,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/generate_sheet.dart';
 import '../widgets/nav.dart';
 
 /// Quiz flow — pick a quiz, answer one MCQ at a time with an explanation
@@ -154,6 +155,36 @@ class _QuizPicker extends StatelessWidget {
 
   final ValueChanged<Quiz> onStart;
 
+  /// Writes a new quiz from a file the student picks.
+  ///
+  /// Appends rather than replaces, so the list grows: each quiz keeps its own
+  /// `quiz_attempts` history.
+  Future<void> _generate(BuildContext context) async {
+    final made = await showGenerateSheet<QuizStore>(
+      context,
+      title: 'Generate a quiz',
+      subtitle: 'Written from one file you uploaded',
+      actionLabel: 'Generate quiz',
+      unit: 'questions',
+      counts: const [5, 10, 15],
+      onGenerate: (store, materialId, count) =>
+          store.generate(materialId: materialId, length: count),
+    );
+    if (!made || !context.mounted) return;
+
+    final store = context.read<QuizStore>();
+    final quiz =
+        store.available.where((q) => q.id == store.generatedQuizId).firstOrNull;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(quiz == null
+            ? 'Quiz ready.'
+            : '${quiz.title ?? 'Your quiz'} is ready — '
+                '${quiz.length ?? quiz.questions.length} questions.'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.p;
@@ -167,6 +198,13 @@ class _QuizPicker extends StatelessWidget {
             message: store.error!,
             onRetry: () => context.read<QuizStore>().load(),
           ),
+        CardHeader(
+          'Your quizzes',
+          action: PillButton('New',
+              icon: Symbols.auto_awesome,
+              expand: false,
+              onTap: store.busy ? null : () => _generate(context)),
+        ),
         if (store.loading && !store.loaded) ...[
           const LoadingBlock(height: 84),
           const LoadingBlock(height: 84),
@@ -175,7 +213,9 @@ class _QuizPicker extends StatelessWidget {
             icon: Symbols.quiz,
             title: 'No quizzes yet',
             message:
-                'Generate a quiz from a subject in your syllabus and it will show up here.',
+                'Generate a quiz from a file you uploaded and it will show up here.',
+            actionLabel: store.busy ? null : 'Generate a quiz',
+            onAction: store.busy ? null : () => _generate(context),
           )
         else
           for (final quiz in store.available)

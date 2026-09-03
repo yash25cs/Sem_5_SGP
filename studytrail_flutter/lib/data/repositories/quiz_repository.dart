@@ -66,4 +66,26 @@ class QuizRepository {
 
   Future<void> deleteQuiz(String quizId) =>
       db.from('quizzes').delete().eq('id', quizId);
+
+  /// Asks the `generate-quiz` Edge Function to write a quiz from one material.
+  /// Returns the new quiz's id.
+  ///
+  /// No client-side fallback exists by design: `0008_rewards.sql` revokes
+  /// `insert` on `quizzes` and `quiz_questions` from `authenticated`, because a
+  /// self-authored quiz with known answers would be 10 XP a question.
+  ///
+  /// Appends — each call is a new quiz, since `quiz_attempts` history hangs off
+  /// the row.
+  Future<String?> generateQuiz({
+    required String materialId,
+    int length = 10,
+  }) async {
+    final res = await db.functions.invoke(
+      'generate-quiz',
+      body: {'materialId': materialId, 'length': length},
+    );
+    final data = res.data;
+    if (data is Map && data['quizId'] is String) return data['quizId'] as String;
+    return null;
+  }
 }

@@ -15,11 +15,15 @@ class QuizStore extends AsyncStore {
   QuizAttempt? _attempt;
   int _index = 0;
   int? _picked;
+  String? _generatedQuizId;
   final Map<String, int> _picks = {};
 
   List<Quiz> get available => _available;
   Quiz? get quiz => _quiz;
   QuizAttempt? get attempt => _attempt;
+
+  /// The quiz the last [generate] produced, so the picker can point at it.
+  String? get generatedQuizId => _generatedQuizId;
 
   List<QuizQuestion> get questions => _quiz?.questions ?? const [];
   QuizQuestion? get current =>
@@ -47,6 +51,21 @@ class QuizStore extends AsyncStore {
 
   Future<void> load({String? subjectId}) => runLoad(() async {
         _available = await _quizzes.getQuizzes(subjectId: subjectId);
+      });
+
+  /// Asks the server to write a quiz from one of the student's materials, then
+  /// refreshes the picker so the new quiz is at the top.
+  ///
+  /// Appends: `quiz_attempts` history hangs off a quiz row, so each generation
+  /// is a new quiz rather than a replacement. The refresh is unfiltered on
+  /// purpose — a generated quiz has no `subject_id` yet (nothing associates a
+  /// material with a subject), so a subject filter would hide the thing that was
+  /// just made.
+  Future<bool> generate({required String materialId, int length = 10}) =>
+      runMutation(() async {
+        _generatedQuizId =
+            await _quizzes.generateQuiz(materialId: materialId, length: length);
+        _available = await _quizzes.getQuizzes();
       });
 
   /// Loads a quiz and opens an attempt row.

@@ -61,12 +61,23 @@ enabled = true
 # Deno functions call Gemini; keep the key as a secret, never in code.
 policy = "oneshot"
 
-# Both functions read `auth.uid()` through the caller's own JWT and rely on RLS
-# for ownership, so an unverified request would have no user to act as.
+# Every function reads `auth.uid()` through the caller's own JWT, so an
+# unverified request would have no user to act as. The two generators that write
+# with the service-role key need it even more than the rest: the JWT is the only
+# thing that decides whose roadmap or quiz gets written.
 [functions.embed-material]
 verify_jwt = true
 
 [functions.chat]
+verify_jwt = true
+
+[functions.generate-roadmap]
+verify_jwt = true
+
+[functions.generate-quiz]
+verify_jwt = true
+
+[functions.generate-flashcards]
 verify_jwt = true
 
 [analytics]

@@ -65,6 +65,32 @@ export async function requireUser(req: Request): Promise<Caller> {
   return { supa, userId: data.user.id };
 }
 
+/// A client that bypasses RLS, for the two generators the schema forces.
+///
+/// `0008_rewards.sql` revokes `insert` on `milestones`, `milestone_tasks`,
+/// `quizzes` and `quiz_questions` from `authenticated`, because all four are
+/// XP-bearing if forged. Its own comment names the consequence: the generators
+/// "must write with the `service_role` key after verifying the JWT, not by
+/// forwarding the user's token". `generate-flashcards` needs none of this —
+/// `insert on flashcards` is granted — so it keeps [requireUser]'s client.
+///
+/// The rule that keeps `OWNERSHIP.md` intact once this key is in the room: every
+/// read and every ownership check still goes through [requireUser]'s client, and
+/// every `user_id` written comes from [Caller.userId]. A `user_id` in the
+/// request body is never read.
+export function adminClient(): SupabaseClient {
+  const url = Deno.env.get('SUPABASE_URL');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !serviceKey) {
+    // Both are injected by the Edge Runtime, same as the anon key above.
+    throw new HttpError(500, 'This function is misconfigured on the server.');
+  }
+
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 /// Reads and shallow-validates the JSON body.
 export async function readJson(req: Request): Promise<Record<string, unknown>> {
   try {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,9 +7,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
 import 'data/local_prefs.dart';
 import 'data/repositories/goal_repository.dart';
+import 'data/supabase_client.dart';
+import 'data/timeout_http_client.dart';
 import 'state/stores.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import 'widgets/data_states.dart';
 import 'widgets/timer_banner.dart';
 import 'shell.dart';
 import 'screens/welcome_screen.dart';
@@ -23,6 +28,9 @@ Future<void> main() async {
     await Supabase.initialize(
       url: SupabaseConfig.url,
       publishableKey: SupabaseConfig.apiKey,
+      // Every query, upload, and function call goes through this, so none of
+      // them can hang forever on a network that never answers.
+      httpClient: TimeoutHttpClient(),
     );
   }
 
@@ -96,6 +104,20 @@ class _RootFlowState extends State<RootFlow> {
   bool _resolving = true;
   AuthStatus? _lastStatus;
 
+  /// Set when the entry check couldn't complete, which puts [ErrorScreen] on
+  /// screen instead of a stage. Kept separate from [_stage] so retrying doesn't
+  /// have to guess which stage it was heading for.
+  String? _failure;
+  bool _failureIsOffline = false;
+
+  /// The entry check is one `select … limit 1`. It gets its own deadline
+  /// because [TimeoutHttpClient]'s 20 s is sized for requests worth waiting on,
+  /// and this one is between a student and their first frame.
+  ///
+  /// Long enough to cover a slow-but-alive connection: the token refresh that
+  /// may run first is a second round trip.
+  static const _entryProbeTimeout = Duration(seconds: 10);
+
   @override
   void initState() {
     super.initState();
@@ -115,6 +137,7 @@ class _RootFlowState extends State<RootFlow> {
     if (!mounted) return;
     setState(() {
       _resolving = false;
+      _failure = null;
       _stage = seenWelcome ? _Stage.login : _Stage.welcome;
     });
   }
@@ -130,22 +153,45 @@ class _RootFlowState extends State<RootFlow> {
 
   void _go(_Stage s) {
     if (!mounted) return;
-    setState(() => _stage = s);
+    setState(() {
+      _stage = s;
+      // Any deliberate move clears the failure screen — otherwise signing out
+      // from it would land on sign-in with the error still covering it.
+      _failure = null;
+    });
   }
 
   /// After sign-in, skip onboarding when the account already has a goal.
+  ///
+  /// A failure here used to fall through to onboarding, on the reasoning that it
+  /// was the safe landing. It isn't: a returning student opening the app on a
+  /// train would be told to upload their syllabus again, and any write they
+  /// attempted would fail too. Offline is now its own screen with a retry.
   Future<void> _resolveEntryStage() async {
-    setState(() => _resolving = true);
+    setState(() {
+      _resolving = true;
+      _failure = null;
+    });
+
     var next = _Stage.upload;
+    String? failure;
+    var offline = false;
     try {
-      if (await const GoalRepository().hasAnyGoal()) next = _Stage.app;
-    } catch (_) {
-      // Offline or schema not applied yet — onboarding is the safe landing.
+      final hasGoal = await const GoalRepository()
+          .hasAnyGoal()
+          .timeout(_entryProbeTimeout);
+      if (hasGoal) next = _Stage.app;
+    } catch (e) {
+      failure = friendlyError(e);
+      offline = isNetworkError(e);
     }
+
     if (!mounted) return;
     setState(() {
       _resolving = false;
-      _stage = next;
+      _failure = failure;
+      _failureIsOffline = offline;
+      if (failure == null) _stage = next;
     });
   }
 
@@ -170,6 +216,22 @@ class _RootFlowState extends State<RootFlow> {
     }
 
     if (_resolving) return const _SplashScreen();
+
+    // Before the stage switch: with no goal read there is nothing to show, and
+    // an empty shell whose every request fails is worse than saying so once.
+    final failure = _failure;
+    if (failure != null) {
+      return ErrorScreen(
+        message: failure,
+        offline: _failureIsOffline,
+        onRetry: _resolveEntryStage,
+        // Only when the server answered with something wrong — retrying that
+        // can't help, and a different account might. Offline it would work but
+        // lead nowhere: signing back in needs the network that just failed.
+        secondaryLabel: _failureIsOffline ? null : 'Sign out',
+        onSecondary: _failureIsOffline ? null : () => auth.signOut(),
+      );
+    }
 
     // Guard: never show post-auth stages without a session. Sign-in, not the
     // tour, is the landing here — reaching these stages means the app has

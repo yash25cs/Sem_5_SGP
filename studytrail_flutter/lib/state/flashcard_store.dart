@@ -15,8 +15,14 @@ class FlashcardStore extends AsyncStore {
   int _index = 0;
   bool _revealed = false;
   int _reviewedThisSession = 0;
+  int _generatedCards = 0;
 
   List<FlashcardDeck> get decks => _decks;
+
+  /// How many cards the last [generateDeck] saved. Fewer than asked for is a
+  /// normal outcome — cards the model repeated or left half-written are dropped
+  /// server-side — so the screen reports what actually landed.
+  int get generatedCards => _generatedCards;
 
   /// Cards remaining in the current review session.
   List<Flashcard> get queue => _queue;
@@ -107,5 +113,22 @@ class FlashcardStore extends AsyncStore {
   Future<bool> deleteDeck(FlashcardDeck deck) => runMutation(() async {
         await _cards.deleteDeck(deck.id);
         _decks = _decks.where((d) => d.id != deck.id).toList();
+      });
+
+  /// Asks the server to write a deck from one of the student's materials, then
+  /// refreshes the deck list.
+  ///
+  /// Appends: every generation is a new deck named after the material, so
+  /// generating twice from the same file gives two decks rather than silently
+  /// merging them. Every card lands due immediately, which is what puts the new
+  /// deck's count straight into the review session.
+  Future<bool> generateDeck({
+    required String materialId,
+    int count = 20,
+  }) =>
+      runMutation(() async {
+        _generatedCards =
+            await _cards.generateDeck(materialId: materialId, count: count);
+        _decks = await _cards.getDecks();
       });
 }

@@ -120,4 +120,25 @@ class FlashcardRepository {
 
   Future<void> deleteCard(String cardId) =>
       db.from('flashcards').delete().eq('id', cardId);
+
+  /// Asks the `generate-flashcards` Edge Function to write a deck from one
+  /// material. Returns how many cards it saved.
+  ///
+  /// Unlike the roadmap and quiz generators this one has no elevated privileges
+  /// — `insert on flashcards` is granted to the student, so the function acts as
+  /// the caller. It lives server-side for the Gemini key, not for the write.
+  ///
+  /// Appends: every call is a new deck named after the material.
+  Future<int> generateDeck({
+    required String materialId,
+    int count = 20,
+  }) async {
+    final res = await db.functions.invoke(
+      'generate-flashcards',
+      body: {'materialId': materialId, 'count': count},
+    );
+    final data = res.data;
+    if (data is Map && data['cards'] is int) return data['cards'] as int;
+    return 0;
+  }
 }

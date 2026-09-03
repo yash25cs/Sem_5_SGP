@@ -79,6 +79,83 @@ class EmptyState extends StatelessWidget {
   }
 }
 
+/// Whole-screen failure with a retry — the [ErrorNotice] of a screen that has
+/// no content to show around it.
+///
+/// Used when the app can't start: there is no shell, no tab bar, and nothing
+/// cached to fall back on, so a spinner would spin forever and an inline notice
+/// would have nothing to sit inside.
+class ErrorScreen extends StatelessWidget {
+  const ErrorScreen({
+    super.key,
+    required this.message,
+    this.offline = false,
+    this.onRetry,
+    this.secondaryLabel,
+    this.onSecondary,
+  });
+
+  final String message;
+
+  /// Changes the wording and icon only. Being offline is the student's problem
+  /// to fix and says so; anything else is ours and shouldn't blame their Wi-Fi.
+  final bool offline;
+
+  final VoidCallback? onRetry;
+  final String? secondaryLabel;
+  final VoidCallback? onSecondary;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return Scaffold(
+      backgroundColor: p.bg,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconTile(offline ? Symbols.wifi_off : Symbols.error,
+                    bg: offline ? p.amberSoft : p.errorSoft,
+                    fg: offline ? p.amber : p.error,
+                    size: 68,
+                    radius: 22),
+                const SizedBox(height: 20),
+                Text(offline ? "You're offline" : 'Something went wrong',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4)),
+                const SizedBox(height: 10),
+                Text(message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: p.ink2, fontSize: 14, height: 1.55)),
+                const SizedBox(height: 26),
+                if (onRetry != null)
+                  PillButton('Try again',
+                      icon: Symbols.refresh, onTap: onRetry),
+                if (secondaryLabel != null && onSecondary != null) ...[
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: onSecondary,
+                    child: Text(secondaryLabel!,
+                        style: TextStyle(
+                            color: p.ink3, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Failure state with a retry. Shows the friendly message the repository layer
 /// produced, never a raw exception.
 class ErrorNotice extends StatelessWidget {

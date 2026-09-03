@@ -63,6 +63,26 @@ sign-out and sign-in.
    student's turn and the cited AI answer server-side; the app then reloads the
    thread.
 
+### Generating practice
+
+1. Cards and Quiz each have a **New** action that opens the shared
+   `GenerateSheet`. It lists only materials whose `status` is `embedded` — an
+   unread file has no chunks to generate from — and says how many are hidden.
+2. The student picks one file and a size (10/20/30 cards, 5/10/15 questions).
+   `generate-flashcards` / `generate-quiz` read that material's chunks in order,
+   write the deck or quiz server-side, and the store reloads the list.
+3. Generated cards are due immediately, so the Cards header's due count moves as
+   soon as the deck appears. Each generation appends: quizzes keep their own
+   `quiz_attempts` history, so replacing them would erase it.
+4. The Roadmap tab's top-right action calls `generate-roadmap`, which reads the
+   goal, its subjects, and the distinct unit labels across the student's
+   materials, then **replaces** that goal's `milestones` and `milestone_tasks`
+   and updates `goals.roadmap_days` / `current_day`. Because it replaces, the
+   screen asks for confirmation when a roadmap already exists.
+5. Malformed model output is dropped per item rather than failing the batch
+   (`DECISIONS.md` D-021), so the app reports what actually landed — a request
+   for 15 questions can produce 12.
+
 ### Material ingestion
 
 1. The upload screen stores the file in the private `materials` bucket and
@@ -81,11 +101,17 @@ sign-out and sign-in.
 - The `materials` Storage bucket is private and scoped to `/{user-id}/...`.
 - Gemini is called only from Supabase Edge Functions. Its API key is a function
   secret and never enters Flutter, requests, documentation, or version control.
-- `embed-material` and `chat` act as the calling student: they forward the
-  request's JWT to `supabase-js` and rely on RLS, so no service-role key exists
-  in either function.
+- `embed-material`, `chat` and `generate-flashcards` act as the calling student:
+  they forward the request's JWT to `supabase-js` and rely on RLS, so no
+  service-role key is used in any of the three.
+- `generate-roadmap` and `generate-quiz` are the only functions that hold the
+  service-role key, because `0008_rewards.sql` revokes `insert` on `milestones`,
+  `milestone_tasks`, `quizzes` and `quiz_questions` from `authenticated`. Even
+  there, every read and every ownership check still goes through the caller's
+  client, and every written `user_id` comes from the verified JWT — never from
+  the request body (`DECISIONS.md` D-019).
 
-## Current implementation status — 21 August 2026
+## Current implementation status — 1 September 2026
 
 - Flutter UI and live-data wiring are implemented.
 - Supabase schema, RLS, storage policies, seed data, and RPCs are applied,
@@ -106,8 +132,19 @@ sign-out and sign-in.
   report anything, which reads to a student as a long wait and then "try again".
 - A student may keep 20 materials (`DECISIONS.md` D-017). They can see and manage
   them from the chat screen's top-right button as well as from onboarding.
-- Flashcard, quiz, and roadmap generation and real-time study rooms are still
-  pending Edge Functions (Phase C follow-up / Phase D).
+- Every Supabase request runs under an HTTP deadline and a failed cold start
+  shows a retryable page rather than a spinner (`DECISIONS.md` D-018). Opening
+  the app offline now says so on the first frame after the probe times out.
+- Roadmap, quiz, and flashcard generation are implemented as three more Edge
+  Functions (`generate-roadmap`, `generate-quiz`, `generate-flashcards`). All
+  five are deployed and ACTIVE with `verify_jwt`, and the three new ones are
+  verified against the live project: a generated quiz scores through
+  `finish_quiz_attempt` and awards XP, generated cards land due immediately and
+  reschedule through `apply_sr_grade`, regenerating a roadmap replaces it rather
+  than duplicating it, and a second account gets `404` from all three. The dead
+  `tune` button on the Roadmap header is now the generate action.
+- Real-time study rooms remain pending (Phase D) and start with a migration —
+  nothing in `supabase/migrations/` describes a room or presence yet.
 
 ## Update rule
 
@@ -130,3 +167,5 @@ in `DECISIONS.md`.
 | 2026-08-22 | Exercised the Gemini path and fixed what it exposed: one measured request shape in place of the degradation ladder, per-call deadlines, and `gemini-3.5-flash-lite` as the text model. | `supabase/functions/_shared/gemini.ts`, `supabase/functions/{chat,embed-material}/index.ts` | Timed against the live key: the old default `gemini-3.7-flash` never answered inside 22 s and `gemini-3.6-flash` returned empty text on `MAX_TOKENS`. After the swap a real PDF ingested in 7.4 s (was 124.7 s, dying on `546 WORKER_RESOURCE_LIMIT`) producing 2 correctly unit-labelled chunks and `status = embedded`; chat answered "summarize this pdf" from them with citations in 5.4–7.5 s, and quoted an invented term planted in the PDF — proving the answer came from retrieval, not model knowledge. |
 | 2026-08-22 | Fixed upside-down chat transcripts, and the same latent bug in ten other sorts. | `studytrail_flutter/lib/data/repositories/*.dart` | postgrest-dart's `order()` defaults to **descending**, the opposite of PostgREST's own default, so `getMessages` returned newest-first and every answer rendered above its question. All 11 `.order()` calls are now explicit; `flutter analyze` clean. |
 | 2026-08-22 | Added a materials sheet to the chat screen, a 20-file cap, and an animated typing indicator. | `studytrail_flutter/lib/screens/{chat,upload_material}_screen.dart`, `lib/widgets/material_tile.dart`, `lib/state/onboarding_store.dart`, `lib/data/supabase_client.dart` | `flutter analyze` clean. The header button badges the file count and turns amber when nothing is searchable; the sheet lists every material with retry/remove and an add button that disables at the cap. `MaterialTile` was extracted so onboarding and chat show the same row. |
+| 2026-08-23 | Gave every request a deadline and replaced the endless offline splash with a retryable error page. | `studytrail_flutter/lib/data/timeout_http_client.dart` (new), `lib/main.dart`, `lib/widgets/data_states.dart`, `pubspec.yaml`, `test/widget_test.dart` | Launching with no internet used to spin forever, because no Supabase package sets an HTTP timeout and gotrue retries the pre-query token refresh on a backoff ladder. `TimeoutHttpClient` now caps every sub-client (20 s queries, 180 s uploads and AI calls) and `RootFlow`'s 10 s entry probe renders `ErrorScreen` on failure instead of silently landing on onboarding. `flutter analyze` clean, `flutter test` 6/6 — including one that proves a host which accepts the connection and never answers throws `TimeoutException` — and `flutter build apk --debug` exit 0. |
+| 2026-09-01 | Added the three generation Edge Functions and the UI that reaches them, closing the last Phase C gap. | `supabase/functions/{generate-roadmap,generate-quiz,generate-flashcards}/index.ts` (new), `functions/_shared/{supa,material}.ts`, `supabase/config.toml`, `studytrail_flutter/lib/data/repositories/{roadmap,quiz,flashcard}_repository.dart`, `lib/state/{roadmap,quiz,flashcard}_store.dart`, `lib/widgets/generate_sheet.dart` (new), `lib/screens/{roadmap,quiz,flashcards}_screen.dart`, `test/widget_test.dart` | Three of the four AI features were structurally dead, not merely unwired: `0008_rewards.sql` revokes `insert` on `milestones`, `milestone_tasks`, `quizzes` and `quiz_questions`, so no client path could create a roadmap or a quiz at all, and the Roadmap header's `tune` button had no `onTap`. The two blocked functions now write with the auto-injected service-role key after `requireUser`, while every read, ownership check, and `user_id` still comes from the caller's JWT (D-019); `generate-flashcards` needs no elevated key. `flutter analyze` clean, `flutter test` 7/7 — the new one proves `GenerateSheet` offers embedded materials only and won't fire until one is picked — and `flutter build apk --debug` exit 0. All five functions are ACTIVE with `verify_jwt`, and the three new ones were exercised end to end against the live project with a throwaway account: a `.txt` material became 3 chunks, `generate-roadmap` wrote 7 milestones / 28 tasks with contiguous weeks and `roadmap_days = 44`, regenerating left the count at 7 (replaces, not appends), ticking a generated task moved the goal to 3.57%, `generate-quiz` wrote 5 questions that all held `array_length(options,1) = 4` and scored 5/5 for +50 XP through `finish_quiz_attempt`, and `generate-flashcards` wrote 10 cards — all due immediately, all with a `source_chunk_id`, drawn from all three units of the source — which `apply_sr_grade` then rescheduled. From a second account all three functions answered `404` ("That file isn't yours." / "That goal isn't yours."), so the service-role writes stay inside the caller's own data. |
