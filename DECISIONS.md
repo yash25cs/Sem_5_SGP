@@ -301,6 +301,80 @@ non-trivial choice.
   `length`) rather than what was requested. Roadmap weeks are renumbered after
   the drop, so a plan never reads Week 1, 2, 4.
 
+### D-022 — One work item, one XP path: `complete_task`
+
+- **Decision:** A generated roadmap reaches Home through `daily_tasks` rows that
+  carry `milestone_task_id` (`HomeStore.planDayFromRoadmap`, one milestone at a
+  time), and from then on **both** screens tick that work through the
+  `complete_task` RPC. `RoadmapRepository.toggleTask` looks up the linked
+  `daily_tasks` row first and only writes `milestone_tasks.done` directly when
+  there isn't one. Whichever screen the student taps, the other is reloaded by
+  the screen that owns the tap — the same cross-store refresh `_createGoal` does
+  for `ProfileStore`.
+- **Why:** `complete_task` mirrors `milestone_tasks.done` inside its own
+  transaction, so linking the two tables makes one checkbox out of two rows. But
+  it is also idempotent by design (`if v_before.done = p_done then return
+  v_before`), so it pays exactly once — and that cuts both ways. A bare `update
+  milestone_tasks set done = true` from the Roadmap tab would leave Home still
+  asking for finished work, and the reconciling tick from Home afterwards would
+  find `done` already matching and pay nothing. Routing through the RPC is what
+  keeps the student's XP attached to the work rather than to which tab they
+  happened to be on.
+- **Trade-off:** A roadmap tick now costs an extra round trip (the lookup) even
+  when the task was never scheduled, and `milestones.state` plus
+  `goals.overall_percent` are still derived afterwards by the client
+  (`resyncMilestoneForTask`, `recompute_goal_progress`) because the RPC doesn't
+  touch either — three writes where a trigger would do one. Both resyncs run
+  outside the mutation and are swallowed on failure, so the worst case is a
+  progress bar one tick stale until the next load, never a lost tick. Verified
+  live against the hosted project: the seeded insert is accepted with its link,
+  the mirror fires, the second tick pays nothing, and the goal percentage moves.
+- Seeding is capped at `HomeStore.plannedTasksPerDay` (4) so an 11-week plan
+  doesn't land on today as 44 tasks, and the duplicate check is date-agnostic: a
+  topic pulled in yesterday and left unticked is still the student's list, not a
+  fresh one to hand them again.
+
+### D-023 — A release build that works without the signing key, and Flutter's shrinker as-is
+
+- **Decision:** `android/app/build.gradle.kts` reads signing values from
+  `android/key.properties` when that file exists and **falls back to the debug
+  signing config when it doesn't**, so `flutter build apk --release` succeeds on a
+  fresh clone. `key.properties` and `*.jks`/`*.keystore` are gitignored, and the
+  `keytool` command that creates the store lives in `SETUP.md` rather than being
+  run here — a keystore password typed into a transcript is a published password.
+  R8 and resource shrinking are left entirely to the Flutter Gradle plugin. The
+  `applicationId` and `namespace` were shortened from
+  `in.charusat.studytrail.studytrail_flutter` to `in.charusat.studytrail`, and
+  `MainActivity.kt` moved to match.
+- **Why:** Three separate things that all had to be decided before the first real
+  build. The signing fallback is what keeps the repository buildable by someone
+  who doesn't have the key — the alternative, failing configuration when
+  `key.properties` is missing, punishes every contributor for a file only the
+  publisher can have. The shrinker: `FlutterPlugin.kt` sets **both**
+  `isMinifyEnabled = true` and `isShrinkResources = true` for release, so the
+  `isMinifyEnabled = false` this file carried at first turned off half of a pair
+  and AGP refused to configure at all — *"Removing unused resources requires
+  unused code shrinking to be turned on"*. Each plugin's keep rules arrive inside
+  its AAR, so there was never anything to hand-write; the earlier worry about
+  per-plugin rules was simply wrong. And the `applicationId` is frozen at first
+  publish: nothing has been published, so the only cheap moment to drop the
+  duplicated Flutter project name from it was now, while it cost two Gradle lines
+  and one Kotlin file. It already had to match the OAuth scheme in
+  `AndroidManifest.xml` (`in.charusat.studytrail://login-callback`), which the
+  long form did not.
+- **Trade-off:** A release APK built without `key.properties` is signed with the
+  debug key — it installs and runs, which is exactly what makes it useful for
+  device testing, but it cannot be published and cannot be upgraded in place by a
+  later properly-signed build. That is a footgun, so `SETUP.md` says it in the
+  same breath as the command. R8 means a release crash can land in obfuscated
+  plugin code rather than readable stack frames; the mapping file under
+  `build/app/outputs/mapping/release/` is what makes that recoverable, and the
+  manual pass in `SETUP.md` exercises a release build on a device rather than
+  trusting that the debug build's behaviour carries over. The `applicationId`
+  change means the first build after it **installs alongside** any older copy
+  instead of upgrading it — a one-time uninstall, and nothing is lost that isn't
+  in Supabase.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

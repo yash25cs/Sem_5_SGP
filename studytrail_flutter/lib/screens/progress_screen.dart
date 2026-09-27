@@ -7,6 +7,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/streak_heatmap.dart';
 
 /// Progress analytics — weekly study bars, per-subject accuracy, and a
 /// consistency heatmap, all derived from `activity_log`.
@@ -197,20 +198,9 @@ class _ProgressScreenState extends State<ProgressScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _Heatmap(store.heatmap),
+                  StreakHeatmap(store.heatmap),
                   const SizedBox(height: 14),
-                  Row(children: [
-                    Text('Less',
-                        style: TextStyle(color: p.ink3, fontSize: 11)),
-                    const SizedBox(width: 8),
-                    _legend(p.card3),
-                    _legend(p.heat1),
-                    _legend(p.heat3),
-                    _legend(p.heat4),
-                    const SizedBox(width: 8),
-                    Text('More',
-                        style: TextStyle(color: p.ink3, fontSize: 11)),
-                  ]),
+                  const HeatmapLegend(),
                 ],
               ),
             ),
@@ -220,13 +210,6 @@ class _ProgressScreenState extends State<ProgressScreen> {
     );
   }
 
-  Widget _legend(Color c) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        width: 13,
-        height: 13,
-        decoration:
-            BoxDecoration(color: c, borderRadius: BorderRadius.circular(4)),
-      );
 }
 
 class _StatTile extends StatelessWidget {
@@ -365,59 +348,3 @@ class _AccRow extends StatelessWidget {
   }
 }
 
-/// Eight weeks of activity — a column per weekday, newest week at the bottom.
-/// Days with no `activity_log` row fall back to the empty shade.
-class _Heatmap extends StatelessWidget {
-  const _Heatmap(this.days);
-
-  final List<ActivityDay> days;
-
-  static const _weeks = 8;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.p;
-    final today = DateTime.now();
-    final thisMonday = DateTime(today.year, today.month, today.day)
-        .subtract(Duration(days: today.weekday - 1));
-
-    final byDate = {
-      for (final d in days) DateTime(d.date.year, d.date.month, d.date.day): d,
-    };
-
-    Color shade(int level) => switch (level) {
-          0 => p.card3,
-          1 => p.heat1,
-          2 => p.heat3,
-          _ => p.heat4,
-        };
-
-    return Column(
-      children: [
-        for (var weeksAgo = _weeks - 1; weeksAgo >= 0; weeksAgo--)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              children: [
-                for (var weekday = 0; weekday < 7; weekday++)
-                  Expanded(
-                    child: Container(
-                      height: 26,
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      decoration: BoxDecoration(
-                        color: shade(byDate[
-                                    thisMonday.add(Duration(
-                                        days: weekday - weeksAgo * 7))]
-                                ?.intensity ??
-                            0),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}

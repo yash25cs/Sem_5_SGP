@@ -47,10 +47,21 @@ sign-out and sign-in.
 
 ### Daily planning
 
-1. Home loads profile, active goal, streak, today’s tasks, and subjects.
-2. Completing a task writes `daily_tasks.done`.
-3. The app logs activity and refreshes the streak.
-4. Roadmap task changes recompute and persist the goal progress percentage.
+1. Home loads profile, every goal (the newest active one wins), streak, today’s
+   tasks, and the active goal’s subjects.
+2. **Plan day** pulls the next unfinished milestone off the roadmap onto today’s
+   list — up to `HomeStore.plannedTasksPerDay` rows at a time, each carrying its
+   `milestone_task_id`. Anything already scheduled on any date is skipped, so a
+   second tap moves on to the next week instead of duplicating a topic. This is
+   the only thing that turns a generated roadmap into today’s work.
+3. Completing a task calls `complete_task`, which writes `daily_tasks.done`,
+   logs the study activity, awards XP once, rolls the streak, and — when the row
+   came from the roadmap — flips `milestone_tasks.done` in the same transaction.
+4. A tick from either tab refreshes the other: the same work shows on Home and on
+   the Roadmap timeline, and the shell keeps both tabs alive.
+5. Because `complete_task` doesn’t own the derived columns, a linked tick is
+   followed by re-deriving the parent milestone’s `state` and calling
+   `recompute_goal_progress`, which moves the hero card’s percentage.
 
 ### Learning tools
 
@@ -111,7 +122,7 @@ sign-out and sign-in.
   client, and every written `user_id` comes from the verified JWT — never from
   the request body (`DECISIONS.md` D-019).
 
-## Current implementation status — 1 September 2026
+## Current implementation status — 4 September 2026
 
 - Flutter UI and live-data wiring are implemented.
 - Supabase schema, RLS, storage policies, seed data, and RPCs are applied,
@@ -143,6 +154,27 @@ sign-out and sign-in.
   reschedule through `apply_sr_grade`, regenerating a roadmap replaces it rather
   than duplicating it, and a second account gets `404` from all three. The dead
   `tune` button on the Roadmap header is now the generate action.
+- A generated roadmap now reaches Home: **Plan day** seeds `daily_tasks` from the
+  next unfinished milestone, and a tick from either tab moves the other and pays
+  XP exactly once, through `complete_task` (`DECISIONS.md` D-022). Verified live,
+  13/13 checks — the mirror fires, the second tick pays nothing, and the goal
+  percentage moves. Before this, Home's only task-creation path (`addTask`) had no
+  UI caller, so the checklist could not be filled at all.
+- The four core writes are pinned down by tests at last: `test/stores_test.dart`
+  covers signup bootstrap, goal creation, task-tick retry, and flashcard-grade
+  retry against subclassed repositories, so store logic runs for real with nothing
+  on the network. `flutter test` is 19/19 and `flutter analyze` is clean.
+- An Android release build is verified in the artefact, not just by an exit code:
+  package `in.charusat.studytrail`, label `StudyTrail`, `versionCode 1` /
+  `versionName 1.0.0`, `INTERNET` as the only declared permission, the adaptive
+  icon surviving resource shrinking, and `apksigner` reporting `CN=Android Debug`
+  — the `key.properties`-or-debug-key fallback working as designed. R8 and
+  resource shrinking are left to the Flutter Gradle plugin, which sets both
+  together (`DECISIONS.md` D-023). `SETUP.md` §7 has the build and signing steps.
+- The physical-device regression pass is **not** done — it can't be from a machine
+  with no phone attached. `SETUP.md` §8 is the 20-item checklist to run against
+  the release APK, and it covers what a widget test structurally cannot: a real
+  keyboard, a real network dropping mid-write, rotation, and the launcher icon.
 - Real-time study rooms remain pending (Phase D) and start with a migration —
   nothing in `supabase/migrations/` describes a room or presence yet.
 
@@ -169,3 +201,5 @@ in `DECISIONS.md`.
 | 2026-08-22 | Added a materials sheet to the chat screen, a 20-file cap, and an animated typing indicator. | `studytrail_flutter/lib/screens/{chat,upload_material}_screen.dart`, `lib/widgets/material_tile.dart`, `lib/state/onboarding_store.dart`, `lib/data/supabase_client.dart` | `flutter analyze` clean. The header button badges the file count and turns amber when nothing is searchable; the sheet lists every material with retry/remove and an add button that disables at the cap. `MaterialTile` was extracted so onboarding and chat show the same row. |
 | 2026-08-23 | Gave every request a deadline and replaced the endless offline splash with a retryable error page. | `studytrail_flutter/lib/data/timeout_http_client.dart` (new), `lib/main.dart`, `lib/widgets/data_states.dart`, `pubspec.yaml`, `test/widget_test.dart` | Launching with no internet used to spin forever, because no Supabase package sets an HTTP timeout and gotrue retries the pre-query token refresh on a backoff ladder. `TimeoutHttpClient` now caps every sub-client (20 s queries, 180 s uploads and AI calls) and `RootFlow`'s 10 s entry probe renders `ErrorScreen` on failure instead of silently landing on onboarding. `flutter analyze` clean, `flutter test` 6/6 — including one that proves a host which accepts the connection and never answers throws `TimeoutException` — and `flutter build apk --debug` exit 0. |
 | 2026-09-01 | Added the three generation Edge Functions and the UI that reaches them, closing the last Phase C gap. | `supabase/functions/{generate-roadmap,generate-quiz,generate-flashcards}/index.ts` (new), `functions/_shared/{supa,material}.ts`, `supabase/config.toml`, `studytrail_flutter/lib/data/repositories/{roadmap,quiz,flashcard}_repository.dart`, `lib/state/{roadmap,quiz,flashcard}_store.dart`, `lib/widgets/generate_sheet.dart` (new), `lib/screens/{roadmap,quiz,flashcards}_screen.dart`, `test/widget_test.dart` | Three of the four AI features were structurally dead, not merely unwired: `0008_rewards.sql` revokes `insert` on `milestones`, `milestone_tasks`, `quizzes` and `quiz_questions`, so no client path could create a roadmap or a quiz at all, and the Roadmap header's `tune` button had no `onTap`. The two blocked functions now write with the auto-injected service-role key after `requireUser`, while every read, ownership check, and `user_id` still comes from the caller's JWT (D-019); `generate-flashcards` needs no elevated key. `flutter analyze` clean, `flutter test` 7/7 — the new one proves `GenerateSheet` offers embedded materials only and won't fire until one is picked — and `flutter build apk --debug` exit 0. All five functions are ACTIVE with `verify_jwt`, and the three new ones were exercised end to end against the live project with a throwaway account: a `.txt` material became 3 chunks, `generate-roadmap` wrote 7 milestones / 28 tasks with contiguous weeks and `roadmap_days = 44`, regenerating left the count at 7 (replaces, not appends), ticking a generated task moved the goal to 3.57%, `generate-quiz` wrote 5 questions that all held `array_length(options,1) = 4` and scored 5/5 for +50 XP through `finish_quiz_attempt`, and `generate-flashcards` wrote 10 cards — all due immediately, all with a `source_chunk_id`, drawn from all three units of the source — which `apply_sr_grade` then rescheduled. From a second account all three functions answered `404` ("That file isn't yours." / "That goal isn't yours."), so the service-role writes stay inside the caller's own data. |
+| 2026-09-04 | Linked the generated roadmap to Home, so one tick moves both screens and pays once. | `studytrail_flutter/lib/data/repositories/{task,roadmap}_repository.dart`, `lib/state/{home,roadmap}_store.dart`, `lib/screens/{home,roadmap}_screen.dart`, `test/widget_test.dart` | `generate-roadmap` wrote `milestone_tasks`, but Home's `daily_tasks` only ever came from `addTask` — which had no UI caller at all — so a student could generate an 11-week plan and Home still said "nothing scheduled". Home's new **Plan day** action seeds the next unfinished milestone (4 tasks at a time, skipping anything already scheduled on any date), each row carrying its `milestone_task_id`. `RoadmapRepository.toggleTask` now looks the linked row up and ticks through `complete_task` when it exists, so the roadmap can't silently cost the student the XP that a bare `milestone_tasks` write would (D-022); each screen reloads the other's store after a linked tick, and Home re-derives the milestone state and the goal percentage that the RPC doesn't own. No migration needed — `milestone_task_id` is already inside 0008's `grant insert (…) on daily_tasks`. `flutter analyze` clean and `flutter test` 9/9, the two new ones proving the seeding skips a done task, moves to Week 2 on a second tap, and then reports nothing left. Verified live on the hosted project with a throwaway account, 13/13 checks: `generate-roadmap` wrote 11 milestones / 44 tasks, the seeded insert was accepted with its link (201) and not pre-ticked, `milestone_task_id=not.is.null` returned only linked rows, `complete_task` flipped the roadmap checkbox and paid 0 → 15 XP, a second identical tick paid nothing (still 15), the derived state wrote as `active` at 1/4, `recompute_goal_progress` moved the goal 0.0% → 2.27%, and untick + delete restored both rows. |
+| 2026-09-04 | Closed the never-done Day 1–3 test debt and made the Android release build work, then verified the artefact rather than the exit code. | `studytrail_flutter/test/stores_test.dart` (new), `test/widget_test.dart`, `android/app/build.gradle.kts`, `SETUP.md`, `README.md`, `DECISIONS.md`, `DAILY_PLAN.md` | Day 3's four journeys had shipped and been hand-verified but were never pinned by a test. There is no mocking package here — the repositories reach Supabase through a global `db` getter, so the seam is the repository itself and each fake subclasses the real one, overriding only what the test exercises; the optimistic write, the revert, the re-queue and the derived state therefore all run for real. 12 store tests plus 7 widget/transport tests, `flutter test` 19/19, `flutter analyze` clean. The `HomeStore.planDayFromRoadmap` group moved out of `widget_test.dart` so the split is one file per level. The first `flutter build apk --release` **failed**: `isMinifyEnabled = false` in the app module turned off half of a pair the Flutter Gradle plugin sets together (`FlutterPlugin.kt` sets `isShrinkResources = true` alongside it), and AGP refused to configure — the earlier worry about needing per-plugin keep rules was simply wrong, since they arrive inside each plugin's AAR (D-023). With the override removed the build is exit 0 (54.1 MB fat APK, 202 s), and `aapt2` + `apksigner` confirm package `in.charusat.studytrail`, label `StudyTrail`, `versionCode 1` / `versionName 1.0.0`, `INTERNET` as the only permission, all 11 launcher resources intact through resource shrinking, and `CN=Android Debug` from the signing fallback. Measured per-ABI payloads (arm64 18.8 MB / armeabi-v7a 16.3 MB / x86_64 20.3 MB) are what `SETUP.md` §7's `--split-per-abi` guidance rests on. `README.md` now states plainly what the app collects, including the honest gap that there is no in-app account deletion. The physical-device pass in `SETUP.md` §8 stays outstanding. |

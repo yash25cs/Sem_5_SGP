@@ -76,16 +76,26 @@ class QuizRepository {
   ///
   /// Appends — each call is a new quiz, since `quiz_attempts` history hangs off
   /// the row.
-  Future<String?> generateQuiz({
+  Future<String> generateQuiz({
     required String materialId,
     int length = 10,
   }) async {
-    final res = await db.functions.invoke(
-      'generate-quiz',
-      body: {'materialId': materialId, 'length': length},
-    );
-    final data = res.data;
-    if (data is Map && data['quizId'] is String) return data['quizId'] as String;
-    return null;
+    try {
+      final res = await db.functions.invoke(
+        'generate-quiz',
+        body: {'materialId': materialId, 'length': length},
+      );
+      final data = res.data;
+      if (data is Map && data['quizId'] is String) {
+        return data['quizId'] as String;
+      }
+      final msg = data is Map ? data['message'] ?? data['error'] : null;
+      throw msg is String
+          ? msg
+          : 'Quiz generation failed — try a different file.';
+    } catch (e) {
+      if (e is String) rethrow;
+      throw 'Error: $e';
+    }
   }
 }

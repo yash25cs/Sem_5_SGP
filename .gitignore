@@ -24,6 +24,7 @@ stitch_ref/
 **/dart_define.json
 **/.env
 *.keystore
+*.jks
 key.properties
 
 # Supabase CLI scratch state (version check, linked-project ref)

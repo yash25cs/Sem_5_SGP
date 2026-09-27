@@ -248,20 +248,22 @@ class _GenerateSheetState<S extends AsyncStore>
               ],
 
               const SizedBox(height: 16),
-              PillButton(
-                store.busy ? 'Working on it…' : widget.actionLabel,
-                icon: store.busy ? null : Symbols.auto_awesome,
-                variant: selected == null || store.busy
-                    ? PillVariant.outline
-                    : PillVariant.primary,
-                onTap: selected == null || store.busy ? null : _generate,
-              ),
-              const SizedBox(height: 8),
-              // Named because the wait is real: one Gemini call writes the whole
-              // set, and the server gives it up to a minute (D-015).
-              Text('Written from that file only · can take up to a minute',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: p.ink3, fontSize: 11.5)),
+              if (store.busy) ...[ 
+                _GeneratingProgress(unit: widget.unit),
+              ] else ...[
+                PillButton(
+                  widget.actionLabel,
+                  icon: Symbols.auto_awesome,
+                  variant: selected == null
+                      ? PillVariant.outline
+                      : PillVariant.primary,
+                  onTap: selected == null ? null : _generate,
+                ),
+                const SizedBox(height: 8),
+                Text('Written from that file only · can take up to a minute',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: p.ink3, fontSize: 11.5)),
+              ],
             ],
           ),
         ),
@@ -344,14 +346,136 @@ class _NothingReady extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
               hasFiles
-                  ? 'Your files are still being read, or they failed. Open the '
-                      'Chat tab’s materials button to retry them.'
+                  ? "Your files are still being read, or they failed. Open the "
+                      "Chat tab's materials button to retry them."
                   : 'Upload your syllabus or notes from the Chat tab, then '
                       'come back here.',
               textAlign: TextAlign.center,
               style: TextStyle(color: p.ink3, fontSize: 12.5, height: 1.45)),
         ],
       ),
+    );
+  }
+}
+
+/// Animated progress indicator shown while AI generates cards or quiz questions.
+/// Cycles through fun status messages and shows a pulsing sparkle icon.
+class _GeneratingProgress extends StatefulWidget {
+  const _GeneratingProgress({required this.unit});
+  final String unit;
+
+  @override
+  State<_GeneratingProgress> createState() => _GeneratingProgressState();
+}
+
+class _GeneratingProgressState extends State<_GeneratingProgress>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  int _messageIndex = 0;
+
+  static const _messages = [
+    'Reading your material…',
+    'Understanding the content…',
+    'Crafting smart questions…',
+    'Making sure they\'re tricky…',
+    'Almost there…',
+  ];
+
+  static const _cardMessages = [
+    'Reading your material…',
+    'Picking key concepts…',
+    'Writing front & back…',
+    'Polishing the wording…',
+    'Almost ready…',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
+    // Cycle through messages every 4 seconds
+    _startMessageCycle();
+  }
+
+  void _startMessageCycle() {
+    Future.delayed(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      final messages = widget.unit == 'cards' ? _cardMessages : _messages;
+      setState(() {
+        _messageIndex = (_messageIndex + 1) % messages.length;
+      });
+      _startMessageCycle();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final messages = widget.unit == 'cards' ? _cardMessages : _messages;
+    final message = messages[_messageIndex];
+
+    return Column(
+      children: [
+        // Pulsing sparkle icon
+        AnimatedBuilder(
+          animation: _pulse,
+          builder: (context, child) => Transform.scale(
+            scale: 0.85 + (_pulse.value * 0.3),
+            child: Opacity(
+              opacity: 0.6 + (_pulse.value * 0.4),
+              child: child,
+            ),
+          ),
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: p.primarySoft,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Icon(Symbols.auto_awesome,
+                color: p.primary, size: 28, fill: 1),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Animated status message
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 400),
+          child: Text(
+            message,
+            key: ValueKey(message),
+            style: TextStyle(
+                color: p.ink,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'This can take up to a minute',
+          style: TextStyle(color: p.ink3, fontSize: 12),
+        ),
+        const SizedBox(height: 14),
+        // Linear progress indicator (indeterminate)
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            minHeight: 6,
+            backgroundColor: p.card2,
+            valueColor: AlwaysStoppedAnimation(p.primary),
+          ),
+        ),
+      ],
     );
   }
 }

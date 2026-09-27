@@ -10,6 +10,7 @@ import '../theme/badge_style.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/streak_heatmap.dart';
 import 'achievements_screen.dart';
 import 'settings_screen.dart';
 
@@ -29,6 +30,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       context.read<ProfileStore>().load();
       context.read<GamificationStore>().load();
+      context.read<ProgressStore>().load();
     });
   }
 
@@ -36,6 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await Future.wait([
       context.read<ProfileStore>().load(),
       context.read<GamificationStore>().load(),
+      context.read<ProgressStore>().load(),
     ]);
   }
 
@@ -194,6 +197,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [for (final b in badges) _Badge(badge: b)],
               ),
             ),
+          const SizedBox(height: 22),
+
+          // study consistency heatmap
+          CardHeader('Consistency'),
+          Builder(builder: (context) {
+            final progress = context.watch<ProgressStore>();
+            if (progress.loading && !progress.loaded) {
+              return const LoadingBlock(height: 120);
+            }
+            return AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  StreakHeatmap(progress.heatmap, weeks: 12),
+                  const SizedBox(height: 14),
+                  const HeatmapLegend(),
+                ],
+              ),
+            );
+          }),
           const SizedBox(height: 22),
 
           // settings list

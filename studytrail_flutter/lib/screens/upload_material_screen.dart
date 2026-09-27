@@ -11,6 +11,7 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
 import '../widgets/nav.dart';
+import '../widgets/summary_sheet.dart';
 
 /// Onboarding step 2 — pick a source type, then upload real files (or paste a
 /// link). Files land in the private `materials` bucket + `materials` table, and
@@ -263,6 +264,9 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
                           : () => context
                               .read<OnboardingStore>()
                               .removeMaterial(material),
+                      onSummarize: () => SummarySheet.show(context,
+                          materialId: material.id,
+                          title: material.displayName),
                     ),
                 ],
               ],

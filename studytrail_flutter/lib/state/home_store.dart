@@ -2,6 +2,22 @@ import '../data/repositories.dart';
 import '../models/models.dart';
 import 'async_store.dart';
 
+/// What [HomeStore.planDayFromRoadmap] managed to do, so Home can say something
+/// specific instead of a generic failure.
+enum PlanDayResult {
+  /// Tasks were added to today's list.
+  added,
+
+  /// The goal has no roadmap to pull from yet.
+  noRoadmap,
+
+  /// Every roadmap task is either done or already scheduled.
+  nothingLeft,
+
+  /// The write failed; [HomeStore.error] says why.
+  failed,
+}
+
 /// Backs the Home screen: greeting, active goal, today's checklist, focus
 /// subjects, and the streak chip.
 class HomeStore extends AsyncStore {
@@ -10,15 +26,22 @@ class HomeStore extends AsyncStore {
     GoalRepository? goals,
     TaskRepository? tasks,
     GamificationRepository? game,
+    RoadmapRepository? roadmap,
   })  : _profiles = profiles ?? const ProfileRepository(),
         _goals = goals ?? const GoalRepository(),
         _tasks = tasks ?? const TaskRepository(),
-        _game = game ?? const GamificationRepository();
+        _game = game ?? const GamificationRepository(),
+        _roadmap = roadmap ?? const RoadmapRepository();
+
+  /// How many roadmap tasks one day's plan pulls in at a time. Roughly a
+  /// milestone's worth — the generator writes about four tasks a week.
+  static const plannedTasksPerDay = 4;
 
   final ProfileRepository _profiles;
   final GoalRepository _goals;
   final TaskRepository _tasks;
   final GamificationRepository _game;
+  final RoadmapRepository _roadmap;
 
   Profile? _profile;
   Goal? _goal;
@@ -26,6 +49,8 @@ class HomeStore extends AsyncStore {
   Streak _streak = const Streak();
   List<DailyTask> _tasksToday = const [];
   List<Subject> _subjects = const [];
+  int _plannedCount = 0;
+  String? _plannedFrom;
 
   Profile? get profile => _profile;
 
@@ -45,6 +70,11 @@ class HomeStore extends AsyncStore {
       _subjects.where((s) => s.isFocus).toList();
 
   int get doneCount => _tasksToday.where((t) => t.done).length;
+
+  /// How many tasks the last [planDayFromRoadmap] scheduled, and the milestone
+  /// they came from — so the screen can name the week it just planned.
+  int get plannedCount => _plannedCount;
+  String? get plannedFrom => _plannedFrom;
 
   double get todayProgress =>
       _tasksToday.isEmpty ? 0 : doneCount / _tasksToday.length;
@@ -112,16 +142,38 @@ class HomeStore extends AsyncStore {
     if (!ok) {
       _tasksToday = before;
       notifyListeners();
-    } else if (next) {
+      return;
+    }
+
+    // Everything below is deliberately outside the mutation. The tick is already
+    // saved by this point, and this method returns void, so a throw here would
+    // surface as an unhandled async error rather than as a failed write.
+    if (next) {
       // The RPC rolled the streak forward; re-read it for the header chip.
-      // Guarded because this sits outside the mutation — the tick is already
-      // saved, and `toggleTask` returns void, so a throw here would surface as
-      // an unhandled async error rather than as a failed write.
       try {
         _streak = await _game.getStreak();
         notifyListeners();
       } catch (_) {
         // Header chip stays on the previous count until the next load.
+      }
+    }
+
+    // A task seeded from the roadmap. `complete_task` already mirrored
+    // `milestone_tasks.done` inside its transaction, but the parent milestone's
+    // `state` and the goal's stored percentage are both derived elsewhere — the
+    // Roadmap tab would show a ticked task under an "upcoming" week, and the hero
+    // card's percentage wouldn't move, until something recomputed them.
+    final milestoneTaskId = task.milestoneTaskId;
+    final goalId = _goal?.id;
+    if (milestoneTaskId != null && goalId != null) {
+      try {
+        await _roadmap.resyncMilestoneForTask(milestoneTaskId);
+        await _roadmap.recomputeGoalProgress(goalId);
+        _allGoals = await _goals.getGoals();
+        _goal = _allGoals.where((g) => g.isActive).firstOrNull;
+        notifyListeners();
+      } catch (_) {
+        // Hero percentage stays a tick behind until the next load.
       }
     }
   }
@@ -140,6 +192,56 @@ class HomeStore extends AsyncStore {
         );
         _tasksToday = [..._tasksToday, created];
       });
+
+  /// Fills today's checklist from the next unfinished stretch of the roadmap.
+  ///
+  /// Without this the generated roadmap sat one tab away and Home stayed empty:
+  /// `daily_tasks` rows only ever came from [addTask]. Each seeded row carries its
+  /// `milestone_task_id`, which is what makes `complete_task` tick the roadmap
+  /// checkbox in the same transaction — one tick, both screens.
+  ///
+  /// Takes one milestone at a time rather than the whole plan, so a 7-week
+  /// roadmap doesn't land on today as 28 tasks, and skips anything already
+  /// scheduled on any date so a second tap can't duplicate a topic.
+  Future<PlanDayResult> planDayFromRoadmap({
+    int limit = plannedTasksPerDay,
+  }) async {
+    final goalId = _goal?.id;
+    if (goalId == null) return PlanDayResult.noRoadmap;
+
+    _plannedCount = 0;
+    _plannedFrom = null;
+    var hasRoadmap = false;
+
+    final ok = await runMutation(() async {
+      final milestones = await _roadmap.getMilestones(goalId);
+      hasRoadmap = milestones.isNotEmpty;
+      if (!hasRoadmap) return;
+
+      final scheduled = await _tasks.getScheduledMilestoneTaskIds(goalId);
+
+      for (final milestone in milestones) {
+        final next = milestone.tasks
+            .where((t) => !t.done && !scheduled.contains(t.id))
+            .take(limit)
+            .toList();
+        if (next.isEmpty) continue;
+
+        final created = await _tasks.createTasksFromRoadmap(
+          goalId: goalId,
+          tasks: next,
+        );
+        _tasksToday = [..._tasksToday, ...created];
+        _plannedCount = created.length;
+        _plannedFrom = milestone.weekLabel ?? milestone.title;
+        return;
+      }
+    });
+
+    if (!ok) return PlanDayResult.failed;
+    if (_plannedCount > 0) return PlanDayResult.added;
+    return hasRoadmap ? PlanDayResult.nothingLeft : PlanDayResult.noRoadmap;
+  }
 
   Future<bool> deleteTask(DailyTask task) => runMutation(() async {
         await _tasks.deleteTask(task.id);

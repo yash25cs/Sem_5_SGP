@@ -18,11 +18,7 @@ class FlashcardsScreen extends StatefulWidget {
   State<FlashcardsScreen> createState() => _FlashcardsScreenState();
 }
 
-class _FlashcardsScreenState extends State<FlashcardsScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 420));
-
+class _FlashcardsScreenState extends State<FlashcardsScreen> {
   /// Name of the deck being reviewed, for the header subtitle.
   String? _sessionDeckName;
 
@@ -36,22 +32,17 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
 
   void _flip() {
     final store = context.read<FlashcardStore>();
-    if (store.revealed) return;
-    store.reveal();
-    _c.forward();
+    if (!store.revealed) store.reveal();
   }
 
   Future<void> _grade(SrGrade grade) async {
     await context.read<FlashcardStore>().grade(grade);
-    // Reset the flip for the next card.
-    _c.value = 0;
   }
 
   Future<void> _startSession({String? deckId, String? deckName}) async {
     final store = context.read<FlashcardStore>();
     await store.startSession(deckId: deckId);
     if (!mounted) return;
-    _c.value = 0;
     setState(() => _sessionDeckName = deckName);
 
     if (store.queue.isEmpty && store.error == null) {
@@ -88,11 +79,7 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
     );
   }
 
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -167,27 +154,26 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
             ProgressTrack(store.sessionProgress, color: p.primary, height: 8),
             const SizedBox(height: 22),
 
-            // the card
-            GestureDetector(
-              onTap: _flip,
-              child: AnimatedBuilder(
-                animation: _c,
-                builder: (context, _) {
-                  final angle = _c.value * 3.14159;
-                  final isBack = angle > 1.5708;
-                  return Transform(
-                    alignment: Alignment.center,
-                    transform: Matrix4.identity()
-                      ..setEntry(3, 2, 0.0012)
-                      ..rotateY(angle),
-                    child: isBack
-                        ? Transform(
-                            alignment: Alignment.center,
-                            transform: Matrix4.identity()..rotateY(3.14159),
-                            child: _CardFace(card: card, back: true))
-                        : _CardFace(card: card, back: false),
-                  );
-                },
+            // the card — wrapped in AnimatedSwitcher for smooth card-to-card transition
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) {
+                final slide = Tween(
+                  begin: const Offset(0.15, 0),
+                  end: Offset.zero,
+                ).animate(animation);
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(position: slide, child: child),
+                );
+              },
+              child: _FlipCard(
+                key: ValueKey(card.id),
+                card: card,
+                revealed: store.revealed,
+                onFlip: _flip,
               ),
             ),
             const SizedBox(height: 14),
@@ -270,6 +256,69 @@ class _FlashcardsScreenState extends State<FlashcardsScreen>
   }
 }
 
+class _FlipCard extends StatefulWidget {
+  const _FlipCard({
+    super.key,
+    required this.card,
+    required this.revealed,
+    required this.onFlip,
+  });
+
+  final Flashcard card;
+  final bool revealed;
+  final VoidCallback onFlip;
+
+  @override
+  State<_FlipCard> createState() => _FlipCardState();
+}
+
+class _FlipCardState extends State<_FlipCard> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 420));
+
+  @override
+  void didUpdateWidget(_FlipCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.revealed && !oldWidget.revealed) {
+      _c.forward();
+    } else if (!widget.revealed && oldWidget.revealed) {
+      _c.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onFlip,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final angle = _c.value * 3.14159;
+          final isBack = angle > 1.5708;
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.0012)
+              ..rotateY(angle),
+            child: isBack
+                ? Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()..rotateY(3.14159),
+                    child: _CardFace(card: widget.card, back: true))
+                : _CardFace(card: widget.card, back: false),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _CardFace extends StatelessWidget {
   const _CardFace({required this.card, required this.back});
 
@@ -282,9 +331,9 @@ class _CardFace extends StatelessWidget {
     final text = back ? card.back : card.front;
 
     return Container(
-      height: 300,
+      constraints: const BoxConstraints(minHeight: 260, maxHeight: 360),
       width: double.infinity,
-      padding: const EdgeInsets.all(26),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
         gradient: back
@@ -298,6 +347,7 @@ class _CardFace extends StatelessWidget {
         border: back ? null : Border.all(color: p.line),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -314,31 +364,41 @@ class _CardFace extends StatelessWidget {
                       letterSpacing: 1)),
             ],
           ),
-          const Spacer(),
+          const SizedBox(height: 16),
           Flexible(
             child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
               child: Text(text,
                   style: TextStyle(
                       color: back ? Colors.white : p.ink,
-                      fontSize: back ? 18 : 21,
-                      height: 1.4,
+                      fontSize: text.length > 200
+                          ? 14.5
+                          : text.length > 100
+                              ? 16
+                              : 19,
+                      height: 1.45,
                       fontWeight: FontWeight.w700)),
             ),
           ),
-          const Spacer(),
-          if ((card.unitLabel ?? '').isNotEmpty)
+          if ((card.unitLabel ?? '').isNotEmpty) ...[
+            const SizedBox(height: 12),
             Row(children: [
               Icon(Symbols.bookmark,
                   color: back ? Colors.white.withValues(alpha: 0.7) : p.ink3,
                   size: 18),
               const SizedBox(width: 6),
-              Text(card.unitLabel!,
-                  style: TextStyle(
-                      color: back
-                          ? Colors.white.withValues(alpha: 0.8)
-                          : p.ink3,
-                      fontSize: 12.5)),
+              Expanded(
+                child: Text(card.unitLabel!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: back
+                            ? Colors.white.withValues(alpha: 0.8)
+                            : p.ink3,
+                        fontSize: 12.5)),
+              ),
             ]),
+          ],
         ],
       ),
     );

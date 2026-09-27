@@ -98,6 +98,10 @@ serve(async (req) => {
   const source = await loadMaterialSource(supa, materialId);
   const chunks = sampleChunks(source.chunks);
 
+  // Trim the material further for quiz generation — shorter prompts respond
+  // faster and stay well inside the model's comfort zone.
+  const trimmedChunks = sampleChunks(chunks, 40_000);
+
   const raw = await interact({
     systemInstruction: QUIZ_INSTRUCTION,
     // Some invention is the point here — the three wrong options have to be
@@ -106,11 +110,13 @@ serve(async (req) => {
     schema: QUIZ_SCHEMA,
     input: `Material: ${source.title}\n\n`
       + `Write exactly ${wanted} questions from these excerpts.\n\n`
-      + `${numberedSource(chunks)}`,
+      + `${numberedSource(trimmedChunks)}`,
     maxOutputTokens: TOKENS_BASE + wanted * TOKENS_PER_QUESTION,
-    // Longer than chat's 30 s because the whole quiz is written in one call, and
-    // still well inside the client's 180 s function budget (D-018).
-    budgetMs: 60_000,
+    // 120 s total budget, 55 s per attempt — gives the retry loop room for
+    // a second try on a transient 503 or timeout, well inside the client's
+    // 180 s function budget (D-018).
+    budgetMs: 120_000,
+    attemptMs: 55_000,
   });
 
   const parsed = parseQuiz(raw);

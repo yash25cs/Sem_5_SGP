@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/repositories/auth_repository.dart';
+import '../data/repositories/material_repository.dart';
 import '../data/supabase_client.dart';
 
 /// Where the top-level flow should be. `unknown` covers the first frame before
@@ -91,6 +92,14 @@ class AuthStore extends ChangeNotifier {
 
   Future<bool> sendPasswordReset(String email) =>
       _run(() => _repo.sendPasswordReset(email));
+
+  /// Permanently deletes the signed-in user's account and all their data.
+  /// On success the local session is cleared and the flow returns to sign-in.
+  Future<bool> deleteAccount() => _run(() async {
+        await const MaterialRepository().deleteAccount();
+        // The auth user was deleted server-side, so the local session is stale.
+        await _repo.signOut();
+      });
 
   Future<bool> signOut() => _run(_repo.signOut);
 

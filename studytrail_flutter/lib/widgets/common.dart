@@ -201,6 +201,8 @@ class SoftChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width - 64),
         padding: EdgeInsets.symmetric(
             horizontal: small ? 10 : 14, vertical: small ? 4 : 8),
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
@@ -211,11 +213,15 @@ class SoftChip extends StatelessWidget {
               Icon(icon, size: small ? 14 : 17, color: fg),
               const SizedBox(width: 6)
             ],
-            Text(label,
-                style: TextStyle(
-                    color: fg,
-                    fontSize: small ? 11 : 13,
-                    fontWeight: FontWeight.w700)),
+            Flexible(
+              child: Text(label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: fg,
+                      fontSize: small ? 11 : 13,
+                      fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       ),

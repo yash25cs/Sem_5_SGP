@@ -4,6 +4,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'theme/app_theme.dart';
 import 'widgets/common.dart';
 import 'widgets/nav.dart';
+import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/roadmap_screen.dart';
 import 'screens/chat_screen.dart';
@@ -34,6 +35,25 @@ class _HomeShellState extends State<HomeShell> {
     FlashcardsScreen(),
     ProfileScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initNotifications();
+  }
+
+  Future<void> _initNotifications() async {
+    final ns = NotificationService();
+    await ns.requestPermissions();
+    // Schedule a daily reminder at 6:00 PM
+    await ns.scheduleDailyReminder(
+      id: 1,
+      title: 'Time to study!',
+      body: 'Keep your streak alive and hit your goals today.',
+      hour: 18,
+      minute: 0,
+    );
+  }
 
   void _open(Widget screen) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));

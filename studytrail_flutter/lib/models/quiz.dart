@@ -18,10 +18,12 @@ class Quiz {
 
   factory Quiz.fromMap(Map<String, dynamic> m) {
     final raw = m['quiz_questions'];
-    final qs = raw is List
+    final List<QuizQuestion> qs = raw is List
         ? raw.cast<Map<String, dynamic>>().map(QuizQuestion.fromMap).toList()
-        : const <QuizQuestion>[];
-    qs.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+        : [];
+    if (qs.isNotEmpty) {
+      qs.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+    }
 
     return Quiz(
       id: m['id'] as String,

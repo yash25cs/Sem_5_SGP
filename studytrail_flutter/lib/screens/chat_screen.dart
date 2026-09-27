@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
+import '../widgets/summary_sheet.dart';
 
 /// Chat tab — the AI study companion Q&A thread.
 class ChatScreen extends StatefulWidget {
@@ -796,6 +797,15 @@ class _MaterialsSheet extends StatelessWidget {
                                   : () => context
                                       .read<OnboardingStore>()
                                       .removeMaterial(material),
+                              onSummarize: () {
+                                final nav = Navigator.of(context);
+                                final materialId = material.id;
+                                final title = material.displayName;
+                                nav.pop();
+                                SummarySheet.show(nav.context,
+                                    materialId: materialId,
+                                    title: title);
+                              },
                             ),
                         ],
                       ),

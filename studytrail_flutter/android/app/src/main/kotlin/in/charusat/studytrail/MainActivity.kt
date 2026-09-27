@@ -1,4 +1,4 @@
-package `in`.charusat.studytrail.studytrail_flutter
+package `in`.charusat.studytrail
 
 import io.flutter.embedding.android.FlutterActivity
 

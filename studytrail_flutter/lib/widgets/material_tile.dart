@@ -19,11 +19,16 @@ class MaterialTile extends StatelessWidget {
     required this.material,
     this.onRetry,
     this.onRemove,
+    this.onSummarize,
   });
 
   final StudyMaterial material;
   final VoidCallback? onRetry;
   final VoidCallback? onRemove;
+
+  /// Called when the student taps the Summarize button. Only visible for
+  /// embedded materials — there's nothing to summarize until the chunks exist.
+  final VoidCallback? onSummarize;
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +70,10 @@ class MaterialTile extends StatelessWidget {
                 ],
               ),
             ),
+            // Summarize only when embedded — there's nothing to read otherwise.
+            if (material.status == IngestStatus.embedded &&
+                onSummarize != null)
+              RoundIconButton(Symbols.summarize, onTap: onSummarize),
             // Retry only on `failed`: nothing else is stuck. A link never leaves
             // `uploaded`, so it correctly gets no retry either.
             if (material.status == IngestStatus.failed)
@@ -76,3 +85,4 @@ class MaterialTile extends StatelessWidget {
     );
   }
 }
+

@@ -62,7 +62,8 @@ abstract class AsyncStore extends ChangeNotifier {
     try {
       await action();
       return true;
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('runMutation caught error: $e\n$st');
       _error = friendlyError(e);
       return false;
     } finally {

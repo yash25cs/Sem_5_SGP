@@ -1,10 +1,13 @@
-// Smoke tests for the two things that render before any network call happens.
+// Widget and transport tests: what renders before any network call happens, the
+// HTTP timeout wrapper, the two error surfaces, and the generation sheet.
 //
 // `flutter test` runs without `--dart-define`, so `SupabaseConfig.isConfigured`
 // is false and `StudyTrailApp` deliberately shows the config screen rather than
 // the onboarding flow (see main.dart). Pumping the app and expecting the welcome
 // headline is therefore the wrong assertion — the welcome screen is pumped on
 // its own instead, which also keeps this file clear of `Supabase.initialize`.
+//
+// Store-level tests, with the repositories faked out, live in `stores_test.dart`.
 
 import 'dart:async';
 

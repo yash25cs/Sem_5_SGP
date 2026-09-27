@@ -198,4 +198,24 @@ class MaterialRepository {
         .from(SupabaseConfig.materialsBucket)
         .createSignedUrl(storagePath, expiresIn);
   }
+
+  /// Asks the `summarize-material` Edge Function to summarize this material
+  /// into bullet points. Returns the summary text.
+  Future<String> requestSummary(String materialId) async {
+    final res = await db.functions.invoke(
+      'summarize-material',
+      body: {'materialId': materialId},
+    );
+    final data = res.data;
+    if (data is Map && data['summary'] is String) {
+      return data['summary'] as String;
+    }
+    throw 'The summary came back empty. Try again.';
+  }
+
+  /// Asks the `delete-account` Edge Function to permanently delete all of the
+  /// signed-in user's data — materials, goals, progress, and the auth account.
+  Future<void> deleteAccount() async {
+    await db.functions.invoke('delete-account');
+  }
 }

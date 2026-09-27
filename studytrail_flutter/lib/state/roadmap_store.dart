@@ -15,9 +15,15 @@ class RoadmapStore extends AsyncStore {
   Goal? _goal;
   List<Milestone> _milestones = const [];
   bool _generating = false;
+  bool _lastToggleTouchedDailyTask = false;
 
   Goal? get goal => _goal;
   List<Milestone> get milestones => _milestones;
+
+  /// True when the last successful [toggleTask] flipped a task that was also on
+  /// Home's checklist. Home keeps its own copy of that row, and the shell keeps
+  /// both tabs alive, so the screen uses this to refresh it.
+  bool get lastToggleTouchedDailyTask => _lastToggleTouchedDailyTask;
 
   /// True only while [generate] is in flight.
   ///
@@ -77,9 +83,14 @@ class RoadmapStore extends AsyncStore {
 
   /// Optimistic checkbox flip. On success the milestone's derived state
   /// (upcoming / active / done) comes back from the repository.
+  ///
+  /// A task the student also scheduled on Home is ticked through
+  /// `complete_task`, so this is a route to XP as well — see
+  /// [RoadmapRepository.toggleTask].
   Future<void> toggleTask(Milestone milestone, MilestoneTask task) async {
     final next = !task.done;
     final before = _milestones;
+    _lastToggleTouchedDailyTask = false;
 
     _milestones = [
       for (final m in _milestones)
@@ -95,10 +106,11 @@ class RoadmapStore extends AsyncStore {
     notifyListeners();
 
     final ok = await runMutation(() async {
-      final state = await _roadmap.toggleTask(milestone.id, task.id, next);
+      final outcome = await _roadmap.toggleTask(milestone.id, task.id, next);
+      _lastToggleTouchedDailyTask = outcome.touchedDailyTask;
       _milestones = [
         for (final m in _milestones)
-          m.id == milestone.id ? m.copyWith(state: state) : m,
+          m.id == milestone.id ? m.copyWith(state: outcome.state) : m,
       ];
     });
 

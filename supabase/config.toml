@@ -80,5 +80,12 @@ verify_jwt = true
 [functions.generate-flashcards]
 verify_jwt = true
 
+[functions.summarize-material]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
 [analytics]
 enabled = false
+

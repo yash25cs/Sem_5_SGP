@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:confetti/confetti.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/notification_bell.dart';
 import 'set_target_screen.dart';
 
 /// Home / dashboard tab — greeting, streak, today's plan, and subject progress.
@@ -19,13 +22,22 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  late ConfettiController _confetti;
+
   @override
   void initState() {
     super.initState();
+    _confetti = ConfettiController(duration: const Duration(seconds: 2));
     // Deferred: the store notifies listeners, which can't happen during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<HomeStore>().load();
     });
+  }
+
+  @override
+  void dispose() {
+    _confetti.dispose();
+    super.dispose();
   }
 
   /// "Good morning" / "afternoon" / "evening" by local clock.
@@ -141,6 +153,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const _newGoalSentinel = '__new__';
 
+  /// Pulls the next unfinished stretch of the roadmap onto today's list.
+  ///
+  /// The roadmap generator writes `milestone_tasks`, which live on their own tab;
+  /// this is the only thing that turns them into today's work.
+  Future<void> _planDay() async {
+    final store = context.read<HomeStore>();
+    final result = await store.planDayFromRoadmap();
+    if (!mounted) return;
+    switch (result) {
+      case PlanDayResult.added:
+        final count = store.plannedCount;
+        final from = store.plannedFrom;
+        _toast('Added $count task${count == 1 ? '' : 's'}'
+            '${from == null ? '' : ' from $from'}.');
+      case PlanDayResult.noRoadmap:
+        _toast('Generate a roadmap first — it\'s on the Roadmap tab.');
+      case PlanDayResult.nothingLeft:
+        _toast('Every roadmap topic is already done or scheduled.');
+      case PlanDayResult.failed:
+        _toast(store.error ?? 'Could not plan today.');
+    }
+  }
+
+  /// Ticks a task off, and refreshes the Roadmap tab when the task came from it.
+  ///
+  /// `complete_task` flips `milestone_tasks.done` in the same transaction, so the
+  /// database is already in step — but RoadmapStore holds its own copy and the
+  /// shell keeps both tabs alive, so without this the roadmap shows a stale
+  /// checkbox until a pull-to-refresh. Same reason [_createGoal] reloads
+  /// ProfileStore.
+  Future<void> _toggle(DailyTask task) async {
+    final isCompleting = !task.done;
+    if (isCompleting) HapticFeedback.lightImpact();
+
+    await context.read<HomeStore>().toggleTask(task);
+    
+    if (mounted && isCompleting) {
+      final store = context.read<HomeStore>();
+      if (store.doneCount == store.tasks.length && store.tasks.isNotEmpty) {
+        _confetti.play();
+        HapticFeedback.heavyImpact();
+      }
+    }
+
+    if (!mounted || task.milestoneTaskId == null) return;
+    await context.read<RoadmapStore>().load();
+  }
+
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -163,7 +223,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final firstName = (profile?.fullName ?? '').trim().split(' ').first;
 
-    return RefreshIndicator(
+    return Stack(
+      children: [
+        RefreshIndicator(
       color: p.primary,
       onRefresh: () => context.read<HomeStore>().load(),
       child: ListView(
@@ -188,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
-              RoundIconButton(Symbols.notifications, plain: false),
+                const NotificationBell(),
               const SizedBox(width: 10),
               GradAvatar(profile?.initial ?? '?', size: 46),
             ],
@@ -233,10 +295,23 @@ class _HomeScreenState extends State<HomeScreen> {
           // today's plan
           CardHeader(
             'Today’s plan',
-            action: Text(
-              '${store.tasks.length} task${store.tasks.length == 1 ? '' : 's'}',
-              style: TextStyle(
-                  color: p.ink3, fontSize: 13, fontWeight: FontWeight.w700),
+            action: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${store.tasks.length} task'
+                  '${store.tasks.length == 1 ? '' : 's'}',
+                  style: TextStyle(
+                      color: p.ink3, fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                if (goal != null) ...[
+                  const SizedBox(width: 10),
+                  SoftChip('Plan day',
+                      icon: Symbols.playlist_add,
+                      tone: ChipTone.primary,
+                      onTap: store.busy ? null : _planDay),
+                ],
+              ],
             ),
           ),
           if (store.loading && !store.loaded)
@@ -247,13 +322,16 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Nothing scheduled',
               message: goal == null
                   ? 'Create a goal to get a daily plan.'
-                  : 'Your plan for today is clear. Add a task to get going.',
+                  : 'Pull the next few topics off your roadmap and start there.',
+              actionLabel:
+                  goal == null || store.busy ? null : 'Plan today from roadmap',
+              onAction: goal == null || store.busy ? null : _planDay,
             )
           else
             for (final task in store.tasks)
               _TaskTile(
                 task: task,
-                onToggle: () => context.read<HomeStore>().toggleTask(task),
+                onToggle: () => _toggle(task),
               ),
           const SizedBox(height: 20),
 
@@ -271,9 +349,23 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
-        ],
+          ],
+        ),
       ),
-    );
+      Align(
+        alignment: Alignment.topCenter,
+        child: ConfettiWidget(
+          confettiController: _confetti,
+          blastDirectionality: BlastDirectionality.explosive,
+          emissionFrequency: 0.05,
+          numberOfParticles: 25,
+          maxBlastForce: 20,
+          minBlastForce: 8,
+          gravity: 0.2,
+        ),
+      ),
+    ],
+  );
   }
 }
 
@@ -356,7 +448,33 @@ class _HeroCard extends StatelessWidget {
             children: [
               _HeroStat('${store.doneCount}', 'Done today'),
               _HeroStat('${store.tasks.length}', 'Tasks today'),
-              _HeroStat(daysLeft == null ? '—' : '$daysLeft', 'Days left'),
+              if (daysLeft != null && daysLeft <= 7)
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: daysLeft <= 3 ? p.error : const Color(0xFFFFC773),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Text('$daysLeft',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                                height: 1.1)),
+                        const Text('Days left!',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                _HeroStat(daysLeft == null ? '—' : '$daysLeft', 'Days left'),
             ],
           ),
         ],

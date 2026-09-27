@@ -116,5 +116,7 @@ String friendlyError(Object error) {
     return 'The AI service is unavailable right now. Try again shortly.';
   }
 
+  // Unexpected: log the real thing for the dashboard, tell the student
+  // something they can act on.
   return 'Something went wrong. Please try again.';
 }

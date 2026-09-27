@@ -4,8 +4,11 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../theme/app_theme.dart';
 import 'common.dart';
 
-/// Placeholder block shown while a screen's first fetch is in flight. Sized
-/// like the content it replaces so the layout doesn't jump when data lands.
+import 'package:shimmer/shimmer.dart';
+
+/// Placeholder block shown while a screen's first fetch is in flight.
+/// Sized like the content it replaces so the layout doesn't jump.
+/// Uses a modern shimmer effect instead of a static spinner.
 class LoadingBlock extends StatelessWidget {
   const LoadingBlock({super.key, this.height = 120});
 
@@ -15,17 +18,16 @@ class LoadingBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.p;
     return Container(
-      height: height,
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: p.card2,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Center(
-        child: SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(color: p.ink3, strokeWidth: 2.4),
+      child: Shimmer.fromColors(
+        baseColor: p.card2,
+        highlightColor: p.card,
+        child: Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: Colors.white, // Must be opaque for shimmer to mask properly
+            borderRadius: BorderRadius.circular(20),
+          ),
         ),
       ),
     );

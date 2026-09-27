@@ -409,6 +409,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await context.read<AuthStore>().signOut();
   }
 
+  /// Permanently deletes the account and all data. Two-step confirmation:
+  /// first a warning dialog, then a text-entry gate.
+  Future<void> _deleteAccount() async {
+    final p = context.p;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final controller = TextEditingController();
+        return StatefulBuilder(builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: p.card,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: Text('Delete your account?',
+                style: TextStyle(
+                    color: p.error, fontSize: 18, fontWeight: FontWeight.w800)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    'This permanently deletes your profile, study goals, '
+                    'materials, quizzes, flashcards, chat history, and all '
+                    'progress. This cannot be undone.',
+                    style:
+                        TextStyle(color: p.ink2, fontSize: 14, height: 1.45)),
+                const SizedBox(height: 16),
+                Text('Type DELETE to confirm:',
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  onChanged: (_) => setDialogState(() {}),
+                  style: TextStyle(color: p.ink, fontSize: 14.5),
+                  decoration: InputDecoration(
+                    hintText: 'DELETE',
+                    hintStyle: TextStyle(color: p.ink3),
+                    filled: true,
+                    fillColor: p.card2,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: p.line),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: p.line),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: p.error, width: 1.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text('Cancel', style: TextStyle(color: p.ink3)),
+              ),
+              TextButton(
+                onPressed: controller.text.trim() == 'DELETE'
+                    ? () => Navigator.of(dialogContext).pop(true)
+                    : null,
+                child: Text('Delete forever',
+                    style: TextStyle(
+                        color: controller.text.trim() == 'DELETE'
+                            ? p.error
+                            : p.ink3,
+                        fontWeight: FontWeight.w800)),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    _toast('Deleting your account…');
+    final ok = await context.read<AuthStore>().deleteAccount();
+    if (!mounted) return;
+    if (!ok) {
+      _toast(context.read<AuthStore>().error ?? 'Could not delete account');
+    }
+  }
+
   /// Shared bottom-sheet chrome for the editors above.
   Future<T?> _showSheet<T>({
     required String title,
@@ -590,6 +681,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: Symbols.logout,
                     variant: PillVariant.danger,
                     onTap: context.watch<AuthStore>().busy ? null : _logout),
+                const SizedBox(height: 12),
+                PillButton('Delete account',
+                    icon: Symbols.delete_forever,
+                    variant: PillVariant.danger,
+                    onTap: context.watch<AuthStore>().busy
+                        ? null
+                        : _deleteAccount),
                 const SizedBox(height: 12),
                 Center(
                   child: Text('StudyTrail v1.0 · SGP · CSPIT',

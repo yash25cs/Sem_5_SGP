@@ -52,6 +52,20 @@ class _RoadmapScreenState extends State<RoadmapScreen> {
     _toast('Roadmap ready — $weeks week${weeks == 1 ? '' : 's'} planned.');
   }
 
+  /// Ticks a roadmap checkbox, and refreshes Home when the same task is also on
+  /// its checklist.
+  ///
+  /// A linked tick goes through `complete_task` — it pays XP and moves the streak
+  /// — so Home's copy of the row, its hero card, and the streak chip are all
+  /// stale afterwards. The shell keeps both tabs alive, so nothing else would
+  /// refresh them.
+  Future<void> _toggle(Milestone milestone, MilestoneTask task) async {
+    final store = context.read<RoadmapStore>();
+    await store.toggleTask(milestone, task);
+    if (!mounted || !store.lastToggleTouchedDailyTask) return;
+    await context.read<HomeStore>().load();
+  }
+
   Future<bool> _confirmReplace() async {
     final p = context.p;
     final confirmed = await showDialog<bool>(
@@ -231,9 +245,7 @@ class _RoadmapScreenState extends State<RoadmapScreen> {
                 milestone: store.milestones[i],
                 color: _accent(context, store.milestones[i], i),
                 last: i == store.milestones.length - 1,
-                onToggle: (task) => context
-                    .read<RoadmapStore>()
-                    .toggleTask(store.milestones[i], task),
+                onToggle: (task) => _toggle(store.milestones[i], task),
               ),
         ],
       ),
