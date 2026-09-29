@@ -97,4 +97,38 @@ class LocalPrefs {
       // Non-fatal: next launch falls back to the default preset.
     }
   }
+
+  static const String _unlockedRewardsKey = 'unlocked_rewards_v1';
+  static const String _spentXpKey = 'spent_rewards_xp_v1';
+
+  static Future<List<String>> getUnlockedRewards() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getStringList(_unlockedRewardsKey) ?? [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> saveUnlockedReward(String id, int costXp) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final current = prefs.getStringList(_unlockedRewardsKey) ?? [];
+      if (!current.contains(id)) {
+        current.add(id);
+        await prefs.setStringList(_unlockedRewardsKey, current);
+      }
+      final spent = prefs.getInt(_spentXpKey) ?? 0;
+      await prefs.setInt(_spentXpKey, spent + costXp);
+    } catch (_) {}
+  }
+
+  static Future<int> getSpentRewardXp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getInt(_spentXpKey) ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
 }

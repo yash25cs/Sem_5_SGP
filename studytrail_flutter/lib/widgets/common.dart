@@ -162,6 +162,7 @@ class SoftChip extends StatelessWidget {
     this.label, {
     super.key,
     this.icon,
+    this.customLeading,
     this.tone = ChipTone.neutral,
     this.small = false,
     this.onTap,
@@ -169,6 +170,7 @@ class SoftChip extends StatelessWidget {
 
   final String label;
   final IconData? icon;
+  final Widget? customLeading;
   final ChipTone tone;
   final bool small;
   final VoidCallback? onTap;
@@ -209,7 +211,10 @@ class SoftChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (icon != null) ...[
+            if (customLeading != null) ...[
+              customLeading!,
+              const SizedBox(width: 6),
+            ] else if (icon != null) ...[
               Icon(icon, size: small ? 14 : 17, color: fg),
               const SizedBox(width: 6)
             ],

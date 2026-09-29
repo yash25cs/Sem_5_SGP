@@ -9,6 +9,9 @@ import '../theme/badge_style.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
+import '../widgets/streak_modal.dart';
+import 'leaderboard_screen.dart';
+import 'rewards_screen.dart';
 
 /// Achievements + class leaderboard screen.
 class AchievementsScreen extends StatefulWidget {
@@ -39,6 +42,8 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
     final p = context.p;
     final store = context.watch<GamificationStore>();
     final streak = store.streak;
+    final entries =
+        LeaderboardScreen.resolveEntries(store.leaderboard, store.profile);
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -49,15 +54,37 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
             padding: const EdgeInsets.fromLTRB(12, 4, 20, 6),
             child: Row(
               children: [
-                RoundIconButton(Symbols.arrow_back, onTap: widget.onBack),
+                RoundIconButton(Symbols.arrow_back,
+                    onTap: widget.onBack ??
+                        () => Navigator.of(context).maybePop()),
                 const SizedBox(width: 8),
-                Text('Achievements',
-                    style: TextStyle(
-                        color: p.ink,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800)),
-                const Spacer(),
-                if (store.loaded)
+                Expanded(
+                  child: Text('Achievements',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800)),
+                ),
+                RoundIconButton(
+                  Symbols.featured_seasonal_and_gifts,
+                  plain: false,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const RewardsScreen()),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                RoundIconButton(
+                  Symbols.emoji_events,
+                  plain: false,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const LeaderboardScreen()),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                if (store.badges.isNotEmpty)
                   SoftChip('${store.unlockedCount}/${store.badges.length}',
                       icon: Symbols.workspace_premium,
                       tone: ChipTone.amber,
@@ -79,41 +106,44 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                     ),
 
                   // streak banner
-                  AppCard(
-                    gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [p.coral, const Color(0xFFF8951D)]),
-                    child: Row(
-                      children: [
-                        const Icon(Symbols.local_fire_department,
-                            color: Colors.white, size: 46, fill: 1),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  streak.currentStreak == 0
-                                      ? 'Start your streak'
-                                      : '${streak.currentStreak}-day streak 🔥',
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800)),
-                              const SizedBox(height: 2),
-                              Text(
-                                  streak.currentStreak == 0
-                                      ? 'Study today and the counter begins.'
-                                      : 'Your best is ${streak.bestStreak} days — keep going!',
-                                  style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.9),
-                                      fontSize: 13)),
-                            ],
+                  GestureDetector(
+                    onTap: () => showStreakCelebrationSheet(context),
+                    child: AppCard(
+                      gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [p.coral, const Color(0xFFF8951D)]),
+                      child: Row(
+                        children: [
+                          const Icon(Symbols.local_fire_department,
+                              color: Colors.white, size: 46, fill: 1),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    streak.currentStreak == 0
+                                        ? 'Start your streak'
+                                        : '${streak.currentStreak}-day streak 🔥',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w800)),
+                                const SizedBox(height: 2),
+                                Text(
+                                    streak.currentStreak == 0
+                                        ? 'Study today and the counter begins.'
+                                        : 'Your best is ${streak.bestStreak} days — keep going!',
+                                    style: TextStyle(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.9),
+                                        fontSize: 13)),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -151,7 +181,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   const SizedBox(height: 22),
 
                   CardHeader('Badges'),
-                  if (store.loading && !store.loaded)
+                  if (store.loading && store.badges.isEmpty)
                     const LoadingBlock(height: 180)
                   else if (store.badges.isEmpty)
                     EmptyState(
@@ -170,27 +200,34 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                       childAspectRatio: 0.82,
                       children: [
                         for (final badge in store.badges)
-                          _BadgeTile(badge: badge),
+                          _BadgeTile(
+                            badge: badge,
+                            onTap: () => _showBadgeDetail(context, badge),
+                          ),
                       ],
                     ),
                   const SizedBox(height: 22),
 
-                  CardHeader('Class leaderboard'),
-                  if (store.loading && !store.loaded)
+                  CardHeader(
+                    'Class leaderboard',
+                    action: TextButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const LeaderboardScreen()),
+                      ),
+                      icon: const Icon(Symbols.chevron_right, size: 18),
+                      label: const Text('League & Zones',
+                          style: TextStyle(fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                  if (store.loading && store.leaderboard.isEmpty)
                     const LoadingBlock(height: 120)
-                  else if (store.leaderboard.isEmpty)
-                    EmptyState(
-                      icon: Symbols.groups,
-                      title: 'No class yet',
-                      message:
-                          'Join your class from Settings to see how you rank against classmates.',
-                    )
                   else
                     AppCard(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Column(
                         children: [
-                          for (final entry in store.leaderboard)
+                          for (final entry in entries.take(5))
                             _LeaderRow(
                               entry: entry,
                               xpLabel: '${_thousands(entry.xp)} XP',
@@ -206,12 +243,181 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       ),
     );
   }
+
+  void _showBadgeDetail(BuildContext context, AchievementBadge badge) {
+    final p = context.p;
+    final style = BadgeStyle.of(context, badge);
+    final unlocked = badge.unlocked;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: p.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          boxShadow: p.shadow,
+        ),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          16,
+          24,
+          24 + MediaQuery.of(context).padding.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 44,
+              height: 4,
+              decoration: BoxDecoration(
+                color: p.line2,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 78,
+              height: 78,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: unlocked
+                    ? LinearGradient(
+                        colors: [style.color.withValues(alpha: 0.85), style.color],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: unlocked ? null : p.card2,
+                boxShadow: unlocked
+                    ? [
+                        BoxShadow(
+                          color: style.color.withValues(alpha: 0.45),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        )
+                      ]
+                    : null,
+              ),
+              child: Icon(
+                unlocked ? style.icon : Symbols.lock,
+                color: unlocked ? Colors.white : p.line2,
+                size: 38,
+                fill: 1,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              badge.name,
+              style: TextStyle(
+                color: p.ink,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: p.card2,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: p.line, width: 1.2),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Symbols.info, size: 18, color: p.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'How to earn:',
+                        style: TextStyle(
+                          color: p.ink,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    badge.description ??
+                        'Keep studying and completing goals to unlock this achievement.',
+                    style: TextStyle(
+                      color: p.ink2,
+                      fontSize: 13.5,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: unlocked ? p.greenSoft : p.amberSoft,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: (unlocked ? p.green : p.amber).withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    unlocked ? Symbols.verified : Symbols.lock_clock,
+                    color: unlocked ? p.green : p.amber,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      unlocked
+                          ? (badge.unlockedAt != null
+                              ? 'Earned! (Unlocked on ${badge.unlockedAt!.day}/${badge.unlockedAt!.month}/${badge.unlockedAt!.year})'
+                              : 'Earned! You have completed this achievement.')
+                          : 'Not earned yet. Complete the requirement to unlock!',
+                      style: TextStyle(
+                        color: unlocked ? p.green : p.ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: p.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text(
+                  'Got it',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _BadgeTile extends StatelessWidget {
-  const _BadgeTile({required this.badge});
+  const _BadgeTile({required this.badge, this.onTap});
 
   final AchievementBadge badge;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -222,17 +428,20 @@ class _BadgeTile extends StatelessWidget {
 
     return Tooltip(
       message: badge.description ?? badge.name,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: p.card,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: p.shadowSm,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: p.shadowSm,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
               width: 54,
               height: 54,
               decoration: BoxDecoration(
@@ -271,8 +480,9 @@ class _BadgeTile extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class _LeaderRow extends StatelessWidget {
@@ -318,7 +528,10 @@ class _LeaderRow extends StatelessWidget {
           GradAvatar(entry.initial, size: 38),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(me ? '${entry.fullName} (You)' : entry.fullName,
+            child: Text(
+                entry.fullName.contains('(You)')
+                    ? entry.fullName
+                    : (me ? '${entry.fullName} (You)' : entry.fullName),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

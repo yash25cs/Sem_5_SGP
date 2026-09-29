@@ -15,6 +15,8 @@ import 'screens/quiz_screen.dart';
 import 'screens/pomodoro_screen.dart';
 import 'screens/buddy_room_screen.dart';
 import 'screens/achievements_screen.dart';
+import 'screens/leaderboard_screen.dart';
+import 'screens/rewards_screen.dart';
 
 /// The main app shell — five bottom-nav tabs in an [IndexedStack] and a center
 /// quick-actions button for the secondary screens.
@@ -32,7 +34,7 @@ class _HomeShellState extends State<HomeShell> {
     HomeScreen(),
     RoadmapScreen(),
     ChatScreen(),
-    FlashcardsScreen(),
+    QuizScreen(),
     ProfileScreen(),
   ];
 
@@ -99,13 +101,13 @@ class _HomeShellState extends State<HomeShell> {
                 ),
                 const SizedBox(height: 16),
                 _QuickAction(
-                  icon: Symbols.quiz,
-                  title: 'Take a quiz',
-                  subtitle: 'Test yourself on today’s topic',
+                  icon: Symbols.style,
+                  title: 'Flashcards',
+                  subtitle: 'Review spaced-repetition decks',
                   color: p.primary,
                   onTap: () {
                     Navigator.pop(sheetCtx);
-                    _open(QuizScreen(onClose: () => Navigator.pop(context)));
+                    _open(FlashcardsScreen(onBack: () => Navigator.pop(context)));
                   },
                 ),
                 _QuickAction(
@@ -137,6 +139,28 @@ class _HomeShellState extends State<HomeShell> {
                     Navigator.pop(sheetCtx);
                     _open(
                         AchievementsScreen(onBack: () => Navigator.pop(context)));
+                  },
+                ),
+                _QuickAction(
+                  icon: Symbols.emoji_events,
+                  title: 'Leaderboard & Leagues',
+                  subtitle: 'Compete in weekly student leagues',
+                  color: const Color(0xFFF59E0B),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _open(LeaderboardScreen(
+                        onBack: () => Navigator.pop(context)));
+                  },
+                ),
+                _QuickAction(
+                  icon: Symbols.featured_seasonal_and_gifts,
+                  title: 'My Rewards & Coupons',
+                  subtitle: 'Streak freeze, XP perks & AI passes',
+                  color: const Color(0xFF6366F1),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _open(RewardsScreen(
+                        onBack: () => Navigator.pop(context)));
                   },
                 ),
                 _QuickAction(

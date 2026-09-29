@@ -12,7 +12,8 @@ import '../widgets/generate_sheet.dart';
 
 /// Cards tab — a flashcard review session with flip + deck picker.
 class FlashcardsScreen extends StatefulWidget {
-  const FlashcardsScreen({super.key});
+  const FlashcardsScreen({super.key, this.onBack});
+  final VoidCallback? onBack;
 
   @override
   State<FlashcardsScreen> createState() => _FlashcardsScreenState();
@@ -87,18 +88,23 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
     final store = context.watch<FlashcardStore>();
     final card = store.current;
     final inSession = card != null;
+    final totalDue = store.decks.fold<int>(0, (sum, d) => sum + d.due);
 
-    final totalDue =
-        store.decks.fold<int>(0, (sum, d) => sum + d.due);
-
-    return RefreshIndicator(
-      color: p.primary,
-      onRefresh: () => context.read<FlashcardStore>().load(),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
-        children: [
+    return Scaffold(
+      backgroundColor: p.bg,
+      body: SafeArea(
+        child: RefreshIndicator(
+          color: p.primary,
+          onRefresh: () => context.read<FlashcardStore>().load(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
+            children: [
           Row(
             children: [
+              if (widget.onBack != null) ...[
+                RoundIconButton(Symbols.arrow_back, onTap: widget.onBack),
+                const SizedBox(width: 8),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,10 +255,12 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
                 deck: deck,
                 onTap: () =>
                     _startSession(deckId: deck.id, deckName: deck.name),
-              ),
+            ),
         ],
       ),
-    );
+    ),
+  ),
+);
   }
 }
 

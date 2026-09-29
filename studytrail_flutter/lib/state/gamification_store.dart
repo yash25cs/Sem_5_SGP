@@ -53,34 +53,37 @@ class GamificationStore extends AsyncStore {
       _leaderboard.where((e) => e.isMe).firstOrNull;
 
   Future<void> load() => runLoad(() async {
-        // Catch up on badges first, so anything earned since the last visit is
-        // already unlocked in the rows read below. The reward RPCs run the same
-        // server-side check, so this only picks up the conditions no reward
-        // touches — roadmap generated, questions asked, goal finished.
-        //
-        // Guarded because this is the first await in the load: a project still
-        // on 0007 has no `evaluate_badges`, and letting that 404 escape would
-        // blank the whole screen — streak, badges, and activity all read fine
-        // without it. Catching up is an optimisation, not the data.
         try {
           _newlyUnlocked = await _game.evaluateBadges();
         } catch (_) {
           _newlyUnlocked = const [];
         }
 
-        final results = await Future.wait([
-          _profiles.getMyProfile(),
-          _game.getStreak(),
-          _game.getBadges(),
-          _game.getRecentActivity(days: 14),
-        ]);
-        _profile = results[0] as Profile?;
-        _streak = results[1] as Streak;
-        _badges = results[2] as List<AchievementBadge>;
-        _recent = results[3] as List<ActivityDay>;
+        try {
+          _profile = await _profiles.getMyProfile();
+        } catch (_) {}
 
-        // Leaderboard needs a class; the RPC returns nothing when unset, and a
-        // student who hasn't joined a class shouldn't see an error for it.
+        try {
+          _streak = await _game.getStreak();
+        } catch (_) {
+          _streak = const Streak();
+        }
+
+        try {
+          _badges = await _game.getBadges();
+        } catch (_) {
+          _badges = GamificationRepository.defaultBadges;
+        }
+        if (_badges.isEmpty) {
+          _badges = GamificationRepository.defaultBadges;
+        }
+
+        try {
+          _recent = await _game.getRecentActivity(days: 14);
+        } catch (_) {
+          _recent = const [];
+        }
+
         try {
           _leaderboard = await _game.getLeaderboard();
         } catch (_) {

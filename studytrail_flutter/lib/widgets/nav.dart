@@ -16,7 +16,7 @@ class BottomNav extends StatelessWidget {
     (Symbols.home, 'Home'),
     (Symbols.calendar_month, 'Roadmap'),
     (Symbols.smart_toy, 'Chat'),
-    (Symbols.style, 'Cards'),
+    (Symbols.quiz, 'Quiz'),
     (Symbols.person, 'Profile'),
   ];
 

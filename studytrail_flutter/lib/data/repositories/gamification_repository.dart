@@ -33,18 +33,147 @@ class GamificationRepository {
     return rows.map(ActivityDay.fromMap).toList();
   }
 
+  /// The default 10-badge catalog fallback.
+  static const defaultBadges = <AchievementBadge>[
+    AchievementBadge(
+      id: 'badge-first_step',
+      key: 'first_step',
+      name: 'First Step',
+      iconKey: 'flag',
+      colorKey: 'sky',
+      description: 'Complete your first study task.',
+    ),
+    AchievementBadge(
+      id: 'badge-week_warrior',
+      key: 'week_warrior',
+      name: 'Week Warrior',
+      iconKey: 'local_fire_department',
+      colorKey: 'amber',
+      description: 'Maintain a 7-day streak.',
+    ),
+    AchievementBadge(
+      id: 'badge-quiz_ace',
+      key: 'quiz_ace',
+      name: 'Quiz Ace',
+      iconKey: 'quiz',
+      colorKey: 'violet',
+      description: 'Score 100% on any quiz.',
+    ),
+    AchievementBadge(
+      id: 'badge-card_master',
+      key: 'card_master',
+      name: 'Card Master',
+      iconKey: 'style',
+      colorKey: 'emerald',
+      description: 'Review 100 flashcards.',
+    ),
+    AchievementBadge(
+      id: 'badge-night_owl',
+      key: 'night_owl',
+      name: 'Night Owl',
+      iconKey: 'nightlight',
+      colorKey: 'indigo',
+      description: 'Study after 10 PM.',
+    ),
+    AchievementBadge(
+      id: 'badge-early_bird',
+      key: 'early_bird',
+      name: 'Early Bird',
+      iconKey: 'wb_sunny',
+      colorKey: 'orange',
+      description: 'Study before 7 AM.',
+    ),
+    AchievementBadge(
+      id: 'badge-focused_mind',
+      key: 'focused_mind',
+      name: 'Focused Mind',
+      iconKey: 'self_improvement',
+      colorKey: 'teal',
+      description: 'Finish 10 Pomodoro sessions.',
+    ),
+    AchievementBadge(
+      id: 'badge-roadmap_ready',
+      key: 'roadmap_ready',
+      name: 'Roadmap Ready',
+      iconKey: 'map',
+      colorKey: 'rose',
+      description: 'Generate your first AI roadmap.',
+    ),
+    AchievementBadge(
+      id: 'badge-curious_learner',
+      key: 'curious_learner',
+      name: 'Curious Learner',
+      iconKey: 'chat',
+      colorKey: 'cyan',
+      description: 'Ask the AI tutor 25 questions.',
+    ),
+    AchievementBadge(
+      id: 'badge-goal_crusher',
+      key: 'goal_crusher',
+      name: 'Goal Crusher',
+      iconKey: 'emoji_events',
+      colorKey: 'gold',
+      description: 'Reach 100% on a goal.',
+    ),
+  ];
+
   /// The badge catalog, each with whether the caller has it. For "my badges",
   /// filter [unlocked] client-side.
   ///
-  /// `!left` keeps locked badges in the result — a plain embed would inner-join
-  /// and drop every badge the user hasn't earned yet. RLS on `user_badges`
-  /// already restricts the embedded rows to the caller, so no filter is needed.
+  /// PostgREST embeds are left outer joins by default.
   Future<List<AchievementBadge>> getBadges({bool onlyUnlocked = false}) async {
-    final rows = await db
-        .from('badges')
-        .select('*, user_badges!left(*)')
-        .order('key', ascending: true);
-    final all = rows.map(AchievementBadge.fromMap).toList();
+    List<AchievementBadge> all = [];
+    try {
+      final rows = await db
+          .from('badges')
+          .select('*, user_badges(*)')
+          .order('key', ascending: true);
+      all = [
+        for (final r in rows)
+          AchievementBadge.fromMap(r),
+      ];
+    } catch (_) {
+      // Supabase table or relation query failed; fallback will populate.
+    }
+
+    if (all.isEmpty) {
+      // Check user_badges table for current user if available
+      final unlockedMap = <String, (bool, DateTime?)>{};
+      try {
+        final uid = currentUserId;
+        if (uid != null) {
+          final rows = await db
+              .from('user_badges')
+              .select('badge_id, unlocked, unlocked_at, badges(key)')
+              .eq('user_id', uid);
+          for (final row in rows as List) {
+            final key = row['badges']?['key'] as String?;
+            if (key != null) {
+              final unl = (row['unlocked'] as bool?) ?? false;
+              final at = row['unlocked_at'] == null
+                  ? null
+                  : DateTime.parse(row['unlocked_at'] as String);
+              unlockedMap[key] = (unl, at);
+            }
+          }
+        }
+      } catch (_) {}
+
+      all = [
+        for (final b in defaultBadges)
+          AchievementBadge(
+            id: b.id,
+            key: b.key,
+            name: b.name,
+            iconKey: b.iconKey,
+            colorKey: b.colorKey,
+            description: b.description,
+            unlocked: unlockedMap[b.key]?.$1 ?? b.unlocked,
+            unlockedAt: unlockedMap[b.key]?.$2 ?? b.unlockedAt,
+          ),
+      ];
+    }
+
     return onlyUnlocked ? all.where((b) => b.unlocked).toList() : all;
   }
 

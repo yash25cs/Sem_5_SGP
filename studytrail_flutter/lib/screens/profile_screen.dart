@@ -84,6 +84,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
     await context.read<AuthStore>().signOut();
   }
 
@@ -177,7 +178,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         fontSize: 13,
                         fontWeight: FontWeight.w800)),
               )),
-          if (game.loading && !game.loaded)
+          if (game.loading && !game.loaded && badges.isEmpty)
             const LoadingBlock(height: 120)
           else if (badges.isEmpty)
             EmptyState(
@@ -194,7 +195,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: EdgeInsets.zero,
-                children: [for (final b in badges) _Badge(badge: b)],
+                children: [
+                  for (final b in badges)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => AchievementsScreen(
+                              onBack: () => Navigator.pop(context)))),
+                      child: _Badge(badge: b),
+                    ),
+                ],
               ),
             ),
           const SizedBox(height: 22),

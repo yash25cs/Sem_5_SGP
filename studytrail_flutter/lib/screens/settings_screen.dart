@@ -406,6 +406,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
     await context.read<AuthStore>().signOut();
   }
 

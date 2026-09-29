@@ -11,6 +11,7 @@ import '../theme/subject_style.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/streak_modal.dart';
 import 'set_target_screen.dart';
 
 /// Home / dashboard tab — greeting, streak, today's plan, and subject progress.
@@ -23,6 +24,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late ConfettiController _confetti;
+  bool _hasShownStreakModal = false;
+  bool _isPlanningDay = false;
 
   @override
   void initState() {
@@ -158,21 +161,26 @@ class _HomeScreenState extends State<HomeScreen> {
   /// The roadmap generator writes `milestone_tasks`, which live on their own tab;
   /// this is the only thing that turns them into today's work.
   Future<void> _planDay() async {
-    final store = context.read<HomeStore>();
-    final result = await store.planDayFromRoadmap();
-    if (!mounted) return;
-    switch (result) {
-      case PlanDayResult.added:
-        final count = store.plannedCount;
-        final from = store.plannedFrom;
-        _toast('Added $count task${count == 1 ? '' : 's'}'
-            '${from == null ? '' : ' from $from'}.');
-      case PlanDayResult.noRoadmap:
-        _toast('Generate a roadmap first — it\'s on the Roadmap tab.');
-      case PlanDayResult.nothingLeft:
-        _toast('Every roadmap topic is already done or scheduled.');
-      case PlanDayResult.failed:
-        _toast(store.error ?? 'Could not plan today.');
+    setState(() => _isPlanningDay = true);
+    try {
+      final store = context.read<HomeStore>();
+      final result = await store.planDayFromRoadmap();
+      if (!mounted) return;
+      switch (result) {
+        case PlanDayResult.added:
+          final count = store.plannedCount;
+          final from = store.plannedFrom;
+          _toast('Added $count task${count == 1 ? '' : 's'}'
+              '${from == null ? '' : ' from $from'}.');
+        case PlanDayResult.noRoadmap:
+          _toast('Generate a roadmap first — it\'s on the Roadmap tab.');
+        case PlanDayResult.nothingLeft:
+          _toast('Every roadmap topic is already done or scheduled.');
+        case PlanDayResult.failed:
+          _toast(store.error ?? 'Could not plan today.');
+      }
+    } finally {
+      if (mounted) setState(() => _isPlanningDay = false);
     }
   }
 
@@ -185,15 +193,25 @@ class _HomeScreenState extends State<HomeScreen> {
   /// ProfileStore.
   Future<void> _toggle(DailyTask task) async {
     final isCompleting = !task.done;
-    if (isCompleting) HapticFeedback.lightImpact();
+    if (isCompleting) {
+      HapticFeedback.lightImpact();
+    } else {
+      _hasShownStreakModal = false;
+    }
 
     await context.read<HomeStore>().toggleTask(task);
     
     if (mounted && isCompleting) {
       final store = context.read<HomeStore>();
-      if (store.doneCount == store.tasks.length && store.tasks.isNotEmpty) {
+      if (!_hasShownStreakModal &&
+          store.doneCount == store.tasks.length &&
+          store.tasks.isNotEmpty) {
+        _hasShownStreakModal = true;
         _confetti.play();
         HapticFeedback.heavyImpact();
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) showStreakCelebrationSheet(context);
+        });
       }
     }
 
@@ -306,15 +324,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (goal != null) ...[
                   const SizedBox(width: 10),
-                  SoftChip('Plan day',
-                      icon: Symbols.playlist_add,
-                      tone: ChipTone.primary,
-                      onTap: store.busy ? null : _planDay),
+                  SoftChip(
+                    _isPlanningDay ? 'Planning...' : 'Plan day',
+                    icon: _isPlanningDay ? null : Symbols.playlist_add,
+                    customLeading: _isPlanningDay
+                        ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: p.primary,
+                            ),
+                          )
+                        : null,
+                    tone: ChipTone.primary,
+                    onTap: store.busy || _isPlanningDay ? null : _planDay,
+                  ),
                 ],
               ],
             ),
           ),
-          if (store.loading && !store.loaded)
+          if (_isPlanningDay || (store.loading && !store.loaded))
             const LoadingBlock(height: 74)
           else if (store.tasks.isEmpty)
             EmptyState(
@@ -324,8 +354,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? 'Create a goal to get a daily plan.'
                   : 'Pull the next few topics off your roadmap and start there.',
               actionLabel:
-                  goal == null || store.busy ? null : 'Plan today from roadmap',
-              onAction: goal == null || store.busy ? null : _planDay,
+                  goal == null || store.busy || _isPlanningDay ? null : 'Plan today from roadmap',
+              onAction: goal == null || store.busy || _isPlanningDay ? null : _planDay,
             )
           else
             for (final task in store.tasks)
@@ -392,25 +422,29 @@ class _HeroCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(999)),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Symbols.local_fire_department,
-                      color: Color(0xFFFFC773), size: 18, fill: 1),
-                  const SizedBox(width: 5),
-                  Text(
-                      streak == 0
-                          ? 'Start your streak'
-                          : '$streak-day streak',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800)),
-                ]),
+              InkWell(
+                onTap: () => showStreakCelebrationSheet(context),
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Symbols.local_fire_department,
+                        color: Color(0xFFFFC773), size: 18, fill: 1),
+                    const SizedBox(width: 5),
+                    Text(
+                        streak == 0
+                            ? 'Start your streak'
+                            : '$streak-day streak',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800)),
+                  ]),
+                ),
               ),
               const Spacer(),
               if ((goal.roadmapDays ?? 0) > 0)

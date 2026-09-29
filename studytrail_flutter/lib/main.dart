@@ -39,6 +39,8 @@ Future<void> main() async {
   runApp(const StudyTrailApp());
 }
 
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 class StudyTrailApp extends StatelessWidget {
   const StudyTrailApp({super.key});
 
@@ -52,6 +54,7 @@ class StudyTrailApp extends StatelessWidget {
       ],
       child: Consumer<ThemeController>(
         builder: (context, theme, _) => MaterialApp(
+          navigatorKey: rootNavigatorKey,
           title: 'StudyTrail',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.light(),
@@ -212,6 +215,7 @@ class _RootFlowState extends State<RootFlow> {
             .addPostFrameCallback((_) => _resolveEntryStage());
       } else if (auth.status == AuthStatus.signedOut &&
           previous == AuthStatus.signedIn) {
+        rootNavigatorKey.currentState?.popUntil((route) => route.isFirst);
         WidgetsBinding.instance
             .addPostFrameCallback((_) => _go(_Stage.login));
       }
