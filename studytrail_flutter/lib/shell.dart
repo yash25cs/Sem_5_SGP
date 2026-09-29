@@ -30,12 +30,12 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
 
-  final _tabs = const [
-    HomeScreen(),
-    RoadmapScreen(),
-    ChatScreen(),
-    QuizScreen(),
-    ProfileScreen(),
+  late final List<Widget> _tabs = [
+    HomeScreen(onOpenProfile: () => setState(() => _tab = 4)),
+    const RoadmapScreen(),
+    const ChatScreen(),
+    const QuizScreen(),
+    const ProfileScreen(),
   ];
 
   @override

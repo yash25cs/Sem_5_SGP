@@ -12,11 +12,14 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
+import 'profile_screen.dart';
 import 'set_target_screen.dart';
 
 /// Home / dashboard tab — greeting, streak, today's plan, and subject progress.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.onOpenProfile});
+
+  final VoidCallback? onOpenProfile;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -270,7 +273,22 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
                 const NotificationBell(),
               const SizedBox(width: 10),
-              GradAvatar(profile?.initial ?? '?', size: 46),
+              GestureDetector(
+                onTap: () {
+                  if (widget.onOpenProfile != null) {
+                    widget.onOpenProfile!();
+                  } else {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const ProfileScreen()),
+                    );
+                  }
+                },
+                child: Tooltip(
+                  message: 'View Profile',
+                  child: GradAvatar(profile?.initial ?? '?', size: 46),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 18),

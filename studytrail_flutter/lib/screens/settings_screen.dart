@@ -10,6 +10,7 @@ import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
+import 'academic_profile_screen.dart';
 import 'set_target_screen.dart';
 
 /// Full settings screen — grouped preference rows with a back button.
@@ -47,47 +48,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Name / enrollment / branch / college, saved in one update.
+  /// Opens the full academic profile editor screen.
   Future<void> _editProfile() async {
-    final store = context.read<ProfileStore>();
-    final profile = store.profile;
-    if (profile == null) return;
-
-    final name = TextEditingController(text: profile.fullName);
-    final enrollment = TextEditingController(text: profile.enrollmentId ?? '');
-    final branch = TextEditingController(text: profile.branch ?? '');
-    final college = TextEditingController(text: profile.college ?? '');
-
-    final saved = await _showSheet<bool>(
-      title: 'Your details',
-      builder: (sheetContext) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _SheetField(controller: name, label: 'Full name'),
-          _SheetField(controller: enrollment, label: 'Enrollment ID'),
-          _SheetField(controller: branch, label: 'Branch'),
-          _SheetField(controller: college, label: 'College'),
-          const SizedBox(height: 18),
-          PillButton('Save',
-              onTap: () => Navigator.of(sheetContext).pop(true)),
-        ],
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AcademicProfileScreen(
+          isEditing: true,
+          onDone: () => Navigator.pop(context),
+          onBack: () => Navigator.pop(context),
+        ),
       ),
     );
-
-    if (saved == true) {
-      final ok = await store.updateProfile(
-        fullName: name.text.trim(),
-        enrollmentId: enrollment.text.trim(),
-        branch: branch.text.trim(),
-        college: college.text.trim(),
-      );
-      _toast(ok ? 'Profile updated' : store.error ?? 'Could not save');
-    }
-
-    name.dispose();
-    enrollment.dispose();
-    branch.dispose();
-    college.dispose();
+    if (mounted) context.read<ProfileStore>().load();
   }
 
   /// The goal manager — a row per goal, plus a way to add one.
@@ -635,6 +607,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _sounds,
                         onChanged: (v) => setState(() => _sounds = v),
                       )),
+                ]),
+                _GroupLabel('Academic Profile'),
+                _Group(children: [
+                  _Row(Symbols.school, 'College / University', p.primary,
+                      value: (profile?.college ?? '').isNotEmpty
+                          ? profile!.college!
+                          : 'Set college',
+                      trailing: _chev(p),
+                      onTap: _editProfile),
+                  _Row(Symbols.architecture, 'Program & Branch', p.primary2,
+                      value: (profile?.branch ?? '').isNotEmpty
+                          ? profile!.branch!
+                          : 'Set program',
+                      trailing: _chev(p),
+                      onTap: _editProfile),
+                  _Row(Symbols.badge, 'Student ID / Roll No', p.coral,
+                      value: (profile?.enrollmentId ?? '').isNotEmpty
+                          ? profile!.enrollmentId!
+                          : 'Set ID / Roll no',
+                      trailing: _chev(p),
+                      onTap: _editProfile),
                 ]),
                 const SizedBox(height: 20),
 

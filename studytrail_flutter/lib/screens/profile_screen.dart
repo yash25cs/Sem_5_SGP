@@ -11,6 +11,7 @@ import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/streak_heatmap.dart';
+import 'academic_profile_screen.dart';
 import 'achievements_screen.dart';
 import 'settings_screen.dart';
 
@@ -55,6 +56,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// 1240 → "1,240".
   String _thousands(int n) =>
       n.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+
+  Future<void> _openAcademicProfile() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AcademicProfileScreen(
+          isEditing: true,
+          onDone: () => Navigator.pop(context),
+          onBack: () => Navigator.pop(context),
+        ),
+      ),
+    );
+    if (mounted) _refresh();
+  }
 
   Future<void> _confirmLogout() async {
     final p = context.p;
@@ -142,6 +156,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               profile: profile,
               title: _levelTitle(profile.level),
               xpLabel: '${_thousands(profile.xp)} XP',
+              onTap: _openAcademicProfile,
             ),
           const SizedBox(height: 18),
 
@@ -235,6 +250,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Column(
               children: [
+                _SettingRow(Symbols.school, 'Academic profile', p.primary,
+                    trailing: _chevron(p),
+                    onTap: _openAcademicProfile),
+                _divider(p),
                 _SettingRow(Symbols.dark_mode, 'Dark mode', p.primary,
                     trailing: Switch(
                       value: theme.isDark,
@@ -290,11 +309,13 @@ class _IdentityCard extends StatelessWidget {
     required this.profile,
     required this.title,
     required this.xpLabel,
+    this.onTap,
   });
 
   final Profile profile;
   final String title;
   final String xpLabel;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -311,6 +332,7 @@ class _IdentityCard extends StatelessWidget {
     final remaining = profile.xpToNext - (profile.xp % profile.xpToNext);
 
     return AppCard(
+      onTap: onTap,
       gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -347,7 +369,7 @@ class _IdentityCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                         subtitle.isEmpty
-                            ? 'Add your details in Settings'
+                            ? 'Tap to add college & program details'
                             : subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

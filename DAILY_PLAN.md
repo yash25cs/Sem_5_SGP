@@ -308,3 +308,32 @@ yet, and the device pass has to come first.
   - Host confirmation dialog when leaving/closing the room.
 - **Validation:**
   - Passed `flutter analyze` with 0 issues.
+
+## Day 16 – Academic Profile Onboarding & Profile Direct Navigation
+
+### Academic Profile Setup Screen (`lib/screens/academic_profile_screen.dart`)
+- **First-Run / Post-Signup Onboarding:**
+  - Automatically prompts new students immediately after creating their account / ID to fill out their academic information before proceeding to material upload and goal planning.
+  - Form gathers:
+    - **Full Name** (prefilled or editable)
+    - **College / University Name** (e.g. CSPIT, Charusat University)
+    - **Program & Branch / Major** (e.g. B.Tech Computer Engineering, IT)
+    - **Student ID / Roll No / Enrollment ID** (e.g. 22CS045, D25CS118)
+    - **Current Semester** (dropdown: Semester 1 through 8)
+  - Saves atomically to Supabase `profiles` table via `ProfileRepository.updateProfile` and refreshes global `ProfileStore` and `HomeStore`.
+
+### Settings & Profile Editing Integration
+- **`SettingsScreen` (`lib/screens/settings_screen.dart`):**
+  - Added dedicated **Academic Profile** section displaying College, Program & Branch, and Student ID.
+  - Tapping any row or "Edit" navigates to `AcademicProfileScreen` in edit mode to modify any academic field anytime.
+- **`ProfileScreen` (`lib/screens/profile_screen.dart`):**
+  - Added interactive tap trigger on `_IdentityCard` to quickly open the academic profile editor.
+  - Added an "Academic profile" row in the Profile settings list with school icon and chevron.
+
+### Home Screen Top-Right User Icon Navigation
+- **`HomeScreen` (`lib/screens/home_screen.dart`):**
+  - Wrapped top-right `GradAvatar` with interactive tap detection and a tooltip.
+  - Configured with `onOpenProfile` callback that smoothly switches to Tab 4 (Profile) in `HomeShell`.
+  - Added fallback navigation pushing `ProfileScreen` if opened outside `HomeShell`.
+- **Validation:**
+  - Validated with `flutter analyze`: **0 issues found** (100% clean compilation).

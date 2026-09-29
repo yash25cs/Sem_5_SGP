@@ -15,6 +15,8 @@ import 'theme/theme_controller.dart';
 import 'widgets/data_states.dart';
 import 'widgets/timer_banner.dart';
 import 'shell.dart';
+import 'data/repositories/profile_repository.dart';
+import 'screens/academic_profile_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/upload_material_screen.dart';
 import 'screens/set_target_screen.dart';
@@ -91,7 +93,7 @@ class StudyTrailApp extends StatelessWidget {
 /// The welcome tour is first-install only; after that a signed-out launch opens
 /// straight on sign-in. A returning user with a goal already saved lands in the
 /// shell.
-enum _Stage { welcome, login, signup, upload, target, app }
+enum _Stage { welcome, login, signup, academic, upload, target, app }
 
 class RootFlow extends StatefulWidget {
   const RootFlow({super.key});
@@ -178,14 +180,28 @@ class _RootFlowState extends State<RootFlow> {
       _failure = null;
     });
 
-    var next = _Stage.upload;
+    var next = _Stage.academic;
     String? failure;
     var offline = false;
     try {
+      final profile = await const ProfileRepository()
+          .getMyProfile()
+          .timeout(_entryProbeTimeout);
       final hasGoal = await const GoalRepository()
           .hasAnyGoal()
           .timeout(_entryProbeTimeout);
-      if (hasGoal) next = _Stage.app;
+
+      final hasAcademic = profile != null &&
+          (profile.college ?? '').trim().isNotEmpty &&
+          (profile.enrollmentId ?? '').trim().isNotEmpty;
+
+      if (!hasAcademic) {
+        next = _Stage.academic;
+      } else if (hasGoal) {
+        next = _Stage.app;
+      } else {
+        next = _Stage.upload;
+      }
     } catch (e) {
       failure = friendlyError(e);
       offline = isNetworkError(e);
@@ -243,7 +259,8 @@ class _RootFlowState extends State<RootFlow> {
     // tour, is the landing here — reaching these stages means the app has
     // already been used.
     if (!auth.isSignedIn &&
-        (_stage == _Stage.upload ||
+        (_stage == _Stage.academic ||
+            _stage == _Stage.upload ||
             _stage == _Stage.target ||
             _stage == _Stage.app)) {
       _stage = _Stage.login;
@@ -256,17 +273,20 @@ class _RootFlowState extends State<RootFlow> {
           onSignUp: () => _go(_Stage.signup),
         ),
       _Stage.signup => SignupScreen(
-          onCreate: () {},
+          onCreate: () => _go(_Stage.academic),
           onSignIn: () => _go(_Stage.login),
+        ),
+      _Stage.academic => AcademicProfileScreen(
+          onDone: () async {
+            final hasGoal = await const GoalRepository().hasAnyGoal();
+            _go(hasGoal ? _Stage.app : _Stage.upload);
+          },
+          onBack: () => auth.signOut(),
         ),
       _Stage.upload => UploadMaterialScreen(
           onNext: () => _go(_Stage.target),
-          // Upload is the first step *after* auth, so there is no earlier
-          // onboarding stage to return to — the tour is install-scoped and
-          // signup already happened. Back therefore means "leave this
-          // account's onboarding", and the sign-out listener above lands on
-          // the sign-in screen.
-          onBack: () => auth.signOut(),
+          // Upload follows academic details, so back returns there.
+          onBack: () => _go(_Stage.academic),
         ),
       _Stage.target => SetTargetScreen(
           onDone: () => _go(_Stage.app),
