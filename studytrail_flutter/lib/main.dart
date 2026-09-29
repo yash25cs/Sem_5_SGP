@@ -193,6 +193,7 @@ class _RootFlowState extends State<RootFlow> {
 
       final hasAcademic = profile != null &&
           (profile.college ?? '').trim().isNotEmpty &&
+          (profile.branch ?? '').trim().isNotEmpty &&
           (profile.enrollmentId ?? '').trim().isNotEmpty;
 
       if (!hasAcademic) {
@@ -269,7 +270,7 @@ class _RootFlowState extends State<RootFlow> {
     final child = switch (_stage) {
       _Stage.welcome => WelcomeScreen(onDone: _finishWelcome),
       _Stage.login => LoginScreen(
-          onSignIn: () {},
+          onSignIn: () => _resolveEntryStage(),
           onSignUp: () => _go(_Stage.signup),
         ),
       _Stage.signup => SignupScreen(

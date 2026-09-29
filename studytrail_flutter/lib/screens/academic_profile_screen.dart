@@ -168,7 +168,7 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
                     borderRadius: BorderRadius.circular(99),
                   ),
                   child: Text(
-                    widget.isEditing ? 'Settings' : 'Step 1 of 3',
+                    widget.isEditing ? 'Settings' : 'Academic Profile',
                     style: TextStyle(
                       color: p.primary,
                       fontSize: 12,

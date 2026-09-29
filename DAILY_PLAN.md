@@ -335,5 +335,11 @@ yet, and the device pass has to come first.
   - Wrapped top-right `GradAvatar` with interactive tap detection and a tooltip.
   - Configured with `onOpenProfile` callback that smoothly switches to Tab 4 (Profile) in `HomeShell`.
   - Added fallback navigation pushing `ProfileScreen` if opened outside `HomeShell`.
+
+### Returning / Old User Login Support
+- **`RootFlow` (`lib/main.dart`):**
+  - Connected `onSignIn` on `LoginScreen` to execute `_resolveEntryStage()`.
+  - In `_resolveEntryStage()`, checks whether `college`, `branch`, and `enrollmentId` are populated. If any are missing, returning users are immediately guided to `AcademicProfileScreen` to input their academic credentials.
+  - Upon saving, returning users with existing goals automatically proceed straight into the main app shell without having to re-upload materials or recreate goals.
 - **Validation:**
   - Validated with `flutter analyze`: **0 issues found** (100% clean compilation).
