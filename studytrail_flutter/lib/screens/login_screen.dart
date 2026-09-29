@@ -204,17 +204,19 @@ class BrandMark extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 46,
-          height: 46,
+          width: 50,
+          height: 50,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [p.primary, p.primary2]),
             boxShadow: p.glow,
           ),
-          child: const Icon(Symbols.route, color: Colors.white, size: 26),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.asset(
+              'assets/images/studytrail_logo.jpg',
+              fit: BoxFit.cover,
+            ),
+          ),
         ),
         const SizedBox(width: 12),
         Text.rich(TextSpan(children: [

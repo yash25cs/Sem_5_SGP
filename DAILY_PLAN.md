@@ -250,3 +250,21 @@ yet, and the device pass has to come first.
   - Enhanced badge detail modal sheet (`_showBadgeDetail`) with a clear "How to earn" explanation box and unmistakable "Earned!" vs "Not earned yet" status chips.
   - Verified widget tree rendering via automated test and validated codebase health with `flutter analyze` (0 issues).
 
+## Day 14 – App Logo & Roadmap UI Overhaul
+
+### App Logo Update
+- **New StudyTrail Logo:** Generated a professional app icon featuring an open book with a winding trail and milestone dots — captures the "study + journey" brand identity.
+- **Launcher Icons:** Added `flutter_launcher_icons` package and regenerated all Android `mipmap-*` launcher icon sizes (mdpi through xxxhdpi) plus adaptive icon assets.
+- **In-App Branding:** Updated `BrandMark` widget on the login/signup screens to display the new logo image (`assets/images/studytrail_logo.jpg`) instead of the old gradient + route icon placeholder.
+- **Asset Pipeline:** Added Flutter asset declaration in `pubspec.yaml` for the logo image.
+
+### Roadmap Screen UI Improvements
+- **Stats Dashboard:** Replaced the simple progress bar with a rich dashboard featuring a circular progress ring (custom `_ProgressRingPainter`) plus 4 mini-stat cards showing topics done, weeks done, current week, and days remaining.
+- **Motivational Hints:** Dynamic motivational text that changes based on overall progress level (✨ → 🚀 → 🔥 → 💪).
+- **Collapsible Milestones:** Completed and upcoming milestone cards are now expandable/collapsible with tap-to-toggle and animated rotation on the expand arrow.
+- **Status Badges:** Each milestone header now shows a colored pill badge — "DONE" (green) or "IN PROGRESS" (primary) — for instant visual scanning.
+- **Week Numbers:** Timeline dots for upcoming milestones now display the week number instead of a lock icon, making the timeline more informative.
+- **Task Count & Time Estimates:** Each milestone card shows a compact summary line with the task count and estimated study time (~25 min per topic).
+- **Better Task Items:** Individual task rows now have subtle background containers and animated icon switching when checked/unchecked.
+- **Gradient Timeline Connectors:** Completed milestone connectors now use a gradient fade instead of a flat line for visual depth.
+- **Confetti Celebration:** Completing all tasks in a milestone triggers a confetti burst at the top of the screen.
