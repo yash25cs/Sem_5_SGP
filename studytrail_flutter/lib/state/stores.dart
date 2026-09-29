@@ -13,3 +13,4 @@ export 'profile_store.dart';
 export 'progress_store.dart';
 export 'quiz_store.dart';
 export 'roadmap_store.dart';
+export 'room_store.dart';

@@ -268,3 +268,43 @@ yet, and the device pass has to come first.
 - **Better Task Items:** Individual task rows now have subtle background containers and animated icon switching when checked/unchecked.
 - **Gradient Timeline Connectors:** Completed milestone connectors now use a gradient fade instead of a flat line for visual depth.
 - **Confetti Celebration:** Completing all tasks in a milestone triggers a confetti burst at the top of the screen.
+
+## Day 15 – Real-Time Study Buddy Room & Group Focus System
+
+### Database & Backend Architecture (`supabase/migrations/0010_study_rooms.sql`)
+- **Tables Created:**
+  - `study_rooms`: Stores room configuration (name, invite_code, host, timer/break durations, max members, status).
+  - `room_members`: Tracks active students in each room with roles (`host`, `member`).
+  - `room_messages`: Peer-to-peer room chat messages with automatic Supabase Realtime publication.
+- **Security & RLS:**
+  - Comprehensive Row Level Security policies ensuring privacy: students can only read and write messages/members for rooms they have joined.
+  - Hosts have exclusive authority to update or close rooms.
+- **Security Definer RPCs:**
+  - `create_study_room`: Atomically creates a room and assigns host role to creator.
+  - `join_room_by_code`: Validates 6-character alphanumeric code, checks capacity limits, and enrolls student.
+  - `close_study_room`: Authoritative host closure mechanism.
+
+### Realtime State & Synchronized Timer (`lib/state/room_store.dart`)
+- **Presence Tracking:** Tracks connected students via `channel.onPresenceSync` and broadcasts live focus status (`focusing`, `on_break`, `idle`).
+- **Synchronized Pomodoro Timer:**
+  - Host controls start, pause, resume, reset, and phase switching.
+  - Timer commands are broadcast over the `timer` event so every room member's timer ticks in lockstep with the host.
+- **Peer-to-Peer Realtime Chat:**
+  - Optimistic message delivery with dual broadcast and PostgreSQL change listener for resilient instant chat.
+
+### Frontend Screens & Navigation
+- **`BuddyRoomScreen` Lobby (`lib/screens/buddy_room_screen.dart`):**
+  - Transformed the stub leaderboard into a comprehensive Study Room Lobby.
+  - Active rooms list with live count badges, focus length indicators, and direct join buttons.
+  - 6-character invite code input for instant room entry.
+  - "Create Room" bottom sheet with configurable focus (25/45/50m) and break (5/10/15m) times.
+  - Seamlessly integrates the Class Cohort Leaderboard and leave class option below the room actions.
+- **`StudyRoomScreen` Session (`lib/screens/study_room_screen.dart`):**
+  - Full in-room experience featuring large synchronized countdown dial and progress track.
+  - Host controls vs member sync indicators.
+  - Live study buddy avatars with active presence indicators.
+  - Tap-to-copy room invite code badge with toast feedback.
+  - Integrated real-time room chat with custom message bubbles.
+  - Host confirmation dialog when leaving/closing the room.
+- **Validation:**
+  - Passed `flutter analyze` with 0 issues.

@@ -318,6 +318,7 @@ class _SignedInScope extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => GamificationStore()),
         ChangeNotifierProvider(create: (_) => ProfileStore()),
         ChangeNotifierProvider(create: (_) => PomodoroStore()),
+        ChangeNotifierProvider(create: (_) => RoomStore()),
         ChangeNotifierProvider(create: (_) => OnboardingStore()),
       ],
       child: child,

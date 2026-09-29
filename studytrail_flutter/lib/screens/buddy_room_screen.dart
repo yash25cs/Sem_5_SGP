@@ -8,13 +8,10 @@ import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
+import 'study_room_screen.dart';
 
-/// Study buddies — the student's class and the classmates actually in it.
-///
-/// Everything here comes from `profiles.class_id` and the `get_class_leaderboard`
-/// RPC. Live presence ("studying now"), a shared group timer and room chat need
-/// realtime channels that don't exist yet, so the screen says so rather than
-/// showing peers who aren't there.
+/// Study buddies — browse active study rooms, join by code, create rooms,
+/// and view classmates in your cohort.
 class BuddyRoomScreen extends StatefulWidget {
   const BuddyRoomScreen({super.key, this.onBack});
 
@@ -25,18 +22,26 @@ class BuddyRoomScreen extends StatefulWidget {
 }
 
 class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
+  final _codeController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
-    // Both stores live in `_SignedInScope` and are shared with Settings and
-    // Achievements — only load what hasn't been loaded already.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final profiles = context.read<ProfileStore>();
       if (!profiles.loaded) profiles.load();
       final game = context.read<GamificationStore>();
       if (!game.loaded) game.load();
+      final rooms = context.read<RoomStore>();
+      rooms.loadLobby(classId: profiles.profile?.classId);
     });
+  }
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
   }
 
   void _toast(String message) {
@@ -46,11 +51,246 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
   }
 
   Future<void> _refresh() async {
-    await context.read<ProfileStore>().load();
-    if (mounted) await context.read<GamificationStore>().load();
+    final profiles = context.read<ProfileStore>();
+    await profiles.load();
+    if (!mounted) return;
+    await context.read<GamificationStore>().load();
+    if (!mounted) return;
+    await context.read<RoomStore>().loadLobby(classId: profiles.profile?.classId);
   }
 
-  /// Joining a class is what fills this screen — and the leaderboard.
+  /// Opens the active StudyRoomScreen.
+  void _openRoom(StudyRoom room) {
+    context.read<RoomStore>().enterRoom(room);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StudyRoomScreen(
+          onLeave: () {
+            context.read<RoomStore>().loadLobby(
+                classId: context.read<ProfileStore>().profile?.classId);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Joins via 6-character invite code.
+  Future<void> _joinByCode() async {
+    final code = _codeController.text.trim();
+    if (code.isEmpty) {
+      _toast('Enter a 6-letter room code');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+
+    final store = context.read<RoomStore>();
+    final room = await store.joinByCode(code);
+    if (!mounted) return;
+
+    if (room != null) {
+      _codeController.clear();
+      _openRoom(room);
+    } else {
+      _toast(store.error ?? 'Invalid room code or room is full.');
+    }
+  }
+
+  /// Opens modal sheet to configure and create a new study room.
+  Future<void> _showCreateRoomSheet() async {
+    final p = context.p;
+    final nameController = TextEditingController(text: 'Study Session');
+    int selectedTimer = 25;
+    int selectedBreak = 5;
+    int maxMembers = 8;
+
+    final created = await showModalBottomSheet<StudyRoom>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: p.line2,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Create Study Room',
+                style: TextStyle(
+                  color: p.ink,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Focus with classmates using a synchronized timer and live chat.',
+                style: TextStyle(color: p.ink2, fontSize: 13.5),
+              ),
+              const SizedBox(height: 18),
+
+              // Room Name
+              Text('Room Name',
+                  style: TextStyle(
+                      color: p.ink2,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Container(
+                decoration: BoxDecoration(
+                  color: p.card2,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: TextField(
+                  controller: nameController,
+                  style: TextStyle(color: p.ink, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. DSA Grind Session',
+                    hintStyle: TextStyle(color: p.ink3, fontSize: 14),
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Focus Duration
+              Text('Focus Duration',
+                  style: TextStyle(
+                      color: p.ink2,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  for (final min in [25, 45, 50]) ...[
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setModalState(() => selectedTimer = min),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: selectedTimer == min
+                                ? p.primary
+                                : p.card2,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '$min min',
+                            style: TextStyle(
+                              color: selectedTimer == min
+                                  ? Colors.white
+                                  : p.ink2,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (min != 50) const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Break Duration
+              Text('Break Duration',
+                  style: TextStyle(
+                      color: p.ink2,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  for (final min in [5, 10, 15]) ...[
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setModalState(() => selectedBreak = min),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: selectedBreak == min
+                                ? p.amber
+                                : p.card2,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '$min min',
+                            style: TextStyle(
+                              color: selectedBreak == min
+                                  ? p.onAmber
+                                  : p.ink2,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (min != 15) const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 22),
+
+              PillButton(
+                'Create & Enter Room',
+                icon: Symbols.groups,
+                onTap: () async {
+                  final name = nameController.text.trim();
+                  if (name.isEmpty) return;
+
+                  final store = sheetCtx.read<RoomStore>();
+                  final classId =
+                      sheetCtx.read<ProfileStore>().profile?.classId;
+
+                  final room = await store.createRoom(
+                    name: name,
+                    classId: classId,
+                    timerMin: selectedTimer,
+                    breakMin: selectedBreak,
+                    maxMembers: maxMembers,
+                  );
+
+                  if (sheetCtx.mounted && room != null) {
+                    Navigator.of(sheetCtx).pop(room);
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (created != null && mounted) {
+      _openRoom(created);
+    }
+  }
+
   Future<void> _joinClass() async {
     final store = context.read<ProfileStore>();
     if (store.classes.isEmpty) await store.loadClasses();
@@ -107,8 +347,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       _toast(store.error ?? 'Could not join that class');
       return;
     }
-    // The leaderboard is class-scoped, so it only has rows once we're in one.
-    await context.read<GamificationStore>().load();
+    await _refresh();
   }
 
   Future<void> _leaveClass() async {
@@ -147,10 +386,9 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       _toast(store.error ?? 'Could not leave the class');
       return;
     }
-    await context.read<GamificationStore>().load();
+    await _refresh();
   }
 
-  /// 1240 → "1,240".
   String _thousands(int n) =>
       n.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
 
@@ -159,18 +397,21 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     final p = context.p;
     final profiles = context.watch<ProfileStore>();
     final game = context.watch<GamificationStore>();
+    final roomStore = context.watch<RoomStore>();
 
     final joined = profiles.profile?.classId != null;
     final members = game.leaderboard;
-    final firstLoad = profiles.loading && !profiles.loaded;
+    final activeRooms = roomStore.activeRooms;
 
     return Scaffold(
       backgroundColor: p.bg,
       body: Column(
         children: [
           const TopInset(),
+
+          // ── App Bar ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 20, 6),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: Row(
               children: [
                 RoundIconButton(Symbols.arrow_back, onTap: widget.onBack),
@@ -180,34 +421,31 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          joined
-                              ? (profiles.className ?? 'Your class')
-                              : 'Study buddies',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: p.ink,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800)),
+                        'Study Buddy Rooms',
+                        style: TextStyle(
+                          color: p.ink,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                       Text(
-                          !joined
-                              ? 'Not in a group yet'
-                              : members.isEmpty
-                                  ? 'Just you so far'
-                                  : '${members.length} '
-                                      'classmate${members.length == 1 ? '' : 's'}',
-                          style: TextStyle(color: p.ink3, fontSize: 12)),
+                        'Focus with classmates in real-time',
+                        style: TextStyle(color: p.ink3, fontSize: 12),
+                      ),
                     ],
                   ),
                 ),
-                if (joined)
-                  RoundIconButton(Symbols.logout,
-                      plain: false,
-                      color: p.error,
-                      onTap: profiles.busy ? null : _leaveClass),
+                // Create room button
+                RoundIconButton(
+                  Symbols.add,
+                  plain: false,
+                  color: p.primary,
+                  onTap: _showCreateRoomSheet,
+                ),
               ],
             ),
           ),
+
           Expanded(
             child: RefreshIndicator(
               color: p.primary,
@@ -215,21 +453,173 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 children: [
-                  if (profiles.error != null)
-                    ErrorNotice(
-                      message: profiles.error!,
-                      onRetry: () => context.read<ProfileStore>().load(),
+                  // ── Join by Code Card ──
+                  AppCard(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        Icon(Symbols.key, color: p.primary, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _codeController,
+                            textCapitalization: TextCapitalization.characters,
+                            style: TextStyle(
+                              color: p.ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.2,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: 'Enter 6-letter room code…',
+                              hintStyle: TextStyle(
+                                color: p.ink3,
+                                fontSize: 13,
+                                fontWeight: FontWeight.normal,
+                                letterSpacing: 0,
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                            onSubmitted: (_) => _joinByCode(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        PillButton(
+                          'Join',
+                          expand: false,
+                          onTap: _joinByCode,
+                        ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: 20),
 
-                  if (firstLoad)
-                    const LoadingBlock(height: 180)
-                  else if (!joined)
+                  // ── Live Study Rooms Header ──
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Symbols.sensors, size: 20, color: p.green),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Active Study Rooms',
+                            style: TextStyle(
+                              color: p.ink,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (activeRooms.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: p.greenSoft,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(
+                            '${activeRooms.length} live',
+                            style: TextStyle(
+                              color: p.green,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // ── Rooms List or Empty State ──
+                  if (activeRooms.isEmpty)
+                    AppCard(
+                      color: p.card2.withValues(alpha: 0.5),
+                      shadow: false,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 20),
+                      child: Column(
+                        children: [
+                          Icon(Symbols.door_open,
+                              size: 36, color: p.primary.withValues(alpha: 0.7)),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No study rooms open right now',
+                            style: TextStyle(
+                              color: p.ink,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Start a room and invite your classmates to focus together!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: p.ink3, fontSize: 12.5),
+                          ),
+                          const SizedBox(height: 14),
+                          PillButton(
+                            '+ Start a Study Room',
+                            expand: false,
+                            onTap: _showCreateRoomSheet,
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    for (final r in activeRooms) ...[
+                      _RoomTile(
+                        room: r,
+                        onJoin: () => _openRoom(r),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+
+                  const SizedBox(height: 24),
+
+                  // ── Class Cohort Section ──
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Symbols.school, size: 20, color: p.primary),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Your Class Cohort',
+                            style: TextStyle(
+                              color: p.ink,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (joined)
+                        TextButton(
+                          onPressed: profiles.busy ? null : _leaveClass,
+                          child: Text(
+                            'Leave Class',
+                            style: TextStyle(
+                              color: p.error,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  if (!joined)
                     EmptyState(
                       icon: Symbols.groups,
-                      title: 'You haven’t joined a group yet',
+                      title: 'You haven’t joined a class yet',
                       message:
-                          'Join your class to see who else is preparing for the '
-                          'same exams and how you rank against them.',
+                          'Join your college class to see cohort rankings and rooms.',
                       actionLabel: 'Join a class',
                       onAction: profiles.busy ? null : _joinClass,
                     )
@@ -239,7 +629,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                       memberCount: members.length,
                       myRank: game.myRank,
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     CardHeader('Classmates',
                         action: game.loading && !game.loaded
                             ? SizedBox(
@@ -272,39 +662,6 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                           ],
                         ),
                       ),
-                    const SizedBox(height: 20),
-                    AppCard(
-                      color: p.card2,
-                      shadow: false,
-                      child: Row(
-                        children: [
-                          IconTile(Symbols.upcoming,
-                              bg: p.primarySoft, fg: p.primary, size: 44),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('Live rooms are coming',
-                                    style: TextStyle(
-                                        color: p.ink,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w800)),
-                                const SizedBox(height: 3),
-                                Text(
-                                    'Shared focus timers and room chat land in a '
-                                    'later update. For now you can see who’s in '
-                                    'your class and where you stand.',
-                                    style: TextStyle(
-                                        color: p.ink3,
-                                        fontSize: 12.5,
-                                        height: 1.45)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ],
               ),
@@ -316,8 +673,76 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
   }
 }
 
-/// Gradient header card: which class, how many are on StudyTrail, and where the
-/// student sits in it.
+class _RoomTile extends StatelessWidget {
+  const _RoomTile({required this.room, required this.onJoin});
+
+  final StudyRoom room;
+  final VoidCallback onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: p.primarySoft,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(Symbols.timer, color: p.primary, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  room.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: p.ink,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(
+                      '🍅 ${room.timerDurationMin}m focus',
+                      style: TextStyle(color: p.ink3, fontSize: 12),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Code: ${room.inviteCode}',
+                      style: TextStyle(
+                        color: p.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          PillButton(
+            'Join',
+            expand: false,
+            onTap: onJoin,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ClassCard extends StatelessWidget {
   const _ClassCard({
     required this.name,
@@ -402,7 +827,6 @@ class _Stat extends StatelessWidget {
   }
 }
 
-/// One classmate, ordered by XP — same shape the Achievements leaderboard uses.
 class _MemberRow extends StatelessWidget {
   const _MemberRow({required this.entry, required this.xpLabel});
 

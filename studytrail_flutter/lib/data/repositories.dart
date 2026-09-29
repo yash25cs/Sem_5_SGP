@@ -11,5 +11,6 @@ export 'repositories/material_repository.dart';
 export 'repositories/profile_repository.dart';
 export 'repositories/quiz_repository.dart';
 export 'repositories/roadmap_repository.dart';
+export 'repositories/room_repository.dart';
 export 'repositories/task_repository.dart';
 export 'supabase_client.dart';
