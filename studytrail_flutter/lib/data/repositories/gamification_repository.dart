@@ -201,6 +201,19 @@ class GamificationRepository {
         .toList();
   }
 
+  /// XP balance and the rewards catalog with what the caller holds.
+  Future<RewardWallet> getRewardWallet() async {
+    final res = await db.rpc('get_reward_wallet');
+    return RewardWallet.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
+  /// Spends XP on a reward. The server checks the balance and the holding
+  /// cap, and returns the updated wallet.
+  Future<RewardWallet> redeemReward(String key) async {
+    final res = await db.rpc('redeem_reward', params: {'p_key': key});
+    return RewardWallet.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
   /// Completed Pomodoro sessions, newest first.
   Future<List<StudySession>> getStudySessions({int limit = 50}) async {
     final rows = await db

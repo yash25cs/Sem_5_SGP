@@ -278,10 +278,10 @@ class _RootFlowState extends State<RootFlow> {
           onSignIn: () => _go(_Stage.login),
         ),
       _Stage.academic => AcademicProfileScreen(
-          onDone: () async {
-            final hasGoal = await const GoalRepository().hasAnyGoal();
-            _go(hasGoal ? _Stage.app : _Stage.upload);
-          },
+          // The entry check decides app vs. upload and, unlike a bare
+          // `hasAnyGoal()` here, turns a dropped connection into the retry
+          // screen instead of an exception that left the button doing nothing.
+          onDone: _resolveEntryStage,
           onBack: () => auth.signOut(),
         ),
       _Stage.upload => UploadMaterialScreen(

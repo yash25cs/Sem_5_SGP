@@ -106,6 +106,8 @@ class LeaderboardEntry {
     this.avatarInitial,
     this.level = 1,
     this.xp = 0,
+    this.totalXp = 0,
+    this.goldenBorder = false,
     this.isMe = false,
     this.rank = 0,
   });
@@ -114,7 +116,15 @@ class LeaderboardEntry {
   final String fullName;
   final String? avatarInitial;
   final int level;
+
+  /// XP into the current level — resets on every level-up.
   final int xp;
+
+  /// Every XP ever earned. What the leaderboard ranks and shows.
+  final int totalXp;
+
+  /// Bought with XP in the Rewards store.
+  final bool goldenBorder;
   final bool isMe;
 
   /// 1-based position, assigned client-side from the RPC's ordering.
@@ -134,8 +144,80 @@ class LeaderboardEntry {
         avatarInitial: m['avatar_initial'] as String?,
         level: (m['level'] as num?)?.toInt() ?? 1,
         xp: (m['xp'] as num?)?.toInt() ?? 0,
+        // Older databases (before 0012) don't return total_xp.
+        totalXp: (m['total_xp'] as num?)?.toInt() ??
+            (m['xp'] as num?)?.toInt() ??
+            0,
+        goldenBorder: (m['golden_border'] as bool?) ?? false,
         isMe: (m['is_me'] as bool?) ?? false,
         rank: rank,
+      );
+}
+
+/// One item in the Rewards store, with how many the caller holds.
+class RewardItem {
+  const RewardItem({
+    required this.key,
+    required this.title,
+    required this.description,
+    required this.costXp,
+    this.maxHeld,
+    this.held = 0,
+    this.used = 0,
+  });
+
+  final String key;
+  final String title;
+  final String description;
+  final int costXp;
+
+  /// Most that can be held unused at once; null = no cap.
+  final int? maxHeld;
+
+  /// Bought and not yet used.
+  final int held;
+
+  /// Used up — streak freezes that covered a missed day.
+  final int used;
+
+  bool get atCap => maxHeld != null && held >= maxHeld!;
+
+  factory RewardItem.fromMap(Map<String, dynamic> m) => RewardItem(
+        key: m['key'] as String,
+        title: (m['title'] as String?) ?? '',
+        description: (m['description'] as String?) ?? '',
+        costXp: (m['cost_xp'] as num?)?.toInt() ?? 0,
+        maxHeld: (m['max_held'] as num?)?.toInt(),
+        held: (m['held'] as num?)?.toInt() ?? 0,
+        used: (m['used'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// The student's XP balance and the store catalog, from `get_reward_wallet`.
+///
+/// Balance is XP ever earned minus XP ever spent. Spending never lowers level
+/// or leaderboard rank — those read earned XP.
+class RewardWallet {
+  const RewardWallet({
+    this.earned = 0,
+    this.spent = 0,
+    this.balance = 0,
+    this.rewards = const [],
+  });
+
+  final int earned;
+  final int spent;
+  final int balance;
+  final List<RewardItem> rewards;
+
+  factory RewardWallet.fromMap(Map<String, dynamic> m) => RewardWallet(
+        earned: (m['earned'] as num?)?.toInt() ?? 0,
+        spent: (m['spent'] as num?)?.toInt() ?? 0,
+        balance: (m['balance'] as num?)?.toInt() ?? 0,
+        rewards: [
+          for (final r in (m['rewards'] as List? ?? const []))
+            RewardItem.fromMap(Map<String, dynamic>.from(r as Map)),
+        ],
       );
 }
 

@@ -435,6 +435,9 @@ $$;
 -- SECURITY DEFINER so it can read past the owner-only profiles policy, but it
 -- hard-scopes to the caller's own class_id — no cross-class leakage.
 -- ---------------------------------------------------------------------------
+-- 0012 widens the return type; `create or replace` can't change one, so a
+-- re-run of this file drops first. 0012 then re-creates its own version.
+drop function if exists get_class_leaderboard(int);
 create or replace function get_class_leaderboard(limit_count int default 20)
 returns table (
   user_id uuid,
@@ -1730,3 +1733,780 @@ create trigger materials_status_guard
   for each row execute function app_private.material_status_guard();
 
 notify pgrst, 'reload schema';
+-- ============================================================
+-- 0010  Study Buddy Rooms
+-- ============================================================
+-- Adds the tables, RLS policies, and RPCs needed for real-time
+-- study rooms: room creation, membership, chat, and invite codes.
+-- ============================================================
+
+-- ── Helper: generate a random 6-char invite code ─────────────
+create or replace function generate_invite_code()
+returns text
+language sql volatile
+as $$
+  select upper(substr(md5(gen_random_uuid()::text), 1, 6));
+$$;
+
+-- ── Table: study_rooms ───────────────────────────────────────
+create table if not exists study_rooms (
+  id               uuid        primary key default gen_random_uuid(),
+  name             text        not null,
+  invite_code      text        unique not null default generate_invite_code(),
+  created_by       uuid        not null references profiles(id) on delete cascade,
+  class_id         uuid        references classes(id) on delete set null,
+  max_members      int         not null default 10,
+  timer_duration_min int       not null default 25,
+  break_duration_min int       not null default 5,
+  status           text        not null default 'active'
+                               check (status in ('active', 'closed')),
+  created_at       timestamptz not null default now()
+);
+
+create index if not exists idx_study_rooms_status    on study_rooms(status);
+create index if not exists idx_study_rooms_class     on study_rooms(class_id);
+create index if not exists idx_study_rooms_code      on study_rooms(invite_code);
+create index if not exists idx_study_rooms_created_by on study_rooms(created_by);
+
+-- ── Table: room_members ──────────────────────────────────────
+create table if not exists room_members (
+  id        uuid        primary key default gen_random_uuid(),
+  room_id   uuid        not null references study_rooms(id) on delete cascade,
+  user_id   uuid        not null references profiles(id) on delete cascade,
+  role      text        not null default 'member'
+                        check (role in ('host', 'member')),
+  joined_at timestamptz not null default now(),
+  unique(room_id, user_id)
+);
+
+create index if not exists idx_room_members_room on room_members(room_id);
+create index if not exists idx_room_members_user on room_members(user_id);
+
+-- ── Table: room_messages ─────────────────────────────────────
+create table if not exists room_messages (
+  id         uuid        primary key default gen_random_uuid(),
+  room_id    uuid        not null references study_rooms(id) on delete cascade,
+  user_id    uuid        not null references profiles(id) on delete cascade,
+  body       text        not null check (char_length(body) <= 500),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_room_messages_room on room_messages(room_id);
+
+-- ── Enable Realtime for room_messages ────────────────────────
+-- Guarded so the file stays safe to re-run (README: every migration is).
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables
+                  where pubname = 'supabase_realtime'
+                    and schemaname = 'public' and tablename = 'room_messages') then
+    alter publication supabase_realtime add table room_messages;
+  end if;
+end $$;
+
+-- ============================================================
+-- RLS Policies
+-- ============================================================
+
+alter table study_rooms   enable row level security;
+alter table room_members  enable row level security;
+alter table room_messages enable row level security;
+
+-- study_rooms: anyone authed can see active rooms (for lobby)
+drop policy if exists "rooms_select" on study_rooms;
+create policy "rooms_select" on study_rooms for select to authenticated
+  using (true);
+
+-- study_rooms: creator can insert
+drop policy if exists "rooms_insert" on study_rooms;
+create policy "rooms_insert" on study_rooms for insert to authenticated
+  with check (created_by = auth.uid());
+
+-- study_rooms: only host can update (e.g. close room)
+drop policy if exists "rooms_update" on study_rooms;
+create policy "rooms_update" on study_rooms for update to authenticated
+  using (created_by = auth.uid());
+
+-- study_rooms: only host can delete
+drop policy if exists "rooms_delete" on study_rooms;
+create policy "rooms_delete" on study_rooms for delete to authenticated
+  using (created_by = auth.uid());
+
+-- room_members: can see members of rooms you're in
+drop policy if exists "members_select" on room_members;
+create policy "members_select" on room_members for select to authenticated
+  using (
+    room_id in (select room_id from room_members where user_id = auth.uid())
+  );
+
+-- room_members: can join a room (insert yourself)
+drop policy if exists "members_insert" on room_members;
+create policy "members_insert" on room_members for insert to authenticated
+  with check (user_id = auth.uid());
+
+-- room_members: can leave a room (delete yourself)
+drop policy if exists "members_delete" on room_members;
+create policy "members_delete" on room_members for delete to authenticated
+  using (user_id = auth.uid());
+
+-- room_messages: can see messages in rooms you're in
+drop policy if exists "messages_select" on room_messages;
+create policy "messages_select" on room_messages for select to authenticated
+  using (
+    room_id in (select room_id from room_members where user_id = auth.uid())
+  );
+
+-- room_messages: can send messages in rooms you're in
+drop policy if exists "messages_insert" on room_messages;
+create policy "messages_insert" on room_messages for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and room_id in (select room_id from room_members where user_id = auth.uid())
+  );
+
+-- ============================================================
+-- RPCs
+-- ============================================================
+
+--- Create a study room and auto-join the creator as host.
+create or replace function create_study_room(
+  p_name             text,
+  p_class_id         uuid    default null,
+  p_timer_min        int     default 25,
+  p_break_min        int     default 5,
+  p_max_members      int     default 10
+)
+returns json
+language plpgsql security definer
+as $$
+declare
+  v_room study_rooms;
+begin
+  insert into study_rooms (name, created_by, class_id, timer_duration_min, break_duration_min, max_members)
+  values (p_name, auth.uid(), p_class_id, p_timer_min, p_break_min, p_max_members)
+  returning * into v_room;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, auth.uid(), 'host');
+
+  return row_to_json(v_room);
+end;
+$$;
+
+--- Join a room by its 6-char invite code.
+create or replace function join_room_by_code(p_code text)
+returns json
+language plpgsql security definer
+as $$
+declare
+  v_room  study_rooms;
+  v_count int;
+begin
+  select * into v_room from study_rooms
+  where upper(invite_code) = upper(trim(p_code))
+    and status = 'active';
+
+  if not found then
+    raise exception 'Room not found or already closed.' using errcode = 'P0001';
+  end if;
+
+  -- Check capacity
+  select count(*) into v_count from room_members where room_id = v_room.id;
+  if v_count >= v_room.max_members then
+    raise exception 'This room is full.' using errcode = 'P0002';
+  end if;
+
+  -- Check if already a member
+  if exists (select 1 from room_members where room_id = v_room.id and user_id = auth.uid()) then
+    return row_to_json(v_room);
+  end if;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, auth.uid(), 'member');
+
+  return row_to_json(v_room);
+end;
+$$;
+
+--- Close a room (host only).
+create or replace function close_study_room(p_room_id uuid)
+returns void
+language plpgsql security definer
+as $$
+begin
+  update study_rooms
+  set status = 'closed'
+  where id = p_room_id
+    and created_by = auth.uid()
+    and status = 'active';
+
+  if not found then
+    raise exception 'Room not found or you are not the host.' using errcode = 'P0003';
+  end if;
+end;
+$$;
+-- ============================================================
+-- 0011  Study rooms: fix the recursive policy, route every
+--       membership change through an RPC, and let members see
+--       each other's names.
+-- ============================================================
+--
+-- What 0010 shipped with, verified against the hosted project on 2026-09-30:
+--
+-- 1. `members_select` on room_members read room_members inside its own USING
+--    clause. Postgres answers that with 42P17 "infinite recursion detected in
+--    policy", so *every* query touching the table failed — including the
+--    lobby's `room_members(id)` embed and the subquery in both room_messages
+--    policies. The repository swallowed the error, so the lobby was always
+--    empty, the member list was always empty, and no chat message was ever
+--    saved.
+--
+-- 2. `members_insert` let any signed-in student insert themselves straight into
+--    any room, skipping the capacity check, the closed-room check, and the
+--    invite code — and pick role = 'host' while doing it.
+--
+-- 3. Other members' names came from a `profiles(...)` embed, but profiles are
+--    owner-only (0003), so every other member rendered as a blank.
+--
+-- 4. The three SECURITY DEFINER functions had no `set search_path`, and
+--    create_study_room accepted any name, timer length, or capacity.
+--
+-- After this migration the client can read rooms, members and messages, write
+-- its own messages, and delete its own membership (leaving). Everything else —
+-- creating, joining, closing — is an RPC that checks what it has to.
+-- ============================================================
+
+-- ── 1. Non-recursive membership policy ──────────────────────────────────────
+-- Your own rows, plus the rows of any open room. The lobby needs member counts
+-- for rooms you haven't joined, and rooms are public by design (the lobby
+-- lists them), so who is sitting in an open room is not a secret. It reads
+-- study_rooms, whose policy doesn't read room_members, so nothing recurses.
+drop policy if exists members_select on room_members;
+create policy members_select on room_members for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists (
+      select 1 from study_rooms r
+      where r.id = room_members.room_id and r.status = 'active'
+    )
+  );
+
+-- The message policies read room_members through the policy above, which now
+-- resolves. Recreated anyway so that a message can only be *written* to a room
+-- that is still open.
+drop policy if exists messages_select on room_messages;
+create policy messages_select on room_messages for select to authenticated
+  using (
+    room_id in (select m.room_id from room_members m where m.user_id = auth.uid())
+  );
+
+drop policy if exists messages_insert on room_messages;
+create policy messages_insert on room_messages for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and room_id in (select m.room_id from room_members m where m.user_id = auth.uid())
+    and exists (
+      select 1 from study_rooms r
+      where r.id = room_messages.room_id and r.status = 'active'
+    )
+  );
+
+-- ── 2. Privileges ───────────────────────────────────────────────────────────
+-- Supabase's default privileges grant ALL on new public tables to anon and
+-- authenticated; RLS alone decides rows, not verbs. Narrow the verbs.
+revoke all on study_rooms, room_members, room_messages from anon;
+
+-- Rooms are created and closed by RPC only.
+revoke insert, update, delete on study_rooms from authenticated;
+drop policy if exists rooms_insert on study_rooms;
+drop policy if exists rooms_update on study_rooms;
+drop policy if exists rooms_delete on study_rooms;
+
+-- Joining is by RPC only (capacity, open-room check). Leaving stays a plain
+-- delete of your own row — members_delete already scopes it to user_id.
+revoke insert, update on room_members from authenticated;
+drop policy if exists members_insert on room_members;
+
+-- Messages are immutable once sent. `id` is insertable so the client can
+-- pick it up front: the optimistic bubble and the realtime echo then share
+-- one id and de-duplicate. `created_at` is not — the server's clock orders
+-- the transcript, not the sender's.
+revoke insert, update, delete on room_messages from authenticated;
+grant insert (id, room_id, user_id, body) on room_messages to authenticated;
+
+-- ── 3. RPCs ─────────────────────────────────────────────────────────────────
+create or replace function public.create_study_room(
+  p_name        text,
+  p_class_id    uuid default null,
+  p_timer_min   int  default 25,
+  p_break_min   int  default 5,
+  p_max_members int  default 10
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_name text := btrim(coalesce(p_name, ''));
+  v_room study_rooms;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to open a study room.';
+  end if;
+  if char_length(v_name) not between 1 and 60 then
+    raise exception 'Give the room a name of 1 to 60 characters.';
+  end if;
+  if p_timer_min not between 5 and 120
+     or p_break_min not between 1 and 60
+     or p_max_members not between 2 and 20 then
+    raise exception 'Those room settings are out of range.';
+  end if;
+  -- A class-scoped room must be the host's own class, so nobody can plant
+  -- rooms in another cohort's lobby.
+  if p_class_id is not null
+     and p_class_id is distinct from (select class_id from profiles where id = v_uid) then
+    raise exception 'You can only open a room for your own class.';
+  end if;
+
+  -- One open room per host. A host whose app died never ran "close", and
+  -- this is where their ghost room finally goes away.
+  update study_rooms set status = 'closed'
+    where created_by = v_uid and status = 'active';
+
+  insert into study_rooms
+    (name, created_by, class_id, timer_duration_min, break_duration_min, max_members)
+  values
+    (v_name, v_uid, p_class_id, p_timer_min, p_break_min, p_max_members)
+  returning * into v_room;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, v_uid, 'host');
+
+  return row_to_json(v_room);
+end $$;
+
+create or replace function public.join_room_by_code(p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_room  study_rooms;
+  v_count int;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to join a study room.';
+  end if;
+
+  -- FOR UPDATE serialises concurrent joins on the same room, so two students
+  -- racing for the last seat can't both pass the capacity check.
+  select * into v_room from study_rooms
+   where invite_code = upper(btrim(coalesce(p_code, '')))
+     and status = 'active'
+   for update;
+
+  if not found then
+    raise exception 'No open room has that code.';
+  end if;
+
+  if exists (select 1 from room_members
+              where room_id = v_room.id and user_id = v_uid) then
+    return row_to_json(v_room);
+  end if;
+
+  select count(*) into v_count from room_members where room_id = v_room.id;
+  if v_count >= v_room.max_members then
+    raise exception 'This room is full.';
+  end if;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, v_uid, 'member');
+
+  return row_to_json(v_room);
+end $$;
+
+create or replace function public.close_study_room(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update study_rooms
+     set status = 'closed'
+   where id = p_room_id
+     and created_by = auth.uid()
+     and status = 'active';
+
+  if not found then
+    raise exception 'Only the host can close this room.';
+  end if;
+end $$;
+
+-- Members with display names. profiles are owner-only, so this reads past RLS
+-- — and therefore checks membership itself and returns only the two columns a
+-- room shows.
+create or replace function public.get_room_members(p_room_id uuid)
+returns table (
+  user_id        uuid,
+  role           text,
+  joined_at      timestamptz,
+  full_name      text,
+  avatar_initial text
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (select 1 from room_members m
+                  where m.room_id = p_room_id and m.user_id = auth.uid()) then
+    raise exception 'You are not in this room.';
+  end if;
+
+  return query
+    select m.user_id, m.role, m.joined_at, p.full_name, p.avatar_initial
+      from room_members m
+      join profiles p on p.id = m.user_id
+     where m.room_id = p_room_id
+     order by m.joined_at asc;
+end $$;
+
+revoke execute on function public.create_study_room(text, uuid, int, int, int),
+                           public.join_room_by_code(text),
+                           public.close_study_room(uuid),
+                           public.get_room_members(uuid)
+  from public, anon;
+grant execute on function public.create_study_room(text, uuid, int, int, int),
+                          public.join_room_by_code(text),
+                          public.close_study_room(uuid),
+                          public.get_room_members(uuid)
+  to authenticated;
+
+-- ── 4. Rooms close themselves ───────────────────────────────────────────────
+-- When the host leaves, or the last member does, the room is over. Without
+-- this every abandoned room stayed "active" in the lobby forever.
+create or replace function app_private.close_abandoned_room()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update study_rooms r
+     set status = 'closed'
+   where r.id = old.room_id
+     and r.status = 'active'
+     and (r.created_by = old.user_id
+          or not exists (select 1 from room_members m where m.room_id = old.room_id));
+  return null;
+end $$;
+
+drop trigger if exists room_members_close_abandoned on room_members;
+create trigger room_members_close_abandoned
+  after delete on room_members
+  for each row execute function app_private.close_abandoned_room();
+
+-- Existing ghosts from before this migration.
+update study_rooms r
+   set status = 'closed'
+ where r.status = 'active'
+   and not exists (select 1 from room_members m where m.room_id = r.id);
+-- ============================================================
+-- 0012  Rewards store on the server, a streak freeze that
+--       actually freezes, and a leaderboard ranked by total XP.
+-- ============================================================
+--
+-- The Rewards screen used to keep "spent XP" and unlocked coupons in
+-- SharedPreferences: per install rather than per student (a second account on
+-- the same phone inherited the first one's purchases), reset by reinstalling,
+-- and none of the four coupons changed anything in the app. It also measured
+-- the balance against `profiles.xp`, which is XP *within the current level* —
+-- award_xp subtracts the threshold on every level-up — so levelling up made the
+-- balance drop.
+--
+-- Balance here = XP ever earned (sum of activity_log.xp_earned, which 0008
+-- keeps in lock-step with every award) minus XP ever spent. Spending never
+-- touches profiles.xp or level, so buying something can't cost a student
+-- leaderboard rank.
+-- ============================================================
+
+-- ── 1. Catalog ──────────────────────────────────────────────────────────────
+create table if not exists reward_catalog (
+  key         text primary key,
+  title       text not null,
+  description text not null,
+  cost_xp     int  not null check (cost_xp > 0),
+  -- Most a student may hold unused at once; null = no cap.
+  max_held    int  check (max_held is null or max_held > 0),
+  sort_order  int  not null default 0
+);
+
+insert into reward_catalog (key, title, description, cost_xp, max_held, sort_order) values
+  ('streak_freeze', 'Streak Freeze',
+   'Covers one missed day so your streak survives. Used automatically the next time you study. Hold up to 2.',
+   100, 2, 1),
+  ('golden_border', 'Golden Scholar Border',
+   'A gold ring around your name on the class leaderboard. Yours for good.',
+   300, 1, 2)
+on conflict (key) do update
+  set title = excluded.title,
+      description = excluded.description,
+      cost_xp = excluded.cost_xp,
+      max_held = excluded.max_held,
+      sort_order = excluded.sort_order;
+
+alter table reward_catalog enable row level security;
+drop policy if exists reward_catalog_read on reward_catalog;
+create policy reward_catalog_read on reward_catalog for select to authenticated
+  using (true);
+revoke all on reward_catalog from anon;
+revoke insert, update, delete on reward_catalog from authenticated;
+
+-- ── 2. Redemptions ──────────────────────────────────────────────────────────
+create table if not exists reward_redemptions (
+  id           uuid        primary key default gen_random_uuid(),
+  user_id      uuid        not null references auth.users(id) on delete cascade,
+  reward_key   text        not null references reward_catalog(key),
+  cost_xp      int         not null check (cost_xp > 0),
+  redeemed_at  timestamptz not null default now(),
+  -- Streak freezes only: when one was spent, and which missed day it covered.
+  consumed_at  timestamptz,
+  consumed_for date
+);
+
+create index if not exists reward_redemptions_user_idx
+  on reward_redemptions (user_id, reward_key)
+  where consumed_at is null;
+
+alter table reward_redemptions enable row level security;
+drop policy if exists reward_redemptions_own on reward_redemptions;
+create policy reward_redemptions_own on reward_redemptions for select to authenticated
+  using (user_id = auth.uid());
+-- Written only by redeem_reward and log_activity.
+revoke all on reward_redemptions from anon;
+revoke insert, update, delete on reward_redemptions from authenticated;
+
+-- ── 3. Wallet ───────────────────────────────────────────────────────────────
+create or replace function app_private.reward_balance(p_user uuid)
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select (coalesce((select sum(xp_earned) from activity_log where user_id = p_user), 0)
+        - coalesce((select sum(cost_xp)   from reward_redemptions where user_id = p_user), 0))::int
+$$;
+
+-- Everything the Rewards screen shows, in one round trip.
+create or replace function public.get_reward_wallet()
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'Sign in to see your rewards.';
+  end if;
+
+  return json_build_object(
+    'earned',  coalesce((select sum(xp_earned) from activity_log where user_id = v_uid), 0),
+    'spent',   coalesce((select sum(cost_xp) from reward_redemptions where user_id = v_uid), 0),
+    'balance', app_private.reward_balance(v_uid),
+    'rewards', coalesce((
+      select json_agg(json_build_object(
+               'key', c.key,
+               'title', c.title,
+               'description', c.description,
+               'cost_xp', c.cost_xp,
+               'max_held', c.max_held,
+               'held', (select count(*) from reward_redemptions r
+                         where r.user_id = v_uid and r.reward_key = c.key
+                           and r.consumed_at is null),
+               'used', (select count(*) from reward_redemptions r
+                         where r.user_id = v_uid and r.reward_key = c.key
+                           and r.consumed_at is not null)
+             ) order by c.sort_order)
+        from reward_catalog c), '[]'::json)
+  );
+end $$;
+
+create or replace function public.redeem_reward(p_key text)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid     uuid := auth.uid();
+  v_reward  reward_catalog;
+  v_held    int;
+  v_balance int;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to redeem rewards.';
+  end if;
+
+  -- Serialise this student's redemptions: two taps racing each other must not
+  -- both pass the balance check.
+  perform 1 from profiles where id = v_uid for update;
+
+  select * into v_reward from reward_catalog where key = p_key;
+  if not found then
+    raise exception 'That reward is no longer available.';
+  end if;
+
+  select count(*) into v_held from reward_redemptions
+   where user_id = v_uid and reward_key = p_key and consumed_at is null;
+  if v_reward.max_held is not null and v_held >= v_reward.max_held then
+    raise exception 'You already have the most of these you can hold.';
+  end if;
+
+  v_balance := app_private.reward_balance(v_uid);
+  if v_balance < v_reward.cost_xp then
+    raise exception 'You need % more XP for this.', v_reward.cost_xp - v_balance;
+  end if;
+
+  insert into reward_redemptions (user_id, reward_key, cost_xp)
+  values (v_uid, p_key, v_reward.cost_xp);
+
+  return public.get_reward_wallet();
+end $$;
+
+revoke execute on function public.get_reward_wallet(), public.redeem_reward(text)
+  from public, anon;
+grant execute on function public.get_reward_wallet(), public.redeem_reward(text)
+  to authenticated;
+revoke execute on function app_private.reward_balance(uuid) from public;
+
+-- ── 4. Streak freeze ────────────────────────────────────────────────────────
+-- log_activity from 0008, unchanged except for the gap case: when the student
+-- missed one or two days and holds enough freezes to cover every missed day,
+-- the freezes are spent and the streak continues instead of resetting to 1.
+-- Holding is capped at 2, so a gap of 3+ days always resets.
+create or replace function app_private.log_activity(
+  p_user    uuid,
+  p_minutes int default 0,
+  p_tasks   int default 0,
+  p_xp      int default 0
+)
+returns activity_log
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_today   date := current_date;
+  v_row     activity_log;
+  v_last    date;
+  v_cur     int;
+  v_missed  int;
+  v_freezes int;
+begin
+  insert into activity_log (user_id, activity_date, minutes_studied,
+                            tasks_completed, xp_earned)
+  values (p_user, v_today, greatest(0, p_minutes), greatest(0, p_tasks),
+          greatest(0, p_xp))
+  on conflict (user_id, activity_date) do update
+    set minutes_studied = activity_log.minutes_studied + greatest(0, p_minutes),
+        tasks_completed = activity_log.tasks_completed + greatest(0, p_tasks),
+        xp_earned       = activity_log.xp_earned + greatest(0, p_xp)
+  returning * into v_row;
+
+  -- Roll the streak: same day = no-op, yesterday = +1, a gap covered by
+  -- freezes = +1 (freezes spent), anything else = reset to 1.
+  select last_active_date, current_streak
+    into v_last, v_cur
+    from streaks where user_id = p_user;
+
+  if found and v_last is distinct from v_today then
+    if v_last = v_today - 1 then
+      v_cur := coalesce(v_cur, 0) + 1;
+    else
+      v_missed := v_today - v_last - 1;   -- null when never active
+      select count(*) into v_freezes from reward_redemptions
+       where user_id = p_user and reward_key = 'streak_freeze'
+         and consumed_at is null;
+
+      if v_missed between 1 and v_freezes and coalesce(v_cur, 0) > 0 then
+        for i in 1..v_missed loop
+          update reward_redemptions
+             set consumed_at = now(), consumed_for = v_last + i
+           where id = (select id from reward_redemptions
+                        where user_id = p_user and reward_key = 'streak_freeze'
+                          and consumed_at is null
+                        order by redeemed_at
+                        limit 1);
+        end loop;
+        v_cur := v_cur + 1;
+      else
+        v_cur := 1;
+      end if;
+    end if;
+
+    update streaks
+      set current_streak   = v_cur,
+          best_streak      = greatest(best_streak, v_cur),
+          last_active_date = v_today
+      where user_id = p_user;
+  end if;
+
+  return v_row;
+end $$;
+
+-- ── 5. Leaderboard ──────────────────────────────────────────────────────────
+-- 0004 ordered by `p.xp desc, p.level desc`. profiles.xp resets on every
+-- level-up, so a level-3 student with 10 XP into the level ranked below a
+-- level-1 student with 400. Rank by total XP earned instead, and say who has
+-- the golden border. Return type changes, so drop first.
+drop function if exists public.get_class_leaderboard(int);
+create function public.get_class_leaderboard(limit_count int default 20)
+returns table (
+  user_id        uuid,
+  full_name      text,
+  avatar_initial text,
+  level          int,
+  xp             int,
+  total_xp       int,
+  golden_border  boolean,
+  is_me          boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  my_class uuid;
+begin
+  select class_id into my_class from profiles where id = auth.uid();
+  if my_class is null then
+    return;
+  end if;
+
+  return query
+    select p.id, p.full_name, p.avatar_initial, p.level, p.xp,
+           coalesce((select sum(a.xp_earned) from activity_log a
+                      where a.user_id = p.id), 0)::int as total_xp,
+           exists (select 1 from reward_redemptions r
+                    where r.user_id = p.id and r.reward_key = 'golden_border')
+             as golden_border,
+           (p.id = auth.uid()) as is_me
+      from profiles p
+     where p.class_id = my_class
+     order by total_xp desc, p.level desc, p.xp desc, p.full_name asc
+     limit greatest(1, least(limit_count, 100));
+end $$;
+
+revoke execute on function public.get_class_leaderboard(int) from public, anon;
+grant execute on function public.get_class_leaderboard(int) to authenticated;

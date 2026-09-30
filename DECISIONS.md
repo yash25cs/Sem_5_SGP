@@ -375,6 +375,53 @@ non-trivial choice.
   instead of upgrading it — a one-time uninstall, and nothing is lost that isn't
   in Supabase.
 
+### D-024 — Study rooms: every membership change is an RPC
+
+- **Decision:** `0011_study_rooms_fix.sql` revokes the client's INSERT on
+  `room_members` and INSERT/UPDATE/DELETE on `study_rooms`. Creating, joining and
+  closing go through `create_study_room`, `join_room_by_code` and
+  `close_study_room`; the lobby's Join button calls `join_room_by_code` with the
+  room's own code. Leaving stays a plain delete of your own row, and a trigger
+  closes the room when the host or the last member leaves. Member names come from
+  `get_room_members()`, which checks membership before reading past the
+  owner-only `profiles` policy.
+- **Why:** 0010's `members_select` read `room_members` inside its own policy, so
+  every query touching the table failed with 42P17 and the repository hid it
+  behind empty lists — lobby, member list and saved chat were all silently dead.
+  Fixing only the recursion would have left `members_insert` letting anyone insert
+  themselves into any room as `host`, past the capacity and closed-room checks.
+  Each of those checks needs a lock or a read the client can't be trusted with, so
+  the write moved behind the check instead of the check being copied into
+  policies.
+- **Trade-off:** Open rooms and who sits in them are visible to every signed-in
+  student, as the lobby already implied. Broadcast and presence ride a public
+  Realtime channel named after the room id; making them private needs Realtime
+  Authorization policies, which this project hasn't enabled. A host whose app is
+  killed leaves an "active" room behind until they open another (one open room
+  per host) — the lobby hides rooms older than 12 hours in the meantime.
+
+### D-025 — Rewards are bought with a balance, not with level XP
+
+- **Decision:** `0012_rewards_store.sql` moves the store to the server. Balance =
+  `sum(activity_log.xp_earned)` − `sum(reward_redemptions.cost_xp)`;
+  `redeem_reward()` locks the student's profile row, checks balance and the
+  holding cap, and inserts. Only rewards with a server-enforced effect are sold:
+  the streak freeze (consumed inside `log_activity` when it covers every missed
+  day of a 1–2 day gap) and the golden border (returned by
+  `get_class_leaderboard`). The leaderboard ranks by total XP earned.
+- **Why:** The previous screen kept "spent XP" in SharedPreferences, so purchases
+  belonged to the phone rather than the student, and none of its four coupons did
+  anything. It also measured against `profiles.xp`, which `award_xp` resets on
+  every level-up, so levelling up lowered the balance — and the same column made
+  the leaderboard rank a level-3 student below a level-1 one. `activity_log` is
+  kept equal to every award since 0008, so it is the one number that means "XP
+  ever earned".
+- **Trade-off:** Spending never touches level or rank, so the store can't be used
+  to lose places, but it also means rewards are "free" in leaderboard terms. The
+  freeze is capped at two held, so a three-day absence always resets. Streak days
+  are still `current_date` on a UTC server, so a day boundary falls at 05:30 IST —
+  unchanged from 0008, and the freeze doesn't paper over it.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

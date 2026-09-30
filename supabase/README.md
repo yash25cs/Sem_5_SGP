@@ -7,9 +7,9 @@ existing Flutter UI.
 ```
 supabase/
   config.toml          # local/dev project config
-  migrations/          # ordered SQL — apply 0001 → 0009
-  all_migrations.sql   # GENERATED: all nine concatenated, for the SQL editor
-  functions/           # Edge Functions: embed-material, chat, generate-*, _shared/
+  migrations/          # ordered SQL — apply 0001 → 0012
+  all_migrations.sql   # GENERATED: all twelve concatenated, for the SQL editor
+  functions/           # Edge Functions: embed-material, chat, generate-*, summarize-material, delete-account, _shared/
 ```
 
 ## What's in the migrations
@@ -25,6 +25,9 @@ supabase/
 | `0007_activity.sql` | `activity_log` roll-up, streak advance, `finish_quiz_attempt()` |
 | `0008_rewards.sql` | **Security.** `app_private` schema, `xp_rules`, server-derived XP + badge evaluation, column-level privileges. Closes REVIEW.md P0 |
 | `0009_atomicity.sql` | `create_goal()` (three writes → one transaction), retryable material ingest. Closes REVIEW.md P1 |
+| `0010_study_rooms.sql` | `study_rooms`, `room_members`, `room_messages` (Realtime-published), `create_study_room` / `join_room_by_code` / `close_study_room` |
+| `0011_study_rooms_fix.sql` | **Fixes 0010.** Non-recursive `room_members` policy (0010's was 42P17 on every read), joins/creates/closes RPC-only, `get_room_members()` for names, `search_path` + input checks on the room RPCs, rooms auto-close when the host or last member leaves |
+| `0012_rewards_store.sql` | `reward_catalog` + `reward_redemptions`, `get_reward_wallet()` / `redeem_reward()` (balance = XP earned − XP spent), streak freezes consumed inside `log_activity`, `get_class_leaderboard()` ranked by total XP with `golden_border` |
 
 All files are idempotent — safe to re-run.
 
@@ -102,7 +105,7 @@ the policies themselves, query PostgREST with a real user JWT.
 
 ## Edge Functions
 
-Five are written, all under `functions/`:
+Seven are written, all under `functions/`:
 
 | Function | Body | Does |
 |---|---|---|
@@ -111,13 +114,15 @@ Five are written, all under `functions/`:
 | `generate-roadmap` | `{goalId}` | Reads the goal, its subjects and the distinct `unit_label`s across the student's materials, writes a weekly plan (2–12 weeks from `exam_date`/`pace`), **replaces** the goal's `milestones` + `milestone_tasks`, and sets `goals.roadmap_days` / `current_day`. |
 | `generate-quiz` | `{materialId, length?}` | Reads one material's chunks in order, writes a 5/10/15-question MCQ set into `quizzes` + `quiz_questions`. Appends — `quiz_attempts` history hangs off the quiz row. |
 | `generate-flashcards` | `{materialId, count?}` | Same source, writes a new `flashcard_decks` row plus 10/20/30 `flashcards`, each pointing back at the chunk it came from. Every card lands due immediately. |
+| `summarize-material` | `{materialId}` | Same even sample of one material's chunks, returned as 5–10 bullet points. Writes nothing. |
+| `delete-account` | — | Removes the caller's `materials/<uid>/` objects, their rows, then the auth user (every user table cascades from it). Service-role, identity from the JWT only. |
 
-All five verify the JWT (`verify_jwt = true` in `config.toml`) and take the
+All seven verify the JWT (`verify_jwt = true` in `config.toml`) and take the
 caller's identity from it. A `user_id` in the request body is never read.
 
 ### The `service_role` boundary
 
-`embed-material`, `chat` and `generate-flashcards` use **no** elevated key. Each
+`embed-material`, `chat`, `generate-flashcards` and `summarize-material` use **no** elevated key. Each
 builds a `supabase-js` client that forwards the caller's `Authorization` header,
 so RLS decides what they can see and `match_material_chunks` — security-invoker,
 `where c.user_id = auth.uid()` — resolves to the right student. Every table they
@@ -138,6 +143,10 @@ that keeps ownership intact once that key is in the room:
 - every `user_id` written comes from the verified JWT;
 - if the child insert fails, the parent rows just written are deleted, so a
   task-less milestone or an empty quiz never survives.
+
+`delete-account` is the third holder of the key, for the one thing no user
+token can do: `auth.admin.deleteUser`. It takes the user id from the verified
+JWT and nothing else, so the only account it can delete is the caller's.
 
 Deleting is not one of the exceptions: `delete on milestones` is still granted,
 and the FK cascade removes `milestone_tasks` past their revoked `delete`. That is
@@ -200,7 +209,7 @@ npx --yes supabase@latest login
 ```
 
 ```bash
-npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards --use-api --project-ref tmakrbqggezkxtygythc
+npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material delete-account --use-api --project-ref tmakrbqggezkxtygythc
 ```
 
 The deploy is also the first real syntax check — nothing here can be type-checked

@@ -13,21 +13,28 @@ serve(async (req) => {
   const { userId } = await requireUser(req);
   const admin = adminClient();
 
-  // Delete all storage objects for this user in the materials bucket.
+  // Delete all storage objects for this user in the materials bucket. Uploads
+  // live flat under `<userId>/`. `list` returns one page (100 by default), so
+  // keep removing pages until the folder is empty — each pass deletes what it
+  // listed, so the next list starts from what's left.
   try {
-    const { data: objects, error: listError } = await admin.storage
-      .from('materials')
-      .list(userId);
+    for (let pass = 0; pass < 50; pass++) {
+      const { data: objects, error: listError } = await admin.storage
+        .from('materials')
+        .list(userId, { limit: 1000 });
+      if (listError) {
+        console.error('Could not list storage objects', listError);
+        break;
+      }
+      if (!objects || objects.length === 0) break;
 
-    if (listError) {
-      console.error('Could not list storage objects', listError);
-    } else if (objects && objects.length > 0) {
       const paths = objects.map((obj: { name: string }) => `${userId}/${obj.name}`);
       const { error: removeError } = await admin.storage
         .from('materials')
         .remove(paths);
       if (removeError) {
         console.error('Could not remove storage objects', removeError);
+        break;
       }
     }
   } catch (e) {

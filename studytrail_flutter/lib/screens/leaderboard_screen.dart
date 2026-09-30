@@ -5,67 +5,25 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
+import '../widgets/data_states.dart';
+import 'buddy_room_screen.dart';
 
-class _MockCohortStudent {
-  final String name;
-  final int xp;
-  const _MockCohortStudent(this.name, this.xp);
-}
-
-/// Full-featured PW-inspired League Leaderboard Screen with Dark Mode support.
+/// The class leaderboard: everyone in the student's class, ranked by total XP
+/// earned (`get_class_leaderboard`).
+///
+/// Only real classmates are listed. An earlier version padded a sparse class
+/// with nine invented names and showed a "promotion zone" and a 14-day
+/// reshuffle that nothing in the backend implements; a leaderboard that makes
+/// people up can't be trusted about anything else either.
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key, this.onBack});
   final VoidCallback? onBack;
-
-  /// Generates a realistic 30-student cohort if the database class leaderboard is sparse.
-  static List<LeaderboardEntry> resolveEntries(
-    List<LeaderboardEntry> realEntries,
-    Profile? profile,
-  ) {
-    if (realEntries.length >= 5) return realEntries;
-
-    final myXp = profile?.xp ?? 170;
-    final myName = (profile?.fullName ?? '').trim().isEmpty
-        ? 'You'
-        : '${profile!.fullName} (You)';
-
-    // Baseline cohort inspired by the reference screenshot
-    final mockClassmates = [
-      _MockCohortStudent('Ainam Mushtaq', (myXp + 20).clamp(190, 9999)),
-      _MockCohortStudent('Ananya Adivi', (myXp + 4).clamp(174, 9999)),
-      _MockCohortStudent(myName, myXp),
-      _MockCohortStudent('Paras P', (myXp - 62).clamp(50, 9999)),
-      _MockCohortStudent('Charmin Patel', (myXp - 72).clamp(40, 9999)),
-      _MockCohortStudent('Rohan Sharma', (myXp - 85).clamp(35, 9999)),
-      _MockCohortStudent('Devika Nair', (myXp - 95).clamp(30, 9999)),
-      _MockCohortStudent('Kavya Verma', (myXp - 110).clamp(25, 9999)),
-      _MockCohortStudent('Aarav Gupta', (myXp - 120).clamp(20, 9999)),
-      _MockCohortStudent('Tanvi Joshi', (myXp - 135).clamp(15, 9999)),
-    ];
-
-    mockClassmates.sort((a, b) => b.xp.compareTo(a.xp));
-
-    return mockClassmates.indexed.map((e) {
-      final (i, item) = e;
-      final isMe = item.name.contains('(You)') || item.name == 'You';
-      return LeaderboardEntry(
-        userId: isMe ? (profile?.id ?? 'me') : 'mock-$i',
-        fullName: item.name,
-        xp: item.xp,
-        isMe: isMe,
-        rank: i + 1,
-        level: 1,
-      );
-    }).toList();
-  }
 
   @override
   State<LeaderboardScreen> createState() => _LeaderboardScreenState();
 }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  bool _showBanner = true;
-
   @override
   void initState() {
     super.initState();
@@ -76,24 +34,20 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     });
   }
 
-  /// Calculates days left in the current 14-day reshuffle cycle.
-  int get _daysLeftInCycle {
-    final now = DateTime.now();
-    final dayOfYear = now.difference(DateTime(now.year, 1, 1)).inDays;
-    final remaining = 14 - (dayOfYear % 14);
-    return remaining == 0 ? 14 : remaining;
+  void _openRooms() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (routeCtx) =>
+          BuddyRoomScreen(onBack: () => Navigator.of(routeCtx).pop()),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final store = context.watch<GamificationStore>();
     final profile = store.profile;
-    final entries = LeaderboardScreen.resolveEntries(store.leaderboard, profile);
-
-    final myRank = entries.where((e) => e.isMe).firstOrNull?.rank ?? 3;
-    final daysRemaining = _daysLeftInCycle;
+    final entries = store.leaderboard;
+    final inClass = profile?.classId != null;
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -120,11 +74,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Symbols.emoji_events,
-                color: Color(0xFFFFB300), size: 24),
-            onPressed: () => _showLevelUpInfo(context),
-          ),
-          IconButton(
             icon: Icon(Symbols.info, color: p.ink2, size: 22),
             onPressed: () => _showLevelUpInfo(context),
           ),
@@ -137,62 +86,50 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            // Warning/Info Banner
-            if (_showBanner)
-              Container(
-                color: isDark ? p.card2 : const Color(0xFFFFF9E6),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
-                  children: [
-                    const Icon(Symbols.error,
-                        color: Color(0xFFE6A100), size: 20, fill: 1),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        "Don't worry if there's a small error, missing XP points will be added soon!",
-                        style: TextStyle(
-                          color: isDark ? p.amber : const Color(0xFF6B4E00),
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          height: 1.25,
-                        ),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => setState(() => _showBanner = false),
-                      child: Icon(Symbols.close,
-                          size: 18, color: isDark ? p.ink2 : const Color(0xFF6B4E00)),
-                    ),
-                  ],
-                ),
-              ),
-
-            // Top Stage / Podium with light ray & Level Badges
-            _LeaguePodiumStage(currentLevel: 1),
-
+            _LeaguePodiumStage(currentLevel: profile?.level ?? 1),
             const SizedBox(height: 12),
-
-            // Zone Slider Card (Safety Zone vs Promotion Zone)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _ZoneCard(
-                myRank: myRank,
-                daysRemaining: daysRemaining,
-                onInfoTap: () => _showLevelUpInfo(context),
-              ),
-            ),
-
-            const SizedBox(height: 18),
-
-            // Leaderboard List
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  for (final entry in entries)
-                    _LeaderboardItemTile(entry: entry),
-                ],
-              ),
+              child: store.loading && entries.isEmpty
+                  ? const LoadingBlock(height: 180)
+                  : !inClass && profile != null
+                      ? EmptyState(
+                          icon: Symbols.groups,
+                          title: 'Join your class to compete',
+                          message: 'The leaderboard ranks you against '
+                              'classmates. Pick your class in Study Rooms.',
+                          actionLabel: 'Choose my class',
+                          onAction: _openRooms,
+                        )
+                      : entries.isEmpty
+                          ? const EmptyState(
+                              icon: Symbols.leaderboard,
+                              title: 'No rankings yet',
+                              message:
+                                  'Pull down to refresh once you have some XP.',
+                            )
+                          : Column(
+                              children: [
+                                _RankCard(entries: entries),
+                                const SizedBox(height: 18),
+                                for (final entry in entries)
+                                  _LeaderboardItemTile(entry: entry),
+                                if (entries.length < 3) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Only ${entries.length} of your class '
+                                    '${entries.length == 1 ? 'is' : 'are'} on '
+                                    'StudyTrail so far. Share the app and the '
+                                    'race gets interesting.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        color: p.ink3,
+                                        fontSize: 12.5,
+                                        height: 1.4),
+                                  ),
+                                ],
+                              ],
+                            ),
             ),
             const SizedBox(height: 32),
           ],
@@ -211,7 +148,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }
 }
 
-/// The decorative Stage with light beam and level badges (Level 1 Bronze, Level 2 Silver, Level 3 Gold).
+/// The stage: the student's current level on the pedestal, the next two
+/// levels faded behind it.
 class _LeaguePodiumStage extends StatelessWidget {
   const _LeaguePodiumStage({required this.currentLevel});
   final int currentLevel;
@@ -281,7 +219,7 @@ class _LeaguePodiumStage extends StatelessWidget {
             top: 50,
             child: Opacity(
               opacity: 0.4,
-              child: _LevelHexBadge(level: 2, color: const Color(0xFF90A4AE)),
+              child: _LevelHexBadge(level: currentLevel + 1, color: const Color(0xFF90A4AE)),
             ),
           ),
 
@@ -291,7 +229,7 @@ class _LeaguePodiumStage extends StatelessWidget {
             top: 54,
             child: Opacity(
               opacity: 0.3,
-              child: _LevelHexBadge(level: 3, color: const Color(0xFFB0BEC5), size: 30),
+              child: _LevelHexBadge(level: currentLevel + 2, color: const Color(0xFFB0BEC5), size: 30),
             ),
           ),
 
@@ -386,25 +324,40 @@ class _LevelHexBadge extends StatelessWidget {
   }
 }
 
-/// Zone Slider Card showing Safety Zone vs Promotion Zone and user's pinpoint rank.
-class _ZoneCard extends StatelessWidget {
-  const _ZoneCard({
-    required this.myRank,
-    required this.daysRemaining,
-    required this.onInfoTap,
-  });
+/// Where the student stands: rank, class size, and the XP to the next place.
+class _RankCard extends StatelessWidget {
+  const _RankCard({required this.entries});
 
-  final int myRank;
-  final int daysRemaining;
-  final VoidCallback onInfoTap;
+  final List<LeaderboardEntry> entries;
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 30 ranks total. Ranks 1-15: Promotion Zone (Green). Ranks 16-30: Safety Zone (Orange).
-    // The bar runs from left (rank 30) to right (rank 1).
-    final progress = ((30 - myRank) / 29).clamp(0.0, 1.0);
+    final me = entries.where((e) => e.isMe).firstOrNull;
+    final leader = entries.first;
+
+    final String headline;
+    final String detail;
+    if (me == null) {
+      headline = '${entries.length} classmates ranked';
+      detail = 'Earn XP to appear on the board.';
+    } else if (me.rank == 1) {
+      headline = "You're #1 of ${entries.length}";
+      detail = entries.length > 1
+          ? '${me.totalXp - entries[1].totalXp} XP ahead of #2. Keep it up!'
+          : 'Top of the class.';
+    } else {
+      final above = entries[me.rank - 2];
+      final gap = above.totalXp - me.totalXp;
+      headline = "You're #${me.rank} of ${entries.length}";
+      detail = gap <= 0
+          ? 'Level with #${above.rank}. One more task takes the spot.'
+          : '$gap XP behind #${above.rank}. A couple of tasks closes that.';
+    }
+
+    final progress = me == null || leader.totalXp <= 0
+        ? 0.0
+        : (me.totalXp / leader.totalXp).clamp(0.0, 1.0);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -415,178 +368,47 @@ class _ZoneCard extends StatelessWidget {
         boxShadow: p.shadowSm,
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header: Leaderboard updates in X days (i)
-          InkWell(
-            onTap: onInfoTap,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Leaderboard updates in $daysRemaining days',
-                  style: TextStyle(
-                    color: p.ink,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(Symbols.info, size: 16, color: p.ink2),
-              ],
+          Text(
+            headline,
+            style: TextStyle(
+              color: p.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 18),
-
-          // Zone Labels
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Safety zone',
-                style: TextStyle(
-                  color: p.ink2,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+          const SizedBox(height: 4),
+          Text(detail,
+              style: TextStyle(color: p.ink2, fontSize: 13, height: 1.35)),
+          if (me != null) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: p.card2,
+                color: p.primary,
               ),
-              Text(
-                'Promotion zone',
-                style: TextStyle(
-                  color: p.ink,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Zone bar + Floating Pin
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final barWidth = constraints.maxWidth;
-              final pinLeft = (barWidth * progress) - 40;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Floating Rank Tooltip Badge
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: pinLeft.clamp(0.0, barWidth - 84),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isDark ? p.card2 : const Color(0xFFE8F1FC),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                            color: const Color(0xFF63A0F2), width: 1.5),
-                      ),
-                      child: Text(
-                        'Rank: $myRank',
-                        style: TextStyle(
-                          color: p.ink,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-
-                  // Horizontal 2-tone track
-                  Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      Row(
-                        children: [
-                          // Safety Zone (Orange)
-                          Expanded(
-                            flex: 1,
-                            child: Container(
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFFBBF24),
-                                borderRadius: BorderRadius.horizontal(
-                                    left: Radius.circular(999)),
-                              ),
-                            ),
-                          ),
-                          // Promotion Zone (Green)
-                          Expanded(
-                            flex: 1,
-                            child: Container(
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF86EFAC),
-                                borderRadius: BorderRadius.horizontal(
-                                    right: Radius.circular(999)),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      // Blue Circular Slider Thumb
-                      Positioned(
-                        left: (barWidth * progress - 8).clamp(0.0, barWidth - 16),
-                        child: Container(
-                          width: 16,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF3B82F6),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF3B82F6)
-                                    .withValues(alpha: 0.4),
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-
-                  // Rank labels (30, 15, 1)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('30',
-                          style: TextStyle(
-                              color: p.ink3,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                      Text('Ranks',
-                          style: TextStyle(
-                              color: p.ink3,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                      Text('15',
-                          style: TextStyle(
-                              color: p.ink3,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                      Text('Ranks',
-                          style: TextStyle(
-                              color: p.ink3,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                      Text('1',
-                          style: TextStyle(
-                              color: p.ink3,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ],
-              );
-            },
-          ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('You · ${me.totalXp} XP',
+                    style: TextStyle(
+                        color: p.ink3,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600)),
+                Text('#1 · ${leader.totalXp} XP',
+                    style: TextStyle(
+                        color: p.ink3,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -597,6 +419,8 @@ class _ZoneCard extends StatelessWidget {
 class _LeaderboardItemTile extends StatelessWidget {
   const _LeaderboardItemTile({required this.entry});
   final LeaderboardEntry entry;
+
+  static const _gold = Color(0xFFEAB308);
 
   Color _rankBadgeColor(int rank) {
     if (rank == 1) return const Color(0xFFF59E0B); // Gold / Yellow
@@ -622,8 +446,12 @@ class _LeaderboardItemTile extends StatelessWidget {
             : p.card,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isMe ? p.primary : p.line,
-          width: isMe ? 1.6 : 1,
+          color: entry.goldenBorder
+              ? _gold
+              : isMe
+                  ? p.primary
+                  : p.line,
+          width: entry.goldenBorder || isMe ? 1.8 : 1,
         ),
       ),
       child: Row(
@@ -649,26 +477,46 @@ class _LeaderboardItemTile extends StatelessWidget {
           ),
           const SizedBox(width: 14),
 
-          // Student Name
+          // Student name, with the golden border reward if they bought it.
           Expanded(
-            child: Text(
-              entry.fullName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: p.ink,
-                fontSize: 14.5,
-                fontWeight: isMe ? FontWeight.w900 : FontWeight.w700,
-              ),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    isMe ? '${entry.fullName} (You)' : entry.fullName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: p.ink,
+                      fontSize: 14.5,
+                      fontWeight: isMe ? FontWeight.w900 : FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (entry.goldenBorder) ...[
+                  const SizedBox(width: 4),
+                  const Icon(Symbols.military_tech,
+                      size: 16, color: _gold, fill: 1),
+                ],
+              ],
             ),
           ),
+          Text(
+            'Lv ${entry.level}',
+            style: TextStyle(
+              color: p.ink3,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 10),
 
           // XP Badge Pill (190 XP)
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '${entry.xp}',
+                '${entry.totalXp}',
                 style: TextStyle(
                   color: p.ink,
                   fontSize: 15,
@@ -700,7 +548,7 @@ class _LeaderboardItemTile extends StatelessWidget {
   }
 }
 
-/// The Level Up Information Modal (From Image 4).
+/// How XP, levels and the leaderboard actually work.
 class LevelUpInfoSheet extends StatelessWidget {
   const LevelUpInfoSheet({super.key});
 
@@ -792,7 +640,7 @@ class LevelUpInfoSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Earn XP by completing daily tasks, reviewing flashcards, and taking quizzes. Compete with classmates and climb the leaderboard!',
+                        'Earn XP by completing daily tasks, focusing with the Pomodoro timer, reviewing flashcards, and taking quizzes.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: p.ink2,
@@ -812,7 +660,7 @@ class LevelUpInfoSheet extends StatelessWidget {
                   iconColor: const Color(0xFF4338CA),
                   title: 'XP or Experience Points',
                   description:
-                      'XP is like a reward coin. You earn it every time you complete study sessions, solve flashcards, or take a quiz.',
+                      '15 XP per daily task, 1 XP per focused Pomodoro minute, 2 XP per due flashcard reviewed, and up to 10 XP per correct quiz answer. The server calculates every award.',
                 ),
                 _DashedStepConnector(),
 
@@ -821,9 +669,9 @@ class LevelUpInfoSheet extends StatelessWidget {
                   iconBg: const Color(0xFFFEF3C7),
                   icon: Symbols.emoji_events,
                   iconColor: const Color(0xFFD97706),
-                  title: 'Leaderboard',
+                  title: 'Levels',
                   description:
-                      "You're grouped with 30 students from your batch. Your XP decides your rank in the group.",
+                      'Level 2 takes 500 XP, and each level after that needs 20% more than the one before.',
                 ),
                 _DashedStepConnector(),
 
@@ -832,9 +680,9 @@ class LevelUpInfoSheet extends StatelessWidget {
                   iconBg: const Color(0xFFDCFCE7),
                   icon: Symbols.military_tech,
                   iconColor: const Color(0xFF15803D),
-                  title: 'Reshuffling',
+                  title: 'Class leaderboard',
                   description:
-                      'The Leaderboard resets every 14 days. Your leaderboard rank at the end of this period decides if you get promoted, stay, or get demoted.',
+                      'Everyone in your class, ranked by total XP ever earned. Spending XP on rewards never lowers your rank. Leave your class to stop appearing.',
                 ),
                 const SizedBox(height: 24),
               ],

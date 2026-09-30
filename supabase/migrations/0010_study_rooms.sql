@@ -59,7 +59,15 @@ create table if not exists room_messages (
 create index if not exists idx_room_messages_room on room_messages(room_id);
 
 -- ── Enable Realtime for room_messages ────────────────────────
-alter publication supabase_realtime add table room_messages;
+-- Guarded so the file stays safe to re-run (README: every migration is).
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables
+                  where pubname = 'supabase_realtime'
+                    and schemaname = 'public' and tablename = 'room_messages') then
+    alter publication supabase_realtime add table room_messages;
+  end if;
+end $$;
 
 -- ============================================================
 -- RLS Policies
@@ -70,42 +78,51 @@ alter table room_members  enable row level security;
 alter table room_messages enable row level security;
 
 -- study_rooms: anyone authed can see active rooms (for lobby)
-create policy "rooms_select"  on study_rooms for select to authenticated
+drop policy if exists "rooms_select" on study_rooms;
+create policy "rooms_select" on study_rooms for select to authenticated
   using (true);
 
 -- study_rooms: creator can insert
-create policy "rooms_insert"  on study_rooms for insert to authenticated
+drop policy if exists "rooms_insert" on study_rooms;
+create policy "rooms_insert" on study_rooms for insert to authenticated
   with check (created_by = auth.uid());
 
 -- study_rooms: only host can update (e.g. close room)
-create policy "rooms_update"  on study_rooms for update to authenticated
+drop policy if exists "rooms_update" on study_rooms;
+create policy "rooms_update" on study_rooms for update to authenticated
   using (created_by = auth.uid());
 
 -- study_rooms: only host can delete
-create policy "rooms_delete"  on study_rooms for delete to authenticated
+drop policy if exists "rooms_delete" on study_rooms;
+create policy "rooms_delete" on study_rooms for delete to authenticated
   using (created_by = auth.uid());
 
 -- room_members: can see members of rooms you're in
+drop policy if exists "members_select" on room_members;
 create policy "members_select" on room_members for select to authenticated
   using (
     room_id in (select room_id from room_members where user_id = auth.uid())
   );
 
 -- room_members: can join a room (insert yourself)
+drop policy if exists "members_insert" on room_members;
 create policy "members_insert" on room_members for insert to authenticated
   with check (user_id = auth.uid());
 
 -- room_members: can leave a room (delete yourself)
+drop policy if exists "members_delete" on room_members;
 create policy "members_delete" on room_members for delete to authenticated
   using (user_id = auth.uid());
 
 -- room_messages: can see messages in rooms you're in
+drop policy if exists "messages_select" on room_messages;
 create policy "messages_select" on room_messages for select to authenticated
   using (
     room_id in (select room_id from room_members where user_id = auth.uid())
   );
 
 -- room_messages: can send messages in rooms you're in
+drop policy if exists "messages_insert" on room_messages;
 create policy "messages_insert" on room_messages for insert to authenticated
   with check (
     user_id = auth.uid()
