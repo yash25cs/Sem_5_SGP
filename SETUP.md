@@ -17,9 +17,11 @@ Open **SQL Editor** → **New query** → paste the entire contents of
 `supabase/all_migrations.sql` → **Run**.
 
 You should see `Success. No rows returned`. Verify under **Table Editor**:
-24 tables including `profiles`, `goals`, `material_chunks`, `flashcards`, and
-`xp_rules` (the XP amounts — if that one is missing, the security migration
-didn't run and the app's reward RPCs will 404).
+29 tables including `profiles`, `goals`, `material_chunks`, `flashcards`,
+`study_rooms`, `reward_catalog`, and `xp_rules` (the XP amounts — if that one is
+missing, the security migration didn't run and the app's reward RPCs will 404).
+If `reward_catalog` is missing, migrations 0010–0012 didn't run: study rooms and
+the Rewards screen will fail.
 
 If the `vector` extension errors, enable it first under
 **Database → Extensions** (search "vector"), then re-run. The script is
@@ -34,6 +36,9 @@ under **Storage → Policies**.
 
 **Authentication → Sign In / Providers → Email** → turn **Confirm email**
 OFF. Otherwise every test signup waits on an inbox round-trip.
+
+Turn it back **on** before anyone other than you signs up: with it off, anyone
+can create accounts under email addresses they don't own.
 
 ## 4. Copy your keys
 
@@ -163,8 +168,10 @@ list on a physical device before calling a build good.
 
 1. Welcome → **Next** → **Create account**. The name, email, and password fields
    each show their own validation message when wrong.
-2. Signup lands on the upload screen. **Authentication → Users** in the
-   dashboard shows the account, and `profiles` + `streaks` each have a row.
+2. Signup lands on the academic profile form (college, program/branch,
+   semester, enrollment ID); saving it moves on to the upload screen.
+   **Authentication → Users** in the dashboard shows the account, and
+   `profiles` + `streaks` each have a row.
 3. Upload a PDF. The tile goes **Processing** and reaches **Embedded** within
    about a minute; `material_chunks` fills up. A file over the size limit is
    refused with a readable message, not a crash.
@@ -173,16 +180,19 @@ list on a physical device before calling a build good.
    button stays disabled until the required fields are filled.
 6. It lands on Home with the goal in the hero card.
 
-**The five tabs**
+**The five tabs** — Home, Roadmap, Chat, Quiz, Profile. Flashcards, focus
+timer, study rooms, achievements, leaderboard, rewards and analytics open from
+the **+** button.
 
 7. **Home** — **Plan day** pulls the next unfinished milestone into today's list.
    Tick one: the checkbox sticks, XP and the streak chip move, and the Roadmap
    tab shows that checkbox ticked too. Untick it and both go back.
 8. **Roadmap** — the timeline shows weeks with their state dots. Ticking a task
-   here moves Home's copy as well. `tune` regenerates, warning first that it
-   replaces the current plan; the milestone count doesn't double.
-9. **Cards** — generate a deck from an embedded file. Review it: reveal, grade,
-   and the due count drops when the session ends.
+   here moves Home's copy as well. The sparkle button at the top regenerates,
+   warning first that it replaces the current plan; the milestone count doesn't
+   double.
+9. **Flashcards** (from **+**) — generate a deck from an embedded file. Review
+   it: reveal, grade, and the due count drops when the session ends.
 10. **Quiz** — generate a quiz and **play it to the end**. The score screen
     appears and XP is awarded. This is the one to do properly; it's the only path
     that exercises `finish_quiz_attempt`.
@@ -191,28 +201,59 @@ list on a physical device before calling a build good.
     an answer.
 12. **Profile** — XP, level, badges, and the streak all match what the tabs did.
 
+**Study rooms — needs two phones and two accounts**
+
+13. Phone A opens a room from **+ → Study buddy room**. Phone B sees it in the
+    lobby with `1/8` members and joins with the **Join** button; a third account
+    typing the code into a full room is told it's full.
+14. Both phones list both names under the room, with a status dot: green while
+    the timer runs, amber on a break, grey when stopped.
+15. A starts the timer. B's timer starts at the same time and counts down with
+    it (never jumps to 00:00). A pauses: B pauses at the same second.
+16. With A's timer running, B leaves and rejoins. B's timer picks up at A's
+    time instead of restarting.
+17. Chat both ways. Each message appears once on both phones, with the local
+    time. Messages are still there after leaving and rejoining.
+18. B presses the phone's back button: it asks before leaving. A closes the
+    room: B is told the host closed it, and the room disappears from the lobby.
+
+**Rewards, reminders, account**
+
+19. **Leaderboard** (from **+**) — without a class it offers to pick one; after
+    joining, it lists only real classmates, ranked by total XP.
+20. **Rewards** (from **+**) — the balance matches XP earned. With under 100 XP,
+    **Redeem** is disabled and says how much more is needed.
+21. **Settings → Daily study reminder** — turning it on asks for notification
+    permission and confirms 6:00 PM. Turn it off and back on: no duplicate
+    reminders.
+22. **Settings → Delete account** with a throwaway account: the app returns to
+    sign-in, and the account can no longer log in.
+
 **The things that only fail on a real phone**
 
-13. **Airplane mode on, cold start.** The app shows the offline screen with
+23. **Airplane mode on, cold start.** The app shows the offline screen with
     **Try again**, not an endless spinner. Turn the network back on and retry:
     it recovers without a restart.
-14. **Airplane mode mid-action.** Tick a task, generate a deck, send a chat
+24. **Airplane mode mid-action.** Tick a task, generate a deck, send a chat
     message. Each fails with a readable message and stays retryable; no tick is
     left claiming a write that never happened.
-15. **Rotate** on Home, Roadmap, and mid-quiz. Nothing is lost.
-16. **Backgrounding.** Force-quit and reopen: still signed in, on the same tab.
-17. **Keyboard.** Every text field scrolls into view when focused — the chat
+25. **Rotate** on Home, Roadmap, and mid-quiz. Nothing is lost.
+26. **Backgrounding.** Force-quit and reopen: still signed in, on the same tab.
+27. **Keyboard.** Every text field scrolls into view when focused — the chat
     composer, the goal name, the add-task sheet.
-18. **Font scale.** Set the system font to its largest and check Home and Quiz
+28. **Font scale.** Set the system font to its largest and check Home and Quiz
     for clipped text.
-19. **Dark mode**, if the device has it on: no unreadable text.
-20. **The launcher icon** is the StudyTrail mark, not the Flutter default, and it
+29. **Dark mode** (Settings): no unreadable text. The choice isn't saved yet,
+    so the app opens in light mode on every launch.
+30. **The launcher icon** is the StudyTrail mark, not the Flutter default, and it
     is not clipped on a launcher that uses circular icons.
 
 
-- **Onboarding order changed.** Auth now comes first (welcome → signup →
-  upload → set target), because uploads and goals both need a `user_id`.
-  A returning account that already has a goal skips straight to the home shell.
+- **Onboarding order.** Auth comes first (welcome → signup → academic
+  profile → upload → set target), because uploads and goals both need a
+  `user_id`. A returning account that already has a goal skips straight to the
+  home shell — unless its college, branch or enrollment ID is missing, in which
+  case it is asked for those first.
 - **Google sign-in** additionally needs the provider enabled in the dashboard
   and `in.charusat.studytrail://login-callback` added under
   **Authentication → URL Configuration**. The Android intent-filter is already
@@ -226,11 +267,12 @@ list on a physical device before calling a build good.
   npx --yes supabase@latest secrets set GEMINI_API_KEY=your_key_here --project-ref tmakrbqggezkxtygythc
   ```
 
-  Then deploy the five functions that read it (`--use-api` bundles server-side, so
-  no Docker or Deno is needed locally):
+  Then deploy all seven functions (`--use-api` bundles server-side, so no Docker
+  or Deno is needed locally). Six read the Gemini key; `delete-account` needs
+  none, but without it Settings → Delete account fails:
 
   ```bash
-  npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards --use-api --project-ref tmakrbqggezkxtygythc
+  npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material delete-account --use-api --project-ref tmakrbqggezkxtygythc
   ```
 
   Until both are done, uploads land on **Failed** with a readable reason and Chat

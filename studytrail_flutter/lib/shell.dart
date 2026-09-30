@@ -137,8 +137,8 @@ class _HomeShellState extends State<HomeShell> {
                 ),
                 _QuickAction(
                   icon: Symbols.emoji_events,
-                  title: 'Leaderboard & Leagues',
-                  subtitle: 'Compete in weekly student leagues',
+                  title: 'Class leaderboard',
+                  subtitle: 'See where you rank in your class',
                   color: const Color(0xFFF59E0B),
                   onTap: () {
                     Navigator.pop(sheetCtx);
@@ -148,8 +148,8 @@ class _HomeShellState extends State<HomeShell> {
                 ),
                 _QuickAction(
                   icon: Symbols.featured_seasonal_and_gifts,
-                  title: 'My Rewards & Coupons',
-                  subtitle: 'Streak freeze, XP perks & AI passes',
+                  title: 'My Rewards',
+                  subtitle: 'Spend XP on streak freezes and more',
                   color: const Color(0xFF6366F1),
                   onTap: () {
                     Navigator.pop(sheetCtx);
