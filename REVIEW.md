@@ -3,9 +3,10 @@
 This review is read-only: no production code was changed. Items are ordered by
 impact and should be resolved before adding new user-facing features.
 
-**Status lines added 17 August 2026** record what has since been fixed. Two
-findings remain open: the chat tab still promises answers no Edge Function
-generates (P1), and there are still no meaningful tests (P2).
+**Status lines added 17 August 2026** record what has since been fixed. The
+last two open findings — chat promising answers no function generated (P1) and
+missing tests (P2) — were closed on 22 August and 4 September. A second review,
+of the features added in late September, is at the end of this file.
 
 ## P0 — Prevent direct reward and badge manipulation
 
@@ -85,6 +86,10 @@ clear retry state.
 **Relevant files:** `studytrail_flutter/lib/screens/chat_screen.dart`,
 `studytrail_flutter/lib/state/chat_store.dart`.
 
+**Status — fixed 22 August 2026.** The `chat` Edge Function answers from the
+student's own chunks with citations and writes both turns server-side; verified
+on the live project (answers in 5.4–7.5 s).
+
 ## P1 — Preserve failed flashcard reviews
 
 The flashcard store advances to the next card before the server-side grade is
@@ -163,6 +168,13 @@ smoke test is still the only one. This is the next piece of work, and the
 reward RPCs added in 0008 are the first thing that needs covering — they are
 the code most likely to be attacked and the code no test currently touches.
 
+**Status — fixed 4 September 2026, extended 30 September.** 27 tests across
+`test/stores_test.dart` (signup bootstrap, goal creation, task retry, flashcard
+retry, roadmap seeding), `test/widget_test.dart`, and
+`test/rooms_rewards_test.dart` (room timer sync, wallet and leaderboard parsing).
+The reward RPCs themselves are covered by live probes against the hosted project
+rather than unit tests — there is no local Postgres in this setup.
+
 ## Suggested delivery order
 
 1. Fix P0 reward/badge RPC access and unify XP.
@@ -170,3 +182,47 @@ the code most likely to be attacked and the code no test currently touches.
 3. Add tests plus Git before Phase C changes.
 4. Implement Edge Functions for material ingestion and AI chat.
 5. Build the real-time buddy room only after the core flows are stable.
+
+# Review — 30 September 2026
+
+A read of everything added between 28 and 30 September (Days 8–16), checked
+against the hosted project rather than only the source. Those days had been
+verified with `flutter analyze` alone, and analyze can't see a policy that
+fails at runtime, a function that was never deployed, or a screen that shows
+invented data.
+
+## Fixed on 30 September (`c0842b7`, details in `DAILY_PLAN.md` Day 17)
+
+| Severity | Finding | Fix |
+|---|---|---|
+| P0 | `room_members` RLS policy read its own table → `42P17` on every read. Lobby, member list and room chat silently dead. | `0011` non-recursive policy |
+| P0 | Any student could insert themselves into any room as `host`, past capacity and closed-room checks. | `0011`: membership changes are RPC-only |
+| P1 | Lobby **Join** entered without joining, so chat was unreadable. | Joins through `join_room_by_code` |
+| P1 | Timer broadcasts read at the wrong payload level — every member's timer went to 00:00. | Unwrapped; late joiners get `sync` |
+| P1 | `delete-account` and `summarize-material` never deployed. | Deployed; storage cleanup pages past 100 files |
+| P1 | Rewards spent XP in SharedPreferences (per phone, shared across accounts); coupons had no effect. | `0012` server wallet; freeze and border enforced server-side |
+| P1 | Leaderboard padded with nine invented students, a copied banner, and fake promotion zones. | Real classmates only |
+| P2 | Leaderboard ranked by XP-within-level. | Ranked by total XP |
+| P2 | Reminder fired at 18:00 UTC (23:30 IST); Settings switches did nothing. | Local time, inexact, switch wired |
+| P2 | Other members' names blank (profiles are owner-only). | `get_room_members()` |
+| P2 | Room chat times shown in UTC; duplicate bubbles possible. | Local time; client-chosen ids |
+| P3 | Onboarding hung offline after saving the academic profile. | Routed through the entry check's retry screen |
+
+## Still open
+
+- **Two-phone Realtime pass.** The database side of rooms is verified live;
+  timer broadcast, presence and the chat echo can only be proven on two devices
+  (`SETUP.md` §8 items 13–18).
+- **Streak days roll over at 05:30 IST.** `log_activity` uses `current_date` on
+  a UTC server. Needs the student's timezone passed in or stored.
+- **Semester is stored inside `profiles.branch`** as `"<branch> · Semester N"`
+  and parsed back out. Give it its own column.
+- **Achievements screen hides load failures.** `GamificationStore.load()`
+  catches every error per section, so offline shows empty sections with no retry.
+- **Dark mode isn't persisted** — `ThemeController` resets to light on launch.
+- **Room broadcast and presence use a public Realtime channel** named after the
+  room id. Private channels need Realtime Authorization policies.
+- **Email confirmation is off** on the hosted project, which is right for
+  development and wrong for real users.
+- **Android toolchain sits exactly on Flutter's minimum** for Gradle, AGP and
+  Kotlin; the next Flutter release that raises a floor will fail the build.
