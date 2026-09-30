@@ -72,6 +72,9 @@ $$;
 -- SECURITY DEFINER so it can read past the owner-only profiles policy, but it
 -- hard-scopes to the caller's own class_id — no cross-class leakage.
 -- ---------------------------------------------------------------------------
+-- 0012 widens the return type; `create or replace` can't change one, so a
+-- re-run of this file drops first. 0012 then re-creates its own version.
+drop function if exists get_class_leaderboard(int);
 create or replace function get_class_leaderboard(limit_count int default 20)
 returns table (
   user_id uuid,

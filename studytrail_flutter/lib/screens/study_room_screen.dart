@@ -90,23 +90,42 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
 
     if (confirmed == true && mounted) {
       if (isHost) {
-        await store.closeCurrentRoom();
+        final ok = await store.closeCurrentRoom();
+        if (!ok) {
+          _toast(store.error ?? 'Could not close the room. Try again.');
+          return;
+        }
       } else {
         await store.leaveCurrentRoom();
       }
-      if (mounted) {
-        widget.onLeave?.call();
-        Navigator.of(context).pop();
-      }
+      _exit();
     }
   }
 
-  void _sendMessage() {
+  void _exit() {
+    if (!mounted) return;
+    widget.onLeave?.call();
+    Navigator.of(context).pop();
+  }
+
+  /// After the host closes the room there is nothing to confirm.
+  Future<void> _leaveClosedRoom() async {
+    await context.read<RoomStore>().leaveCurrentRoom();
+    _exit();
+  }
+
+  Future<void> _sendMessage() async {
     final text = _messageController.text;
     if (text.trim().isEmpty) return;
     _messageController.clear();
-    context.read<RoomStore>().sendMessage(text);
     _scrollToBottom();
+    final store = context.read<RoomStore>();
+    final ok = await store.sendMessage(text);
+    if (!ok && mounted) {
+      // Hand the text back rather than making them retype it.
+      if (_messageController.text.isEmpty) _messageController.text = text;
+      _toast(store.error ?? 'Message not sent. Try again.');
+    }
   }
 
   @override
@@ -114,22 +133,39 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     final p = context.p;
     final store = context.watch<RoomStore>();
     final room = store.currentRoom;
+    final closedNotice = store.closedNotice;
 
-    if (room == null) {
-      return Scaffold(
-        backgroundColor: p.bg,
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Room closed or not found',
-                  style: TextStyle(
-                      color: p.ink, fontSize: 16, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 12),
-              PillButton('Back to Lobby', expand: false, onTap: () {
-                Navigator.of(context).pop();
-              }),
-            ],
+    if (room == null || closedNotice != null) {
+      return PopScope(
+        canPop: room == null,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _leaveClosedRoom();
+        },
+        child: Scaffold(
+          backgroundColor: p.bg,
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Symbols.door_front, size: 44, color: p.ink3),
+                  const SizedBox(height: 12),
+                  Text(closedNotice ?? 'Room closed or not found',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: p.ink,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 12),
+                  PillButton('Back to Lobby',
+                      expand: false,
+                      onTap: room == null
+                          ? () => Navigator.of(context).pop()
+                          : _leaveClosedRoom),
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -138,7 +174,14 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     final isHost = store.isHost;
     final presence = store.onlinePresence;
 
-    return Scaffold(
+    // The system back gesture used to pop this screen without leaving: the
+    // channel, the membership row, and (for a host) the room all stayed open.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmLeave();
+      },
+      child: Scaffold(
       backgroundColor: p.bg,
       body: Column(
         children: [
@@ -421,7 +464,13 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                                     width: 13,
                                     height: 13,
                                     decoration: BoxDecoration(
-                                      color: p.green,
+                                      // Green focusing, amber on break,
+                                      // grey when their timer isn't running.
+                                      color: switch (peer.studyStatus) {
+                                        'focusing' => p.green,
+                                        'on_break' => p.amber,
+                                        _ => p.ink3,
+                                      },
                                       shape: BoxShape.circle,
                                       border: Border.all(
                                           color: p.bg, width: 2),
@@ -514,6 +563,8 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: TextField(
                         controller: _messageController,
+                        // The column's CHECK is 500 characters.
+                        inputFormatters: [LengthLimitingTextInputFormatter(500)],
                         style: TextStyle(color: p.ink, fontSize: 14),
                         decoration: InputDecoration(
                           hintText: 'Message room buddies…',
@@ -549,6 +600,7 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -565,12 +617,17 @@ class _ChatMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
+    // Server timestamps parse as UTC; showing .hour directly put every message
+    // 5½ hours off in India.
+    final t = message.createdAt.toLocal();
     final timeStr =
-        '${message.createdAt.hour.toString().padLeft(2, '0')}:${message.createdAt.minute.toString().padLeft(2, '0')}';
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: Opacity(
+        opacity: message.pending ? 0.6 : 1,
+        child: Container(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -609,7 +666,7 @@ class _ChatMessageBubble extends StatelessWidget {
             ),
             const SizedBox(height: 3),
             Text(
-              timeStr,
+              message.pending ? 'Sending…' : timeStr,
               style: TextStyle(
                 color: isMe
                     ? Colors.white.withValues(alpha: 0.7)
@@ -618,6 +675,7 @@ class _ChatMessageBubble extends StatelessWidget {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

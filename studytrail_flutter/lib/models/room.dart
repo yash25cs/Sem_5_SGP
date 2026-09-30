@@ -60,10 +60,9 @@ class StudyRoom {
   }
 }
 
-/// A member of a study room.
+/// A member of a study room, as returned by the `get_room_members` RPC.
 class RoomMember {
   const RoomMember({
-    required this.id,
     required this.roomId,
     required this.userId,
     required this.role,
@@ -72,34 +71,40 @@ class RoomMember {
     this.avatarInitial,
   });
 
-  final String id;
   final String roomId;
   final String userId;
   final String role; // 'host' | 'member'
   final DateTime joinedAt;
 
-  /// Joined from profiles when the query embeds it.
+  /// From profiles, which the RPC reads past the owner-only policy.
   final String? fullName;
   final String? avatarInitial;
 
   bool get isHost => role == 'host';
 
-  factory RoomMember.fromMap(Map<String, dynamic> m) {
-    final profile = m['profiles'];
-    return RoomMember(
-      id: m['id'] as String,
-      roomId: m['room_id'] as String,
-      userId: m['user_id'] as String,
-      role: (m['role'] as String?) ?? 'member',
-      joinedAt: DateTime.parse(m['joined_at'] as String),
-      fullName: profile is Map<String, dynamic>
-          ? profile['full_name'] as String?
-          : null,
-      avatarInitial: profile is Map<String, dynamic>
-          ? profile['avatar_initial'] as String?
-          : null,
-    );
+  String get displayName {
+    final n = fullName?.trim() ?? '';
+    return n.isEmpty ? 'Student' : n;
   }
+
+  String get initial {
+    final a = avatarInitial?.trim() ?? '';
+    if (a.isNotEmpty) return a[0].toUpperCase();
+    return displayName[0].toUpperCase();
+  }
+
+  factory RoomMember.fromMap(
+    Map<String, dynamic> m, {
+    required String roomId,
+  }) =>
+      RoomMember(
+        roomId: (m['room_id'] as String?) ?? roomId,
+        userId: m['user_id'] as String,
+        role: (m['role'] as String?) ?? 'member',
+        joinedAt: DateTime.parse(m['joined_at'] as String),
+        fullName: m['full_name'] as String?,
+        avatarInitial: m['avatar_initial'] as String?,
+      );
 }
 
 /// A chat message in a study room.
@@ -112,6 +117,7 @@ class RoomMessage {
     required this.createdAt,
     this.senderName,
     this.senderInitial,
+    this.pending = false,
   });
 
   final String id;
@@ -120,9 +126,13 @@ class RoomMessage {
   final String body;
   final DateTime createdAt;
 
-  /// Filled from presence or a local cache — not always from the DB query.
+  /// Resolved by the store from the member list and presence — rows and
+  /// realtime payloads carry only `user_id`.
   final String? senderName;
   final String? senderInitial;
+
+  /// True for an optimistic bubble whose insert hasn't been confirmed.
+  final bool pending;
 
   factory RoomMessage.fromMap(Map<String, dynamic> m) {
     final profile = m['profiles'];
@@ -149,6 +159,7 @@ class RoomMessage {
         createdAt: createdAt,
         senderName: name ?? senderName,
         senderInitial: initial ?? senderInitial,
+        pending: pending,
       );
 }
 

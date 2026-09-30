@@ -98,37 +98,30 @@ class LocalPrefs {
     }
   }
 
-  static const String _unlockedRewardsKey = 'unlocked_rewards_v1';
-  static const String _spentXpKey = 'spent_rewards_xp_v1';
+  // Rewards used to be stored here (`unlocked_rewards_v1`,
+  // `spent_rewards_xp_v1`). They moved to the server in 0012 because a
+  // purchase belongs to the student, not the phone; the stale keys are
+  // harmless and simply never read again.
 
-  static Future<List<String>> getUnlockedRewards() async {
+  static const String _remindersKey = 'daily_reminder_enabled_v1';
+
+  /// Whether the 6 PM study reminder is on. Defaults to on, which is what the
+  /// app did before the Settings switch was wired up.
+  static Future<bool> remindersEnabled() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getStringList(_unlockedRewardsKey) ?? [];
+      return prefs.getBool(_remindersKey) ?? true;
     } catch (_) {
-      return [];
+      return true;
     }
   }
 
-  static Future<void> saveUnlockedReward(String id, int costXp) async {
+  static Future<void> setRemindersEnabled(bool on) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final current = prefs.getStringList(_unlockedRewardsKey) ?? [];
-      if (!current.contains(id)) {
-        current.add(id);
-        await prefs.setStringList(_unlockedRewardsKey, current);
-      }
-      final spent = prefs.getInt(_spentXpKey) ?? 0;
-      await prefs.setInt(_spentXpKey, spent + costXp);
-    } catch (_) {}
-  }
-
-  static Future<int> getSpentRewardXp() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getInt(_spentXpKey) ?? 0;
+      await prefs.setBool(_remindersKey, on);
     } catch (_) {
-      return 0;
+      // Non-fatal: the schedule itself was already changed.
     }
   }
 }

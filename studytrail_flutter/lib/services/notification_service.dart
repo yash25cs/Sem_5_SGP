@@ -1,7 +1,11 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
-import 'dart:io';
+
+import '../data/local_prefs.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -11,10 +15,15 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
+  static const int dailyReminderId = 1;
+
   Future<void> init() async {
+    // `tz.local` is UTC until something sets it, and the timezone package
+    // can't read the device zone on its own. The old code called
+    // `setLocalLocation(tz.local)` — a no-op — so "6 PM" was 18:00 UTC, which
+    // is 11:30 PM in India. Scheduling now converts the device's local wall
+    // time to UTC instead (see [scheduleDailyReminder]).
     tz.initializeTimeZones();
-    // Default to local timezone
-    tz.setLocalLocation(tz.local);
 
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -22,22 +31,27 @@ class NotificationService {
     const InitializationSettings initializationSettings =
         InitializationSettings(android: initializationSettingsAndroid);
 
-    await _notificationsPlugin.initialize(
-      settings: initializationSettings,
-    );
-  }
-
-  Future<void> requestPermissions() async {
-    if (Platform.isAndroid) {
-      final plugin = _notificationsPlugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
-      await plugin?.requestNotificationsPermission();
-      await plugin?.requestExactAlarmsPermission();
+    try {
+      await _notificationsPlugin.initialize(
+        settings: initializationSettings,
+      );
+    } catch (e) {
+      // A plugin failure must never stop the app from starting.
+      debugPrint('Notification init failed: $e');
     }
   }
 
-  /// Schedules a daily reminder at a specific time (e.g. 18:00 or 6 PM).
+  /// Asks for the Android 13+ notification permission. Exact alarms are not
+  /// requested: a daily nudge doesn't need to-the-minute precision, and Play
+  /// only allows `USE_EXACT_ALARM` for alarm-clock and calendar apps.
+  Future<void> requestPermissions() async {
+    if (!Platform.isAndroid) return;
+    final plugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await plugin?.requestNotificationsPermission();
+  }
+
+  /// Schedules a daily reminder at [hour]:[minute] device-local time.
   Future<void> scheduleDailyReminder({
     required int id,
     required String title,
@@ -45,26 +59,19 @@ class NotificationService {
     required int hour,
     required int minute,
   }) async {
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduledDate = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      hour,
-      minute,
-    );
+    final now = DateTime.now();
+    var local = DateTime(now.year, now.month, now.day, hour, minute);
+    if (!local.isAfter(now)) local = local.add(const Duration(days: 1));
+    // The same instant expressed in UTC; repeating on its time-of-day keeps it
+    // at the same local time for any zone without daylight saving (India).
+    final scheduledDate = tz.TZDateTime.from(local.toUtc(), tz.UTC);
 
-    // If the time has already passed today, schedule for tomorrow
-    if (scheduledDate.isBefore(now)) {
-      scheduledDate = scheduledDate.add(const Duration(days: 1));
-    }
-
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
       'daily_reminders',
       'Daily Reminders',
       channelDescription: 'Reminders to keep your study streak alive',
-      importance: Importance.max,
+      importance: Importance.high,
       priority: Priority.high,
     );
 
@@ -77,9 +84,31 @@ class NotificationService {
       body: body,
       scheduledDate: scheduledDate,
       notificationDetails: platformDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
     );
+  }
+
+  /// Turns the 6 PM study reminder on or off and remembers the choice. Never
+  /// throws: a reminder is a nicety, not something to fail a screen over.
+  Future<void> applyDailyReminder({required bool enabled}) async {
+    await LocalPrefs.setRemindersEnabled(enabled);
+    try {
+      if (enabled) {
+        await requestPermissions();
+        await scheduleDailyReminder(
+          id: dailyReminderId,
+          title: 'Time to study!',
+          body: 'Keep your streak alive and hit your goals today.',
+          hour: 18,
+          minute: 0,
+        );
+      } else {
+        await _notificationsPlugin.cancel(id: dailyReminderId);
+      }
+    } catch (e) {
+      debugPrint('Daily reminder update failed: $e');
+    }
   }
 
   Future<void> cancelAll() async {

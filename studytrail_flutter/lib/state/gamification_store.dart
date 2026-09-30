@@ -52,6 +52,25 @@ class GamificationStore extends AsyncStore {
   LeaderboardEntry? get myRank =>
       _leaderboard.where((e) => e.isMe).firstOrNull;
 
+  RewardWallet? _wallet;
+  RewardWallet? get wallet => _wallet;
+
+  /// Loaded separately from [load]: only the Rewards screen needs it.
+  Future<void> loadWallet() async {
+    try {
+      _wallet = await _game.getRewardWallet();
+      clearError();
+      notifyListeners();
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  /// Returns true when the purchase went through; [error] says why not.
+  Future<bool> redeem(String key) => runMutation(() async {
+        _wallet = await _game.redeemReward(key);
+      });
+
   Future<void> load() => runLoad(() async {
         try {
           _newlyUnlocked = await _game.evaluateBadges();

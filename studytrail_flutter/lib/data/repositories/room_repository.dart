@@ -1,38 +1,42 @@
-import 'dart:async';
+import 'dart:math';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/models.dart';
 import '../supabase_client.dart';
 
-/// Manages database access and realtime channels for Study Buddy Rooms.
+/// Database access and realtime channels for Study Buddy Rooms.
+///
+/// Creating, joining and closing a room are RPCs only — `0011_study_rooms_fix`
+/// revokes the direct writes, because each one has a check the client can't be
+/// trusted with (capacity, open-room, host-only). Errors are allowed to
+/// propagate: the old version caught them and returned empty lists, which is
+/// how a recursive RLS policy went unnoticed while the lobby sat empty.
 class RoomRepository {
   const RoomRepository();
 
-  /// Fetches active rooms, prioritizing class rooms if [classId] is provided.
+  /// A room nobody closed (the host's app died) still reads as active until
+  /// the host opens another. Past this age the lobby stops offering it.
+  static const staleAfter = Duration(hours: 12);
+
+  /// Open rooms, newest first: the caller's class rooms plus unscoped ones.
   Future<List<StudyRoom>> getActiveRooms({String? classId}) async {
-    try {
-      var query = db
-          .from('study_rooms')
-          .select('*, room_members(id)')
-          .eq('status', 'active');
+    final since = DateTime.now().toUtc().subtract(staleAfter).toIso8601String();
+    var query = db
+        .from('study_rooms')
+        .select('*, room_members(user_id)')
+        .eq('status', 'active')
+        .gte('created_at', since);
 
-      if (classId != null) {
-        query = query.or('class_id.eq.$classId,class_id.is.null');
-      }
+    query = classId != null
+        ? query.or('class_id.eq.$classId,class_id.is.null')
+        : query.isFilter('class_id', null);
 
-      final rows = await query.order('created_at', ascending: false);
-      return (rows as List)
-          .cast<Map<String, dynamic>>()
-          .map(StudyRoom.fromMap)
-          .toList();
-    } catch (_) {
-      // Fallback: If table doesn't exist yet or query fails, return empty list
-      return const [];
-    }
+    final rows = await query.order('created_at', ascending: false);
+    return rows.map(StudyRoom.fromMap).toList();
   }
 
-  /// Creates a study room and automatically enrolls the creator as host.
+  /// Creates a room and enrols the caller as host, atomically.
   Future<StudyRoom> createRoom({
     required String name,
     String? classId,
@@ -40,89 +44,32 @@ class RoomRepository {
     int breakMin = 5,
     int maxMembers = 10,
   }) async {
-    final uid = requireUserId;
-
-    // Try calling the RPC first for atomic creation + host assignment
-    try {
-      final res = await db.rpc('create_study_room', params: {
+    final res = await db.rpc(
+      'create_study_room',
+      params: {
         'p_name': name.trim(),
         'p_class_id': classId,
         'p_timer_min': timerMin,
         'p_break_min': breakMin,
         'p_max_members': maxMembers,
-      });
-      if (res is Map<String, dynamic>) {
-        return StudyRoom.fromMap(res);
-      }
-    } catch (e) {
-      // If RPC doesn't exist, fallback to direct table inserts
-      final row = await db
-          .from('study_rooms')
-          .insert({
-            'name': name.trim(),
-            'created_by': uid,
-            'class_id': classId,
-            'timer_duration_min': timerMin,
-            'break_duration_min': breakMin,
-            'max_members': maxMembers,
-          })
-          .select('*, room_members(id)')
-          .single();
-
-      final room = StudyRoom.fromMap(row);
-
-      // Add self as host
-      await db.from('room_members').insert({
-        'room_id': room.id,
-        'user_id': uid,
-        'role': 'host',
-      });
-
-      return room;
-    }
-
-    throw StateError('Failed to create room.');
+      },
+    );
+    return StudyRoom.fromMap(res as Map<String, dynamic>);
   }
 
-  /// Joins an existing active room via its 6-character invite code.
+  /// Joins an open room by its 6-character code. Joining a room you're already
+  /// in is a no-op that returns the room, so the lobby's Join button uses this
+  /// too.
   Future<StudyRoom> joinRoomByCode(String code) async {
-    final cleanCode = code.trim().toUpperCase();
-
-    try {
-      final res = await db.rpc('join_room_by_code', params: {
-        'p_code': cleanCode,
-      });
-      if (res is Map<String, dynamic>) {
-        return StudyRoom.fromMap(res);
-      }
-    } catch (e) {
-      // Direct query fallback
-      final roomRow = await db
-          .from('study_rooms')
-          .select('*, room_members(id)')
-          .ilike('invite_code', cleanCode)
-          .eq('status', 'active')
-          .single();
-
-      final room = StudyRoom.fromMap(roomRow);
-      await joinRoom(room.id);
-      return room;
-    }
-
-    throw StateError('Could not join room with code $cleanCode');
+    final res = await db.rpc(
+      'join_room_by_code',
+      params: {'p_code': code.trim().toUpperCase()},
+    );
+    return StudyRoom.fromMap(res as Map<String, dynamic>);
   }
 
-  /// Joins a room by its unique ID.
-  Future<void> joinRoom(String roomId) async {
-    final uid = requireUserId;
-    await db.from('room_members').upsert({
-      'room_id': roomId,
-      'user_id': uid,
-      'role': 'member',
-    }, onConflict: 'room_id,user_id');
-  }
-
-  /// Leaves a room (removes user from `room_members`).
+  /// Leaves a room. When the host leaves, or the last member does, a trigger
+  /// closes the room.
   Future<void> leaveRoom(String roomId) async {
     final uid = currentUserId;
     if (uid == null) return;
@@ -133,82 +80,70 @@ class RoomRepository {
         .eq('user_id', uid);
   }
 
-  /// Host closes the study room.
+  /// Host closes the room.
   Future<void> closeRoom(String roomId) async {
-    try {
-      await db.rpc('close_study_room', params: {'p_room_id': roomId});
-    } catch (_) {
-      await db
-          .from('study_rooms')
-          .update({'status': 'closed'})
-          .eq('id', roomId)
-          .eq('created_by', requireUserId);
-    }
+    await db.rpc('close_study_room', params: {'p_room_id': roomId});
   }
 
-  /// Gets members in a room with their profile details.
+  /// Members with display names. Profiles are owner-only, so names come from
+  /// `get_room_members`, which checks the caller is in the room.
   Future<List<RoomMember>> getMembers(String roomId) async {
-    try {
-      final rows = await db
-          .from('room_members')
-          .select('*, profiles(full_name, avatar_initial)')
-          .eq('room_id', roomId)
-          .order('joined_at', ascending: true);
-
-      return (rows as List)
-          .cast<Map<String, dynamic>>()
-          .map(RoomMember.fromMap)
-          .toList();
-    } catch (_) {
-      return const [];
-    }
+    final rows = await db.rpc(
+      'get_room_members',
+      params: {'p_room_id': roomId},
+    );
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map((m) => RoomMember.fromMap(m, roomId: roomId))
+        .toList();
   }
 
-  /// Fetches recent chat messages for a room.
+  /// The most recent [limit] messages, oldest first.
   Future<List<RoomMessage>> getMessages(String roomId, {int limit = 50}) async {
-    try {
-      final rows = await db
-          .from('room_messages')
-          .select('*, profiles(full_name, avatar_initial)')
-          .eq('room_id', roomId)
-          .order('created_at', ascending: false)
-          .limit(limit);
-
-      final list = (rows as List)
-          .cast<Map<String, dynamic>>()
-          .map(RoomMessage.fromMap)
-          .toList();
-
-      // Return chronological order
-      return list.reversed.toList();
-    } catch (_) {
-      return const [];
-    }
+    final rows = await db
+        .from('room_messages')
+        .select('id, room_id, user_id, body, created_at')
+        .eq('room_id', roomId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return rows.map(RoomMessage.fromMap).toList().reversed.toList();
   }
 
-  /// Sends a text message to the room.
-  Future<RoomMessage> sendMessage(String roomId, String body) async {
-    final uid = requireUserId;
+  /// Saves a message under a client-chosen [id], so the optimistic bubble and
+  /// the realtime echo of this insert carry the same id and de-duplicate.
+  Future<RoomMessage> sendMessage(
+    String roomId,
+    String body, {
+    required String id,
+  }) async {
     final row = await db
         .from('room_messages')
         .insert({
+          'id': id,
           'room_id': roomId,
-          'user_id': uid,
+          'user_id': requireUserId,
           'body': body.trim(),
         })
-        .select('*, profiles(full_name, avatar_initial)')
+        .select('id, room_id, user_id, body, created_at')
         .single();
-
     return RoomMessage.fromMap(row);
   }
 
-  /// Creates and connects a RealtimeChannel for the specified room.
-  RealtimeChannel createRoomChannel(String roomId) {
-    return db.channel('room:$roomId');
-  }
+  RealtimeChannel createRoomChannel(String roomId) =>
+      db.channel('room:$roomId');
 
-  /// Drops and unsubscribes a RealtimeChannel.
-  Future<void> removeRoomChannel(RealtimeChannel channel) async {
-    await db.removeChannel(channel);
+  Future<void> removeRoomChannel(RealtimeChannel channel) =>
+      db.removeChannel(channel);
+
+  /// Random (v4) UUID for a message id. No uuid package in this app, and this
+  /// is the only place that needs one.
+  static String newMessageId() {
+    final rnd = Random.secure();
+    final b = List<int>.generate(16, (_) => rnd.nextInt(256));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+    return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-'
+        '${h.substring(16, 20)}-${h.substring(20)}';
   }
 }

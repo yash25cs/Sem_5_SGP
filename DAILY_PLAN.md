@@ -343,3 +343,50 @@ yet, and the device pass has to come first.
   - Upon saving, returning users with existing goals automatically proceed straight into the main app shell without having to re-upload materials or recreate goals.
 - **Validation:**
   - Validated with `flutter analyze`: **0 issues found** (100% clean compilation).
+
+## Day 17 – Audit: live bugs fixed, fake data replaced
+
+**Status:** Completed on 30 September 2026. `flutter analyze` clean,
+`flutter test` 27/27 (8 new in `test/rooms_rewards_test.dart`), 34/34 live
+checks against the hosted project with throwaway accounts, and the streak-freeze
+rules exercised in a rolled-back transaction.
+
+### Broken on the live project, now fixed
+- **Study rooms never worked end to end.** 0010's `room_members` policy was
+  recursive (Postgres 42P17 on every read), so the lobby was always empty, the
+  member list was empty and chat was never saved — the repository hid the error.
+  `0011_study_rooms_fix.sql` replaces the policy and moves create/join/close
+  behind RPCs (D-024).
+- **Lobby Join skipped membership**, so a student who joined from the list could
+  not read or send chat. It now joins through `join_room_by_code`.
+- **Members' timers were zeroed by every host command.** realtime_client
+  delivers broadcasts as `{type, event, payload}` and the store read the top
+  level. Late joiners now get a `sync` from the host; a host closing the room
+  tells members; the system back gesture confirms before leaving; chat bubbles
+  de-duplicate on a client-chosen id and show local time instead of UTC.
+- **`delete-account` and `summarize-material` were never deployed**, so both
+  buttons failed. Deployed; storage cleanup in `delete-account` now pages past
+  100 files.
+- **The 6 PM reminder fired at 11:30 PM IST** — `tz.local` was never set, so it
+  was 18:00 UTC. Now scheduled from local wall time, inexact (no exact-alarm
+  permission, which Play restricts), and the Settings switch actually turns it
+  on and off. The dead "Sound effects" switch is gone.
+- **Onboarding could hang** after saving the academic profile with no network;
+  it now goes through the entry check's retry screen.
+
+### Fake or misleading, now real
+- **Leaderboard** padded a small class with nine invented students, showed a
+  copied "missing XP points will be added soon" banner, a hard-coded Level 1 and
+  a 30-rank promotion zone with a 14-day reshuffle nothing implements. It now
+  shows real classmates only, the student's real level, and their gap to the
+  next place. It also ranked by XP-within-level; it now ranks by total XP.
+- **Rewards** spent XP in SharedPreferences (per phone, shared between accounts)
+  and sold four coupons with no effect. `0012_rewards_store.sql` puts the wallet
+  on the server and sells what the server can enforce: a streak freeze that is
+  used automatically on a missed day, and a golden border shown on the
+  leaderboard (D-025).
+
+### Housekeeping
+- 0004 and 0010 made safe to re-run; `all_migrations.sql` regenerated with all
+  twelve migrations and re-run end to end on the hosted project inside a
+  rolled-back transaction.

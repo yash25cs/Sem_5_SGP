@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import 'data/local_prefs.dart';
 import 'theme/app_theme.dart';
 import 'widgets/common.dart';
 import 'widgets/nav.dart';
@@ -44,17 +45,10 @@ class _HomeShellState extends State<HomeShell> {
     _initNotifications();
   }
 
+  /// Re-applies the student's reminder choice from Settings (on by default).
   Future<void> _initNotifications() async {
-    final ns = NotificationService();
-    await ns.requestPermissions();
-    // Schedule a daily reminder at 6:00 PM
-    await ns.scheduleDailyReminder(
-      id: 1,
-      title: 'Time to study!',
-      body: 'Keep your streak alive and hit your goals today.',
-      hour: 18,
-      minute: 0,
-    );
+    final enabled = await LocalPrefs.remindersEnabled();
+    await NotificationService().applyDailyReminder(enabled: enabled);
   }
 
   void _open(Widget screen) {

@@ -59,9 +59,8 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     await context.read<RoomStore>().loadLobby(classId: profiles.profile?.classId);
   }
 
-  /// Opens the active StudyRoomScreen.
+  /// Pushes the room screen for the room the store has already entered.
   void _openRoom(StudyRoom room) {
-    context.read<RoomStore>().enterRoom(room);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => StudyRoomScreen(
@@ -95,6 +94,20 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     }
   }
 
+  /// A lobby tile's Join goes through the same RPC as a typed code: entering
+  /// without joining would leave the student unable to read or send chat.
+  Future<void> _joinFromLobby(StudyRoom room) async {
+    final store = context.read<RoomStore>();
+    final joined = await store.joinByCode(room.inviteCode);
+    if (!mounted) return;
+    if (joined != null) {
+      _openRoom(joined);
+    } else {
+      _toast(store.error ?? 'Could not join that room.');
+      store.loadLobby(classId: context.read<ProfileStore>().profile?.classId);
+    }
+  }
+
   /// Opens modal sheet to configure and create a new study room.
   Future<void> _showCreateRoomSheet() async {
     final p = context.p;
@@ -102,6 +115,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     int selectedTimer = 25;
     int selectedBreak = 5;
     int maxMembers = 8;
+    String? sheetError;
 
     final created = await showModalBottomSheet<StudyRoom>(
       context: context,
@@ -256,12 +270,23 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
               ),
               const SizedBox(height: 22),
 
+              if (sheetError != null) ...[
+                Text(sheetError!,
+                    style: TextStyle(
+                        color: p.error,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 10),
+              ],
               PillButton(
                 'Create & Enter Room',
                 icon: Symbols.groups,
                 onTap: () async {
                   final name = nameController.text.trim();
-                  if (name.isEmpty) return;
+                  if (name.isEmpty) {
+                    setModalState(() => sheetError = 'Give the room a name.');
+                    return;
+                  }
 
                   final store = sheetCtx.read<RoomStore>();
                   final classId =
@@ -275,8 +300,12 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     maxMembers: maxMembers,
                   );
 
-                  if (sheetCtx.mounted && room != null) {
+                  if (!sheetCtx.mounted) return;
+                  if (room != null) {
                     Navigator.of(sheetCtx).pop(room);
+                  } else {
+                    setModalState(() => sheetError =
+                        store.error ?? 'Could not create the room.');
                   }
                 },
               ),
@@ -535,7 +564,17 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   const SizedBox(height: 10),
 
                   // ── Rooms List or Empty State ──
-                  if (activeRooms.isEmpty)
+                  if (roomStore.error != null && !roomStore.busy) ...[
+                    ErrorNotice(
+                      message: roomStore.error!,
+                      onRetry: () => roomStore.loadLobby(
+                          classId: profiles.profile?.classId),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (roomStore.loading && activeRooms.isEmpty)
+                    const LoadingBlock(height: 96)
+                  else if (activeRooms.isEmpty)
                     AppCard(
                       color: p.card2.withValues(alpha: 0.5),
                       shadow: false,
@@ -573,7 +612,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     for (final r in activeRooms) ...[
                       _RoomTile(
                         room: r,
-                        onJoin: () => _openRoom(r),
+                        onJoin: roomStore.busy ? null : () => _joinFromLobby(r),
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -657,7 +696,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                             for (final entry in members)
                               _MemberRow(
                                 entry: entry,
-                                xpLabel: '${_thousands(entry.xp)} XP',
+                                xpLabel: '${_thousands(entry.totalXp)} XP',
                               ),
                           ],
                         ),
@@ -677,7 +716,7 @@ class _RoomTile extends StatelessWidget {
   const _RoomTile({required this.room, required this.onJoin});
 
   final StudyRoom room;
-  final VoidCallback onJoin;
+  final VoidCallback? onJoin;
 
   @override
   Widget build(BuildContext context) {
@@ -711,13 +750,18 @@ class _RoomTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 2,
                   children: [
                     Text(
                       '🍅 ${room.timerDurationMin}m focus',
                       style: TextStyle(color: p.ink3, fontSize: 12),
                     ),
-                    const SizedBox(width: 10),
+                    Text(
+                      '👥 ${room.memberCount}/${room.maxMembers}',
+                      style: TextStyle(color: p.ink3, fontSize: 12),
+                    ),
                     Text(
                       'Code: ${room.inviteCode}',
                       style: TextStyle(
@@ -733,9 +777,9 @@ class _RoomTile extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           PillButton(
-            'Join',
+            room.isFull ? 'Full' : 'Join',
             expand: false,
-            onTap: onJoin,
+            onTap: room.isFull ? null : onJoin,
           ),
         ],
       ),

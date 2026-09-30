@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../data/local_prefs.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_colors.dart';
@@ -9,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../services/notification_service.dart';
 import '../widgets/nav.dart';
 import 'academic_profile_screen.dart';
 import 'set_target_screen.dart';
@@ -26,8 +28,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  /// The 6 PM study reminder. Read from the device on open; the switch used
+  /// to be a local bool that reset every visit and scheduled nothing.
   bool _notifications = true;
-  bool _sounds = false;
 
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -40,6 +43,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<ProfileStore>().load();
     });
+    LocalPrefs.remindersEnabled().then((on) {
+      if (mounted) setState(() => _notifications = on);
+    });
+  }
+
+  Future<void> _setReminders(bool on) async {
+    setState(() => _notifications = on);
+    await NotificationService().applyDailyReminder(enabled: on);
+    _toast(on
+        ? 'Daily study reminder set for 6:00 PM.'
+        : 'Daily study reminder turned off.');
   }
 
   void _toast(String message) {
@@ -597,15 +611,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onChanged: (v) =>
                             context.read<ThemeController>().set(v),
                       )),
-                  _Row(Symbols.notifications, 'Notifications', p.coral,
+                  // "Sound effects" used to sit here too, a switch wired to
+                  // nothing — the app plays no sounds.
+                  _Row(Symbols.notifications, 'Daily study reminder', p.coral,
+                      value: '6:00 PM',
                       trailing: Switch(
                         value: _notifications,
-                        onChanged: (v) => setState(() => _notifications = v),
-                      )),
-                  _Row(Symbols.volume_up, 'Sound effects', p.green,
-                      trailing: Switch(
-                        value: _sounds,
-                        onChanged: (v) => setState(() => _sounds = v),
+                        onChanged: _setReminders,
                       )),
                 ]),
                 _GroupLabel('Academic Profile'),

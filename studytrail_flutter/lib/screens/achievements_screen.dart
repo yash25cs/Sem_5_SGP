@@ -42,8 +42,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
     final p = context.p;
     final store = context.watch<GamificationStore>();
     final streak = store.streak;
-    final entries =
-        LeaderboardScreen.resolveEntries(store.leaderboard, store.profile);
+    final entries = store.leaderboard;
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -216,12 +215,22 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                             builder: (_) => const LeaderboardScreen()),
                       ),
                       icon: const Icon(Symbols.chevron_right, size: 18),
-                      label: const Text('League & Zones',
+                      label: const Text('See all',
                           style: TextStyle(fontWeight: FontWeight.w800)),
                     ),
                   ),
                   if (store.loading && store.leaderboard.isEmpty)
                     const LoadingBlock(height: 120)
+                  else if (entries.isEmpty)
+                    EmptyState(
+                      icon: Symbols.leaderboard,
+                      title: store.profile?.classId == null
+                          ? 'Not in a class yet'
+                          : 'No rankings yet',
+                      message: store.profile?.classId == null
+                          ? 'Join your class from Study Rooms to see how you rank.'
+                          : 'Classmates appear here as they earn XP.',
+                    )
                   else
                     AppCard(
                       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -230,7 +239,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                           for (final entry in entries.take(5))
                             _LeaderRow(
                               entry: entry,
-                              xpLabel: '${_thousands(entry.xp)} XP',
+                              xpLabel: '${_thousands(entry.totalXp)} XP',
                             ),
                         ],
                       ),
