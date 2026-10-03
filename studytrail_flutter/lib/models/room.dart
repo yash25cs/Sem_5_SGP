@@ -34,6 +34,22 @@ class StudyRoom {
   bool get isActive => status == 'active';
   bool get isFull => memberCount >= maxMembers;
 
+  /// The same room with the host's new focus/break lengths.
+  StudyRoom withTimer({required int focusMin, required int breakMin}) =>
+      StudyRoom(
+        id: id,
+        name: name,
+        inviteCode: inviteCode,
+        createdBy: createdBy,
+        classId: classId,
+        maxMembers: maxMembers,
+        timerDurationMin: focusMin,
+        breakDurationMin: breakMin,
+        status: status,
+        createdAt: createdAt,
+        memberCount: memberCount,
+      );
+
   factory StudyRoom.fromMap(Map<String, dynamic> m) {
     // memberCount can come from an aggregate or a nested list length.
     int members = 0;
@@ -213,4 +229,229 @@ class TimerSync {
         'remaining_secs': remainingSecs,
         if (startedAt != null) 'started_at': startedAt!.toIso8601String(),
       };
+}
+
+/// One player in a group quiz, as `get_room_quiz` reports them.
+class RoomQuizPlayer {
+  const RoomQuizPlayer({
+    required this.userId,
+    required this.name,
+    required this.initial,
+    this.vote,
+    this.submitted = false,
+    this.score,
+    this.rank,
+    this.xpAwarded = 0,
+    this.answeredCurrent = false,
+  });
+
+  final String userId;
+  final String name;
+  final String initial;
+
+  /// Speed round: has answered the question that's open now.
+  final bool answeredCurrent;
+
+  /// null until they answer the invitation.
+  final bool? vote;
+  final bool submitted;
+
+  /// Everyone's once the quiz is finished; only your own before that.
+  final int? score;
+  final int? rank;
+  final int xpAwarded;
+
+  factory RoomQuizPlayer.fromMap(Map<String, dynamic> m) {
+    final name = ((m['full_name'] as String?) ?? '').trim();
+    final initial = ((m['avatar_initial'] as String?) ?? '').trim();
+    return RoomQuizPlayer(
+      userId: m['user_id'] as String,
+      name: name.isEmpty ? 'Student' : name,
+      initial: initial.isNotEmpty
+          ? initial[0].toUpperCase()
+          : (name.isEmpty ? 'S' : name[0].toUpperCase()),
+      vote: m['vote'] as bool?,
+      submitted: m['submitted'] == true,
+      score: (m['score'] as num?)?.toInt(),
+      rank: (m['rank'] as num?)?.toInt(),
+      xpAwarded: (m['xp_awarded'] as num?)?.toInt() ?? 0,
+      answeredCurrent: m['answered_current'] == true,
+    );
+  }
+}
+
+/// Where a speed round is right now, by the server's clock
+/// (`app_private.speed_clock`, `0022_speed_quiz.sql`): a 5 s lead, then each
+/// question gets its answering window and a 4 s reveal.
+class SpeedClock {
+  const SpeedClock({
+    required this.index,
+    required this.inSlot,
+    required this.seconds,
+  });
+
+  static const leadSeconds = 5;
+  static const revealSeconds = 4;
+
+  /// The question in play; -1 during the lead.
+  final int index;
+
+  /// Seconds into this question's slot (or, during the lead, into the lead).
+  final double inSlot;
+  final int seconds;
+
+  bool get lead => index < 0;
+  bool get answering => !lead && inSlot < seconds;
+  bool get revealing => !lead && inSlot >= seconds;
+
+  /// Seconds left in whatever is happening now.
+  double get secondsLeft => lead
+      ? (seconds + revealSeconds) - inSlot
+      : answering
+          ? seconds - inSlot
+          : (seconds + revealSeconds) - inSlot;
+
+  factory SpeedClock.at(DateTime serverNow, DateTime startedAt, int seconds) {
+    final e = serverNow.difference(startedAt).inMilliseconds / 1000 -
+        leadSeconds;
+    final slot = seconds + revealSeconds;
+    final index = (e / slot).floor();
+    return SpeedClock(index: index, inSlot: e - index * slot, seconds: seconds);
+  }
+}
+
+/// A question in a group quiz. [correctIndex] and [explanation] stay null
+/// until the quiz is finished: the server doesn't send them before that.
+class RoomQuizQuestion {
+  const RoomQuizQuestion({
+    required this.id,
+    required this.question,
+    required this.options,
+    this.correctIndex,
+    this.explanation,
+  });
+
+  final String id;
+  final String question;
+  final List<String> options;
+  final int? correctIndex;
+  final String? explanation;
+
+  factory RoomQuizQuestion.fromMap(Map<String, dynamic> m) => RoomQuizQuestion(
+        id: m['id'] as String,
+        question: (m['question'] as String?) ?? '',
+        options: [for (final o in (m['options'] as List? ?? const [])) '$o'],
+        correctIndex: (m['correct_index'] as num?)?.toInt(),
+        explanation: m['explanation'] as String?,
+      );
+}
+
+/// A quiz the whole room takes together (0019_room_quiz.sql).
+class RoomQuiz {
+  const RoomQuiz({
+    required this.id,
+    required this.roomId,
+    required this.createdBy,
+    required this.title,
+    required this.questionCount,
+    required this.status,
+    this.players = const [],
+    this.questions = const [],
+    this.myPicks = const {},
+    this.mode = 'standard',
+    this.secondsPerQuestion,
+    this.startedAt,
+    this.clockOffset = Duration.zero,
+  });
+
+  final String id;
+  final String roomId;
+  final String createdBy;
+  final String title;
+  final int questionCount;
+
+  /// 'voting' | 'running' | 'finished' | 'cancelled'
+  final String status;
+
+  /// Ranked once the quiz is finished.
+  final List<RoomQuizPlayer> players;
+
+  /// Empty while voting; the same list for every player once it runs.
+  final List<RoomQuizQuestion> questions;
+
+  /// Question id to option index, once this student has handed in — or, in a
+  /// speed round, as they answer.
+  final Map<String, int> myPicks;
+
+  /// 'standard' (everyone at their own pace) or 'speed'.
+  final String mode;
+  final int? secondsPerQuestion;
+  final DateTime? startedAt;
+
+  /// The server's clock minus this phone's, when this was read. A speed round
+  /// is timed on the server, so the countdown is drawn on its clock.
+  final Duration clockOffset;
+
+  bool get speed => mode == 'speed';
+
+  /// Null unless this is a speed round that has started.
+  SpeedClock? clockAt(DateTime localNow) {
+    final started = startedAt;
+    final secs = secondsPerQuestion;
+    if (!speed || started == null || secs == null) return null;
+    return SpeedClock.at(localNow.add(clockOffset), started, secs);
+  }
+
+  bool get voting => status == 'voting';
+  bool get running => status == 'running';
+  bool get finished => status == 'finished';
+  bool get cancelled => status == 'cancelled';
+  bool get open => voting || running;
+
+  RoomQuizPlayer? player(String? userId) {
+    for (final p in players) {
+      if (p.userId == userId) return p;
+    }
+    return null;
+  }
+
+  int get agreedCount => players.where((p) => p.vote == true).length;
+  int get submittedCount => players.where((p) => p.submitted).length;
+
+  factory RoomQuiz.fromMap(Map<String, dynamic> m) {
+    final picks = m['my_picks'];
+    final serverNow = m['server_now'] is String
+        ? DateTime.tryParse(m['server_now'] as String)
+        : null;
+    return RoomQuiz(
+      mode: (m['mode'] as String?) ?? 'standard',
+      secondsPerQuestion: (m['seconds_per_question'] as num?)?.toInt(),
+      startedAt: m['started_at'] is String
+          ? DateTime.tryParse(m['started_at'] as String)
+          : null,
+      clockOffset: serverNow == null
+          ? Duration.zero
+          : serverNow.difference(DateTime.now()),
+      id: m['id'] as String,
+      roomId: m['room_id'] as String,
+      createdBy: m['created_by'] as String,
+      title: (m['title'] as String?) ?? 'Group quiz',
+      questionCount: (m['question_count'] as num?)?.toInt() ?? 0,
+      status: (m['status'] as String?) ?? 'voting',
+      players: [
+        for (final p in (m['players'] as List? ?? const []))
+          RoomQuizPlayer.fromMap(Map<String, dynamic>.from(p as Map)),
+      ],
+      questions: [
+        for (final q in (m['questions'] as List? ?? const []))
+          RoomQuizQuestion.fromMap(Map<String, dynamic>.from(q as Map)),
+      ],
+      myPicks: picks is Map
+          ? {
+              for (final e in picks.entries)
+                if (e.value is num) '${e.key}': (e.value as num).toInt(),
+            }
+          : const {},
+    );
+  }
 }

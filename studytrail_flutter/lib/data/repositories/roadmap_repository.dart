@@ -128,4 +128,29 @@ class RoadmapRepository {
     }
     return 0;
   }
+
+  /// The phone's date, not the server's: the database clock is UTC, and Home
+  /// lists tasks by the date the student sees.
+  static String _today() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day)
+        .toIso8601String()
+        .split('T')
+        .first;
+  }
+
+  /// How far behind (or not) the student is on this goal's roadmap.
+  Future<RoadmapPace> getPace(String goalId) async {
+    final res = await db.rpc('get_roadmap_pace',
+        params: {'p_goal': goalId, 'p_today': _today()});
+    return RoadmapPace.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
+  /// Brings missed tasks forward to today and fills the next week at the pace
+  /// the exam now needs.
+  Future<CatchUpResult> planCatchUp(String goalId) async {
+    final res = await db.rpc('plan_catch_up',
+        params: {'p_goal': goalId, 'p_today': _today()});
+    return CatchUpResult.fromMap(Map<String, dynamic>.from(res as Map));
+  }
 }

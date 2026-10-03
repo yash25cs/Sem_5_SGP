@@ -208,21 +208,33 @@ invented data.
 | P2 | Room chat times shown in UTC; duplicate bubbles possible. | Local time; client-chosen ids |
 | P3 | Onboarding hung offline after saving the academic profile. | Routed through the entry check's retry screen |
 
-## Still open
+## Still open (updated 2 October 2026)
 
-- **Two-phone Realtime pass.** The database side of rooms is verified live;
-  timer broadcast, presence and the chat echo can only be proven on two devices
-  (`SETUP.md` §8 items 13–18).
-- **Streak days roll over at 05:30 IST.** `log_activity` uses `current_date` on
-  a UTC server. Needs the student's timezone passed in or stored.
+Closed since this list was written: dark mode now persists; a new review round
+(`DAILY_PLAN.md` Day 18) found and closed an XP-farming hole — a direct
+`daily_tasks` update could reset `rewarded_at` and be paid again (0015); and on
+Day 21, `0020_hardening.sql` closed four more — room channels are private
+(D-032), a leaver no longer holds up a group quiz, streaks follow the student's
+own day (D-033), and chat turns can't be written by a client (D-034).
+
+- **Two phones on real devices.** `test/live/rooms_live_test.dart` now proves
+  the Realtime path between two clients against the hosted project (private
+  channel, presence, timer, chat echo, quiz ping). What it can't prove is a real
+  phone's UI and network: `SETUP.md` §8 items 13–18, 40 and 46.
+- **The home-screen widget hasn't run on a device.** It builds and is in the
+  merged manifest; `SETUP.md` §8 item 49.
+- **The task-XP daily cap resets on UTC.** `complete_task` still counts "today"
+  with `date_trunc('day', now())` (D-033).
+- **A member can send timer broadcasts** and other members' timers will follow
+  them: Realtime authorizes at join, not per event, and a broadcast has no
+  verified sender (D-032). Only people in the room can do it.
 - **Semester is stored inside `profiles.branch`** as `"<branch> · Semester N"`
   and parsed back out. Give it its own column.
 - **Achievements screen hides load failures.** `GamificationStore.load()`
   catches every error per section, so offline shows empty sections with no retry.
-- **Dark mode isn't persisted** — `ThemeController` resets to light on launch.
-- **Room broadcast and presence use a public Realtime channel** named after the
-  room id. Private channels need Realtime Authorization policies.
 - **Email confirmation is off** on the hosted project, which is right for
   development and wrong for real users.
+- **Reports have no in-app review.** Room and doubt-board reports are read in
+  the dashboard (`room_reports`, `doubt_reports`).
 - **Android toolchain sits exactly on Flutter's minimum** for Gradle, AGP and
   Kotlin; the next Flutter release that raises a floor will fail the build.

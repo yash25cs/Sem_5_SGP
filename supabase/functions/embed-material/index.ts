@@ -76,6 +76,9 @@ copied as printed (for example "Unit 3 — Normalisation"). Leave it out when th
 page has no heading above the text.
 - Skip page furniture: page numbers, running headers and footers, the index.
 - Keep tables and lists as readable plain text.
+- A photo of handwritten or printed notes is read the same way: transcribe the \
+handwriting faithfully, including formulas, and skip anything illegible rather \
+than guessing at it.
 - Return every section of the document, in order. If the document runs longer \
 than 120 sections, start from the beginning and stop at 120.`;
 
@@ -109,10 +112,16 @@ serve(async (req) => {
 
   // Refusals below leave `status` untouched on purpose — a material we were
   // never able to read didn't fail to embed, it isn't embeddable.
-  if (material.source_type === 'video_link' || !material.storage_path) {
+  if (!material.storage_path) {
+    // A bookmark, or a video saved before videos could be read. YouTube
+    // videos now arrive with their captions stored as a .txt — the phone
+    // fetches them, because YouTube refuses this server (D-037).
     throw new HttpError(
       400,
-      "Links can't be read yet — upload a PDF or a text file.",
+      material.source_type === 'video_link'
+        ? 'This link has no transcript saved with it. Remove it and add the '
+          + 'video again.'
+        : "That material has no file to read. Upload it again.",
     );
   }
 
@@ -120,7 +129,8 @@ serve(async (req) => {
   if (kind === null) {
     throw new HttpError(
       400,
-      'Only PDF, .txt and .md files can be read right now.',
+      'Only PDFs, photos (JPG, PNG, WebP, HEIC), .txt and .md files can be '
+        + 'read right now.',
     );
   }
 
@@ -161,9 +171,11 @@ serve(async (req) => {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const title = (material.title as string | null) ?? 'Study material';
 
-    const sections = kind === 'pdf'
-      ? await pdfSections(bytes, title)
-      : textSections(bytes);
+    const sections = material.source_type === 'video_link'
+      ? transcriptSections(bytes, title)
+      : kind === 'text'
+      ? textSections(bytes)
+      : await visionSections(bytes, title, kind.mime);
 
     if (sections.length === 0) {
       throw new HttpError(
@@ -229,11 +241,25 @@ serve(async (req) => {
   }
 });
 
-/// `pdf` | `text` | null (unsupported).
-function fileKind(path: string): 'pdf' | 'text' | null {
+/// Photos go through the same Gemini vision call as PDFs — handwritten notes
+/// snapped on a phone are the most common study material there is.
+const VISION_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+};
+
+/// `text`, a vision file with its MIME type, or null (unsupported).
+function fileKind(path: string): 'text' | { mime: string } | null {
   const lower = path.toLowerCase();
-  if (lower.endsWith('.pdf')) return 'pdf';
   if (lower.endsWith('.txt') || lower.endsWith('.md')) return 'text';
+  for (const [ext, mime] of Object.entries(VISION_TYPES)) {
+    if (lower.endsWith(ext)) return { mime };
+  }
   return null;
 }
 
@@ -255,19 +281,22 @@ async function setStatus(
   }
 }
 
-/// Reads a PDF with Gemini's native document vision.
+/// Reads a PDF or a photo with Gemini's native document vision.
 ///
 /// A Deno PDF parser was the alternative and was rejected: neither Deno nor
 /// Docker is installed on this machine, so a parser could not be run even once
 /// before deploying, and pdf.js under the Edge Runtime is a common crash.
-async function pdfSections(
+async function visionSections(
   bytes: Uint8Array,
   title: string,
+  mime: string,
 ): Promise<Section[]> {
   if (bytes.length > MAX_PDF_BYTES) {
     throw new HttpError(
       413,
-      'That PDF is too large to read. Try one under 14 MB, or split it.',
+      mime === 'application/pdf'
+        ? 'That PDF is too large to read. Try one under 14 MB, or split it.'
+        : 'That photo is too large to read. Try one under 14 MB.',
     );
   }
 
@@ -284,7 +313,7 @@ async function pdfSections(
       {
         type: 'document',
         data: encodeBase64(bytes),
-        mime_type: 'application/pdf',
+        mime_type: mime,
       },
     ],
     // 120 sections of a few hundred words each. The model's ceiling is 65536,
@@ -349,6 +378,20 @@ function salvageSections(raw: string): any[] {
 
 /// Splits plain text or Markdown locally — no model call needed, and none of the
 /// transcription risk.
+/// The heading text when [line] is a heading, else null.
+function headingLabel(line: string): string | null {
+  const markdown = /^#{1,6}\s+(.{1,80})$/.exec(line);
+  if (markdown) return markdown[1].trim();
+  if (
+    line.length <= 80 &&
+    /^(unit|chapter|module|topic|lecture|section|part)\s*[\divxlIVXL]+\b/i
+      .test(line)
+  ) {
+    return line.replace(/[\s:.\-–—]+$/, '');
+  }
+  return null;
+}
+
 function textSections(bytes: Uint8Array): Section[] {
   if (bytes.length > MAX_TEXT_BYTES) {
     throw new HttpError(
@@ -373,15 +416,21 @@ function textSections(bytes: Uint8Array): Section[] {
   };
 
   for (const block of text.split(/\n\s*\n/)) {
-    const trimmed = block.trim();
+    let trimmed = block.trim();
     if (trimmed.length === 0) continue;
 
-    // A Markdown heading closes the current chunk and labels what follows.
-    const match = /^#{1,6}\s+(.{1,80})/.exec(trimmed);
-    if (match) {
+    // A heading closes the current chunk and labels what follows — either a
+    // Markdown heading, or a plain-text line like "Unit 3: Normalisation" or
+    // "Chapter 2", which is how most typed notes mark their units. Without
+    // unit labels a text file's chunks can't be told apart, which is what
+    // `get_weak_topics` groups by.
+    const lines = trimmed.split('\n');
+    const label = headingLabel(lines[0].trim());
+    if (label !== null) {
       flush();
-      heading = match[1].trim();
-      continue;
+      heading = label;
+      trimmed = lines.slice(1).join('\n').trim();
+      if (trimmed.length === 0) continue;
     }
 
     if (buffer.length + trimmed.length + 2 > TEXT_CHUNK_CHARS && buffer.length > 0) {
@@ -392,6 +441,76 @@ function textSections(bytes: Uint8Array): Section[] {
       buffer = carry.trimStart();
     }
     buffer += (buffer.length > 0 ? '\n\n' : '') + trimmed;
+  }
+  flush();
+
+  return sections;
+}
+
+/// One caption line of a stored transcript: `[12:40] words`.
+const TRANSCRIPT_LINE = /^\[(\d{1,2}(?::\d{2}){1,2})\]\s*(.*)$/;
+
+/// About a minute and a half of speech. Larger than a notes chunk because
+/// spoken text is thinner, and so that 120 chunks reach three hours of video.
+const TRANSCRIPT_CHUNK_CHARS = 1500;
+
+/// Splits a YouTube transcript — the file `YouTubeService.toFileText` writes on
+/// the phone — on its timestamps, so each chunk says where in the video it
+/// starts.
+///
+/// The label is "12:40 · Lecture title": the time leads so it survives being
+/// cut short on a citation chip, and the title says which video when a whole
+/// playlist is in the library. No model call — captions are already text.
+function transcriptSections(bytes: Uint8Array, title: string): Section[] {
+  if (bytes.length > MAX_TEXT_BYTES) {
+    throw new HttpError(
+      413,
+      'That transcript is too long to read. Try a shorter video.',
+    );
+  }
+
+  const lines: { at: string; text: string }[] = [];
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  for (const raw of text.split(/\r?\n/)) {
+    const match = TRANSCRIPT_LINE.exec(raw.trim());
+    const words = match?.[2].trim() ?? '';
+    if (match && words.length > 0) lines.push({ at: match[1], text: words });
+  }
+  // Not a transcript after all; read it like any other text file.
+  if (lines.length === 0) return textSections(bytes);
+
+  const name = title.length > 50 ? `${title.slice(0, 49).trimEnd()}…` : title;
+  const sections: Section[] = [];
+  let parts: typeof lines = [];
+  let size = 0;
+
+  const flush = () => {
+    const body = parts.map((p) => p.text).join(' ').trim();
+    if (body.length < 20) return;
+    sections.push({
+      unitLabel: `${parts[0].at} · ${name}`,
+      text: body.slice(0, MAX_CHUNK_CHARS),
+    });
+  };
+
+  for (const line of lines) {
+    if (size + line.text.length + 1 > TRANSCRIPT_CHUNK_CHARS && parts.length > 0) {
+      flush();
+      // Carry the last line or two, as the text splitter does, so a sentence
+      // cut at the boundary is findable from either side. The next label
+      // starts at the carried line, which is where its text really begins.
+      const carry: typeof lines = [];
+      let carried = 0;
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (carried + parts[i].text.length > TEXT_OVERLAP_CHARS) break;
+        carry.unshift(parts[i]);
+        carried += parts[i].text.length + 1;
+      }
+      parts = carry;
+      size = carried;
+    }
+    parts.push(line);
+    size += line.text.length + 1;
   }
   flush();
 

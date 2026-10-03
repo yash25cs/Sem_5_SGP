@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/material_repository.dart';
 import '../data/supabase_client.dart';
+import '../services/home_widget_sync.dart';
 
 /// Where the top-level flow should be. `unknown` covers the first frame before
 /// Supabase has restored any persisted session.
@@ -101,7 +102,10 @@ class AuthStore extends ChangeNotifier {
         await _repo.signOut();
       });
 
-  Future<bool> signOut() => _run(_repo.signOut);
+  Future<bool> signOut() => _run(() async {
+        await _repo.signOut();
+        await HomeWidgetSync.clear();
+      });
 
   @override
   void dispose() {

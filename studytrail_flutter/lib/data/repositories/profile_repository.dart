@@ -40,6 +40,23 @@ class ProfileRepository {
     return Profile.fromMap(row);
   }
 
+  /// The language chat answers, summaries and answer feedback come back in.
+  Future<Profile> setAnswerLanguage(AnswerLanguage language) async {
+    final row = await db
+        .from('profiles')
+        .update({'answer_language': language.code})
+        .eq('id', requireUserId)
+        .select()
+        .single();
+    return Profile.fromMap(row);
+  }
+
+  /// Tells the server the phone's offset from UTC, so streaks and daily caps
+  /// follow the student's own day (`0020_hardening.sql`).
+  Future<void> setUtcOffset(Duration offset) async {
+    await db.rpc('set_utc_offset', params: {'p_minutes': offset.inMinutes});
+  }
+
   Future<List<Map<String, dynamic>>> getClasses() async {
     final rows =
         await db.from('classes').select().order('name', ascending: true);

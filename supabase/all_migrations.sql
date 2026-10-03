@@ -2510,3 +2510,2639 @@ end $$;
 
 revoke execute on function public.get_class_leaderboard(int) from public, anon;
 grant execute on function public.get_class_leaderboard(int) to authenticated;
+-- ============================================================
+-- 0013  Study-room moderation: block, report, host removal.
+-- ============================================================
+--
+-- Anyone who joins a room can post in its chat, so once rooms are used by
+-- real students three things are needed:
+--
+-- * Block — a personal filter. The blocker stops seeing the blocked student's
+--   messages in every room. Nothing changes for anyone else.
+-- * Report — a record for whoever runs the project to review in the
+--   dashboard. It snapshots the message text, because a room can be closed or
+--   a message deleted before anyone looks.
+-- * Remove — the host takes someone out of their room, and that student can't
+--   rejoin it with the code.
+-- ============================================================
+
+-- ── Blocks ──────────────────────────────────────────────────────────────────
+create table if not exists user_blocks (
+  blocker_id uuid        not null references auth.users(id) on delete cascade,
+  blocked_id uuid        not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker_id, blocked_id),
+  check (blocker_id <> blocked_id)
+);
+
+alter table user_blocks enable row level security;
+drop policy if exists user_blocks_own on user_blocks;
+create policy user_blocks_own on user_blocks for all to authenticated
+  using (blocker_id = auth.uid())
+  with check (blocker_id = auth.uid());
+
+revoke all on user_blocks from anon;
+revoke insert, update, delete on user_blocks from authenticated;
+grant insert (blocker_id, blocked_id), delete on user_blocks to authenticated;
+
+-- ── Reports ─────────────────────────────────────────────────────────────────
+create table if not exists room_reports (
+  id           uuid        primary key default gen_random_uuid(),
+  reporter_id  uuid        not null references auth.users(id) on delete cascade,
+  reported_id  uuid        not null references auth.users(id) on delete cascade,
+  room_id      uuid        references study_rooms(id) on delete set null,
+  message_id   uuid        references room_messages(id) on delete set null,
+  message_body text,
+  reason       text        not null
+                           check (reason in ('spam', 'harassment', 'inappropriate', 'other')),
+  details      text        check (details is null or char_length(details) <= 500),
+  status       text        not null default 'open'
+                           check (status in ('open', 'reviewed', 'dismissed')),
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists room_reports_open_idx
+  on room_reports (created_at desc) where status = 'open';
+
+alter table room_reports enable row level security;
+-- A reporter can see what they filed; nobody else can see reports at all
+-- through the API. Review happens in the dashboard.
+drop policy if exists room_reports_own on room_reports;
+create policy room_reports_own on room_reports for select to authenticated
+  using (reporter_id = auth.uid());
+revoke all on room_reports from anon;
+revoke insert, update, delete on room_reports from authenticated;
+
+create or replace function public.report_room_user(
+  p_room_id     uuid,
+  p_reported_id uuid,
+  p_reason      text,
+  p_message_id  uuid default null,
+  p_details     text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_body text;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to report.';
+  end if;
+  if p_reported_id = v_uid then
+    raise exception 'You can''t report yourself.';
+  end if;
+  if p_reason not in ('spam', 'harassment', 'inappropriate', 'other') then
+    raise exception 'Pick a reason for the report.';
+  end if;
+  -- Only someone in the room saw what happened there.
+  if not exists (select 1 from room_members
+                  where room_id = p_room_id and user_id = v_uid) then
+    raise exception 'You can only report someone in a room you''re in.';
+  end if;
+
+  if p_message_id is not null then
+    select body into v_body from room_messages
+     where id = p_message_id and room_id = p_room_id and user_id = p_reported_id;
+    if not found then
+      raise exception 'That message isn''t in this room.';
+    end if;
+  end if;
+
+  -- One open report per reporter, person and message is enough.
+  if exists (select 1 from room_reports
+              where reporter_id = v_uid and reported_id = p_reported_id
+                and message_id is not distinct from p_message_id
+                and status = 'open') then
+    return;
+  end if;
+
+  insert into room_reports
+    (reporter_id, reported_id, room_id, message_id, message_body, reason, details)
+  values
+    (v_uid, p_reported_id, p_room_id, p_message_id, v_body, p_reason,
+     nullif(left(btrim(coalesce(p_details, '')), 500), ''));
+end $$;
+
+-- ── Host removal ────────────────────────────────────────────────────────────
+create table if not exists room_bans (
+  room_id   uuid        not null references study_rooms(id) on delete cascade,
+  user_id   uuid        not null references auth.users(id) on delete cascade,
+  banned_at timestamptz not null default now(),
+  primary key (room_id, user_id)
+);
+
+alter table room_bans enable row level security;
+-- No policies: read and written only by the RPCs below.
+revoke all on room_bans from anon, authenticated;
+
+create or replace function public.remove_room_member(
+  p_room_id uuid,
+  p_user_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if not exists (select 1 from study_rooms
+                  where id = p_room_id and created_by = v_uid and status = 'active') then
+    raise exception 'Only the host can remove someone.';
+  end if;
+  if p_user_id = v_uid then
+    raise exception 'Close the room instead of removing yourself.';
+  end if;
+
+  delete from room_members where room_id = p_room_id and user_id = p_user_id;
+  if not found then
+    raise exception 'They''re not in this room.';
+  end if;
+
+  insert into room_bans (room_id, user_id) values (p_room_id, p_user_id)
+  on conflict do nothing;
+end $$;
+
+-- join_room_by_code from 0011, plus the ban check.
+create or replace function public.join_room_by_code(p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_room  study_rooms;
+  v_count int;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to join a study room.';
+  end if;
+
+  select * into v_room from study_rooms
+   where invite_code = upper(btrim(coalesce(p_code, '')))
+     and status = 'active'
+   for update;
+
+  if not found then
+    raise exception 'No open room has that code.';
+  end if;
+
+  if exists (select 1 from room_bans
+              where room_id = v_room.id and user_id = v_uid) then
+    raise exception 'The host removed you from this room.';
+  end if;
+
+  if exists (select 1 from room_members
+              where room_id = v_room.id and user_id = v_uid) then
+    return row_to_json(v_room);
+  end if;
+
+  select count(*) into v_count from room_members where room_id = v_room.id;
+  if v_count >= v_room.max_members then
+    raise exception 'This room is full.';
+  end if;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, v_uid, 'member');
+
+  return row_to_json(v_room);
+end $$;
+
+revoke execute on function public.report_room_user(uuid, uuid, text, uuid, text),
+                           public.remove_room_member(uuid, uuid),
+                           public.join_room_by_code(text)
+  from public, anon;
+grant execute on function public.report_room_user(uuid, uuid, text, uuid, text),
+                          public.remove_room_member(uuid, uuid),
+                          public.join_room_by_code(text)
+  to authenticated;
+-- ============================================================
+-- 0014  Weak topics: find the units a student keeps getting
+--       wrong, so practice can target them.
+-- ============================================================
+--
+-- The evidence was mostly there already: every flashcard carries its source
+-- chunk and its last grade, and every quiz answer is marked right or wrong.
+-- What was missing is which unit a quiz question tested — generate-quiz now
+-- records it, from the excerpt the question was written from. Questions
+-- generated before this migration have no unit and simply don't count.
+-- ============================================================
+
+alter table quizzes
+  add column if not exists material_id uuid references materials(id) on delete set null;
+
+alter table quiz_questions
+  add column if not exists unit_label text,
+  add column if not exists source_chunk_id uuid references material_chunks(id) on delete set null;
+
+-- Units ranked by how often the student gets them wrong.
+--
+-- A topic is (material, unit label); a file with no unit headings at all is
+-- one topic, with a null label. Evidence is one row per answered quiz
+-- question and one per reviewed flashcard; a miss is a wrong answer or a card
+-- whose last grade was "again" or "hard". The chunk's own unit label is
+-- preferred over the one the model copied, so a quiz and a deck from the same
+-- section land on the same topic.
+--
+-- Security invoker: every table read here is owner-scoped by RLS, and each
+-- branch also filters on auth.uid() explicitly.
+create or replace function public.get_weak_topics(p_limit int default 5)
+returns table (
+  material_id      uuid,
+  material_title   text,
+  unit_label       text,
+  answered         int,
+  correct          int,
+  cards_reviewed   int,
+  cards_struggling int,
+  miss_rate        numeric
+)
+language sql
+stable
+set search_path = public
+as $$
+  with evidence as (
+    select coalesce(c.material_id, q.material_id)  as material_id,
+           coalesce(c.unit_label, qq.unit_label)   as unit_label,
+           1                                       as answered,
+           case when qa.is_correct then 1 else 0 end as correct,
+           0                                       as reviewed,
+           0                                       as struggling
+      from quiz_answers qa
+      join quiz_questions qq on qq.id = qa.question_id
+      join quizzes q         on q.id = qq.quiz_id
+      left join material_chunks c on c.id = qq.source_chunk_id
+     where qa.user_id = auth.uid()
+    union all
+    select c.material_id,
+           coalesce(c.unit_label, f.unit_label),
+           0, 0, 1,
+           case when f.last_grade in ('again', 'hard') then 1 else 0 end
+      from flashcards f
+      join material_chunks c on c.id = f.source_chunk_id
+     where f.user_id = auth.uid()
+       and f.last_grade is not null
+  ),
+  topics as (
+    select e.material_id,
+           e.unit_label,
+           sum(e.answered)::int   as answered,
+           sum(e.correct)::int    as correct,
+           sum(e.reviewed)::int   as cards_reviewed,
+           sum(e.struggling)::int as cards_struggling
+      from evidence e
+     where e.material_id is not null
+     group by e.material_id, e.unit_label
+  )
+  select t.material_id,
+         m.title,
+         t.unit_label,
+         t.answered,
+         t.correct,
+         t.cards_reviewed,
+         t.cards_struggling,
+         round(((t.answered - t.correct) + t.cards_struggling)::numeric
+               / (t.answered + t.cards_reviewed), 2) as miss_rate
+    from topics t
+    join materials m on m.id = t.material_id
+   -- Two pieces of evidence at least, and wrong a third of the time or more:
+   -- one unlucky answer isn't a weak topic.
+   where t.answered + t.cards_reviewed >= 2
+     and ((t.answered - t.correct) + t.cards_struggling)::numeric
+         / (t.answered + t.cards_reviewed) >= 0.34
+   order by miss_rate desc, t.answered + t.cards_reviewed desc
+   limit greatest(1, least(p_limit, 20));
+$$;
+
+revoke execute on function public.get_weak_topics(int) from public, anon;
+grant execute on function public.get_weak_topics(int) to authenticated;
+-- ============================================================
+-- 0015  Catch-up planner, and closing an XP-farming hole in
+--       daily_tasks.
+-- ============================================================
+
+-- ── 1. Security: daily_tasks UPDATE ─────────────────────────────────────────
+-- 0008 narrowed INSERT on daily_tasks and said `done` and `rewarded_at`
+-- belong to complete_task, but never revoked UPDATE. Verified on the hosted
+-- project on 2026-10-01: a client could PATCH a ticked task back to
+-- `done = false, rewarded_at = null` and tick it again through complete_task,
+-- earning 15 XP every loop (15 → 30 in the probe). The app itself never
+-- updates this table directly, so the grant goes down to the harmless columns.
+revoke update on daily_tasks from anon, authenticated;
+grant update (title, duration_min, scheduled_date) on daily_tasks to authenticated;
+
+-- Shared catalogues: their row policies are read-only, so writes were already
+-- refused, but nothing should rely on a missing policy alone.
+revoke insert, update, delete on badges, classes, xp_rules from anon, authenticated;
+
+-- ── 2. When the roadmap started ─────────────────────────────────────────────
+-- Pace needs a start date and nothing recorded one. generate-roadmap sets it
+-- from now on; existing roadmaps fall back to when the goal was created.
+alter table goals add column if not exists roadmap_started_on date;
+
+-- ── 3. Pace ─────────────────────────────────────────────────────────────────
+-- Both functions take the student's own date. The database clock is UTC, so
+-- between midnight and 05:30 in India `current_date` is still yesterday — and
+-- Home lists tasks by the phone's date, so anything scheduled by the server's
+-- "today" in that window would never appear. A date more than a day from the
+-- server's is refused rather than trusted.
+drop function if exists public.get_roadmap_pace(uuid);
+drop function if exists public.plan_catch_up(uuid, int);
+
+-- Where the student stands against a straight-line schedule from the roadmap's
+-- start to the exam: how many topics should be done by today, how many are,
+-- and how many a day finishes the rest in time. Security invoker: it reads
+-- only the caller's own rows, and a goal that isn't theirs is simply missing.
+create or replace function public.get_roadmap_pace(
+  p_goal  uuid,
+  p_today date default current_date
+)
+returns json
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_goal      goals;
+  v_start     date;
+  v_end       date;
+  v_weeks     int;
+  v_total     int;
+  v_done      int;
+  v_span      int;
+  v_elapsed   int;
+  v_expected  int;
+  v_days_left int;
+  v_overdue   int;
+  v_today     date := coalesce(p_today, current_date);
+begin
+  if v_today not between current_date - 1 and current_date + 1 then
+    raise exception 'Your phone''s date looks wrong. Check it and try again.';
+  end if;
+
+  select * into v_goal from goals where id = p_goal;
+  if not found then
+    raise exception 'That goal isn''t yours.';
+  end if;
+
+  select count(*) into v_weeks from milestones where goal_id = p_goal;
+  select count(*), count(*) filter (where t.done)
+    into v_total, v_done
+    from milestone_tasks t
+    join milestones m on m.id = t.milestone_id
+   where m.goal_id = p_goal;
+
+  select count(*) into v_overdue
+    from daily_tasks
+   where goal_id = p_goal and not done and scheduled_date < v_today;
+
+  if v_total = 0 then
+    return json_build_object('has_roadmap', false, 'overdue', v_overdue);
+  end if;
+
+  v_start := coalesce(v_goal.roadmap_started_on, v_goal.created_at::date);
+  -- The plan ends at the exam, or after its last week when there's no date.
+  v_end := coalesce(v_goal.exam_date, v_start + v_weeks * 7);
+  v_span := greatest(1, v_end - v_start);
+  v_elapsed := least(v_span, greatest(0, v_today - v_start + 1));
+  v_expected := least(v_total, round(v_total::numeric * v_elapsed / v_span)::int);
+  v_days_left := greatest(1, v_end - v_today);
+
+  return json_build_object(
+    'has_roadmap', true,
+    'total', v_total,
+    'done', v_done,
+    'expected', v_expected,
+    'behind', greatest(0, v_expected - v_done),
+    'days_left', v_days_left,
+    'per_day', least(10, greatest(1, ceil((v_total - v_done)::numeric / v_days_left)::int)),
+    'overdue', v_overdue,
+    'current_week', least(v_weeks, greatest(1, (v_today - v_start) / 7 + 1)),
+    'weeks', v_weeks
+  );
+end $$;
+
+-- ── 4. Catch up ─────────────────────────────────────────────────────────────
+-- Rebuilds the next few days of the student's checklist at the pace the exam
+-- now needs:
+--   * unfinished tasks from past days move to today — until now they dropped
+--     off Home (which shows today only) and "Plan day" never offered them
+--     again, because it skips anything already scheduled on any date;
+--   * the rest of the roadmap, in order, fills each of the next p_days days up
+--     to the per-day pace from get_roadmap_pace.
+-- Security invoker: every write is one the student may make themselves
+-- (insert into daily_tasks, update scheduled_date), under RLS.
+create or replace function public.plan_catch_up(
+  p_goal  uuid,
+  p_days  int  default 7,
+  p_today date default current_date
+)
+returns json
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_pace      json;
+  v_per_day   int;
+  v_moved     int;
+  v_scheduled int := 0;
+  v_day       date;
+  v_room      int;
+  v_task      record;
+  v_today     date := coalesce(p_today, current_date);
+begin
+  v_pace := public.get_roadmap_pace(p_goal, v_today);
+  if not (v_pace ->> 'has_roadmap')::boolean then
+    raise exception 'Generate a roadmap for this goal first.';
+  end if;
+  v_per_day := (v_pace ->> 'per_day')::int;
+
+  update daily_tasks
+     set scheduled_date = v_today
+   where goal_id = p_goal and not done and scheduled_date < v_today;
+  get diagnostics v_moved = row_count;
+
+  for d in 0 .. greatest(1, least(p_days, 14)) - 1 loop
+    v_day := v_today + d;
+    select v_per_day - count(*) into v_room
+      from daily_tasks
+     where goal_id = p_goal and scheduled_date = v_day and not done;
+    continue when v_room <= 0;
+
+    for v_task in
+      select t.id, t.name
+        from milestone_tasks t
+        join milestones m on m.id = t.milestone_id
+       where m.goal_id = p_goal
+         and not t.done
+         and not exists (select 1 from daily_tasks dt
+                          where dt.milestone_task_id = t.id and not dt.done)
+       order by m.order_index, t.order_index
+       limit v_room
+    loop
+      insert into daily_tasks (user_id, goal_id, milestone_task_id, title, scheduled_date)
+      values (auth.uid(), p_goal, v_task.id, v_task.name, v_day);
+      v_scheduled := v_scheduled + 1;
+    end loop;
+  end loop;
+
+  return json_build_object(
+    'per_day', v_per_day,
+    'moved', v_moved,
+    'scheduled', v_scheduled,
+    'days_left', (v_pace ->> 'days_left')::int
+  );
+end $$;
+
+revoke execute on function public.get_roadmap_pace(uuid, date),
+                           public.plan_catch_up(uuid, int, date)
+  from public, anon;
+grant execute on function public.get_roadmap_pace(uuid, date),
+                          public.plan_catch_up(uuid, int, date)
+  to authenticated;
+-- ============================================================
+-- 0016  Previous-year exam papers: which topics get asked, how
+--       often, and for how many marks.
+-- ============================================================
+--
+-- A paper is uploaded like a material but kept apart from them on purpose:
+-- it is questions, not notes, and embedding it would make Trail AI cite an
+-- exam paper as if it were an explanation. `analyze-paper` reads it with
+-- Gemini, extracts each question with its marks, and tags it with one of the
+-- student's own syllabus units.
+--
+-- Nothing here pays XP, so the owner may read and write these rows directly,
+-- the same as flashcard decks.
+-- ============================================================
+
+create table if not exists exam_papers (
+  id             uuid        primary key default gen_random_uuid(),
+  user_id        uuid        not null references auth.users(id) on delete cascade,
+  goal_id        uuid        references goals(id) on delete set null,
+  title          text        not null,
+  year           int         check (year is null or year between 1990 and 2100),
+  storage_path   text        not null,
+  status         text        not null default 'pending'
+                             check (status in ('pending', 'analyzing', 'analyzed', 'failed')),
+  question_count int         not null default 0,
+  error          text,
+  created_at     timestamptz not null default now()
+);
+create index if not exists exam_papers_user_idx on exam_papers(user_id);
+
+create table if not exists paper_questions (
+  id          uuid        primary key default gen_random_uuid(),
+  user_id     uuid        not null references auth.users(id) on delete cascade,
+  paper_id    uuid        not null references exam_papers(id) on delete cascade,
+  question_no text,
+  text        text        not null check (char_length(text) <= 4000),
+  marks       numeric(5,1) check (marks is null or marks between 0 and 100),
+  unit_label  text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists paper_questions_paper_idx on paper_questions(paper_id);
+create index if not exists paper_questions_user_unit_idx on paper_questions(user_id, unit_label);
+
+alter table exam_papers     enable row level security;
+alter table paper_questions enable row level security;
+
+drop policy if exists exam_papers_own on exam_papers;
+create policy exam_papers_own on exam_papers for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- A question may only hang off one of the caller's own papers.
+drop policy if exists paper_questions_own on paper_questions;
+create policy paper_questions_own on paper_questions for all to authenticated
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from exam_papers p
+                 where p.id = paper_id and p.user_id = auth.uid())
+  );
+
+revoke all on exam_papers, paper_questions from anon;
+
+-- Topics ranked by how often past papers ask about them.
+create or replace function public.get_exam_topics(p_limit int default 20)
+returns table (
+  unit_label  text,
+  times_asked int,
+  total_marks numeric,
+  years       int[],
+  papers      int,
+  example     text
+)
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce(q.unit_label, 'Other')                          as unit_label,
+         count(*)::int                                            as times_asked,
+         coalesce(sum(q.marks), 0)                                as total_marks,
+         array_remove(array_agg(distinct p.year order by p.year), null) as years,
+         count(distinct q.paper_id)::int                          as papers,
+         (array_agg(q.text order by q.marks desc nulls last))[1]  as example
+    from paper_questions q
+    join exam_papers p on p.id = q.paper_id
+   where q.user_id = auth.uid()
+     and p.status = 'analyzed'
+   group by coalesce(q.unit_label, 'Other')
+   order by times_asked desc, total_marks desc
+   limit greatest(1, least(p_limit, 50));
+$$;
+
+revoke execute on function public.get_exam_topics(int) from public, anon;
+grant execute on function public.get_exam_topics(int) to authenticated;
+-- ============================================================
+-- 0017  Long-answer practice: a written answer to a 5- or 10-mark
+--       question, graded against the student's own notes.
+-- ============================================================
+--
+-- Deliberately pays no XP. An AI grade can be argued with, retried, or gamed
+-- by pasting the notes back in; XP stays tied to things the server can
+-- verify (0008). What a student gets here is feedback, kept so they can see
+-- themselves improve on a topic.
+-- ============================================================
+
+create table if not exists answer_attempts (
+  id          uuid         primary key default gen_random_uuid(),
+  user_id     uuid         not null references auth.users(id) on delete cascade,
+  question_id uuid         references paper_questions(id) on delete set null,
+  question    text         not null check (char_length(question) <= 4000),
+  unit_label  text,
+  max_marks   numeric(5,1) not null check (max_marks between 1 and 100),
+  answer      text         not null check (char_length(answer) between 1 and 12000),
+  score       numeric(5,1) not null check (score >= 0),
+  feedback    jsonb        not null default '{}'::jsonb,
+  created_at  timestamptz  not null default now(),
+  check (score <= max_marks)
+);
+create index if not exists answer_attempts_user_idx
+  on answer_attempts(user_id, created_at desc);
+
+alter table answer_attempts enable row level security;
+drop policy if exists answer_attempts_own on answer_attempts;
+create policy answer_attempts_own on answer_attempts for select to authenticated
+  using (user_id = auth.uid());
+drop policy if exists answer_attempts_delete_own on answer_attempts;
+create policy answer_attempts_delete_own on answer_attempts for delete to authenticated
+  using (user_id = auth.uid());
+
+-- Written only by grade-answer, which holds the grade: a score the client
+-- could insert would be a score the client chose.
+revoke all on answer_attempts from anon;
+revoke insert, update on answer_attempts from authenticated;
+-- ============================================================
+-- 0018  An exam date per subject.
+-- ============================================================
+--
+-- A semester is several exams on different days, not one. The goal stays the
+-- whole exam season; each subject can carry the date of its own paper, and
+-- the goal's date follows the last of them so pace (0015) and the roadmap
+-- cover every exam.
+-- ============================================================
+
+alter table subjects add column if not exists exam_date date;
+
+-- The student's own column to set, next to the ones 0008 already grants.
+grant update (exam_date) on subjects to authenticated;
+grant insert (exam_date) on subjects to authenticated;
+
+-- Keep goals.exam_date at the latest subject exam. Only ever moves it later:
+-- clearing a subject's date shouldn't shorten a goal the student dated
+-- themselves.
+create or replace function app_private.extend_goal_to_last_exam()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.exam_date is not null and new.goal_id is not null then
+    update goals
+       set exam_date = new.exam_date
+     where id = new.goal_id
+       and (exam_date is null or exam_date < new.exam_date);
+  end if;
+  return null;
+end $$;
+
+drop trigger if exists subjects_extend_goal on subjects;
+create trigger subjects_extend_goal
+  after insert or update of exam_date on subjects
+  for each row execute function app_private.extend_goal_to_last_exam();
+-- ============================================================
+-- 0019  Study rooms: six-person cap, focus length set inside the
+--       room, and group quizzes.
+-- ============================================================
+--
+-- A room is now created with just a name and a size (2–6). The host picks the
+-- focus and break lengths from inside the room, and can propose a group quiz:
+-- everyone in the room gets the same questions from the same material, the
+-- quiz only starts once every one of them agrees, scores are shown to the
+-- whole room at the end, and the top three earn XP.
+--
+-- Answers never reach a client before the quiz is over: the quiz tables have
+-- no client grants at all, and the only read path (`get_room_quiz`) leaves out
+-- the correct answers until the quiz is finished. Scoring is server-side.
+-- ============================================================
+
+-- ── 1. Six people at most ───────────────────────────────────────────────────
+create or replace function public.create_study_room(
+  p_name        text,
+  p_class_id    uuid default null,
+  p_timer_min   int  default 25,
+  p_break_min   int  default 5,
+  p_max_members int  default 4
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_name text := btrim(coalesce(p_name, ''));
+  v_room study_rooms;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to open a study room.';
+  end if;
+  if char_length(v_name) not between 1 and 60 then
+    raise exception 'Give the room a name of 1 to 60 characters.';
+  end if;
+  if p_max_members not between 2 and 6 then
+    raise exception 'A study room holds 2 to 6 people.';
+  end if;
+  if p_timer_min not between 5 and 120 or p_break_min not between 1 and 60 then
+    raise exception 'Those timer settings are out of range.';
+  end if;
+  if p_class_id is not null
+     and p_class_id is distinct from (select class_id from profiles where id = v_uid) then
+    raise exception 'You can only open a room for your own class.';
+  end if;
+
+  update study_rooms set status = 'closed'
+    where created_by = v_uid and status = 'active';
+
+  insert into study_rooms
+    (name, created_by, class_id, timer_duration_min, break_duration_min, max_members)
+  values
+    (v_name, v_uid, p_class_id, p_timer_min, p_break_min, p_max_members)
+  returning * into v_room;
+
+  insert into room_members (room_id, user_id, role)
+  values (v_room.id, v_uid, 'host');
+
+  return row_to_json(v_room);
+end $$;
+
+-- ── 2. Focus length, chosen inside the room ─────────────────────────────────
+-- Stored on the room so someone who joins later gets the same lengths.
+create or replace function public.set_room_timer(
+  p_room      uuid,
+  p_focus_min int,
+  p_break_min int
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_focus_min not between 5 and 120 or p_break_min not between 1 and 60 then
+    raise exception 'Those timer settings are out of range.';
+  end if;
+  update study_rooms
+     set timer_duration_min = p_focus_min,
+         break_duration_min = p_break_min
+   where id = p_room and created_by = auth.uid() and status = 'active';
+  if not found then
+    raise exception 'Only the host can change the timer.';
+  end if;
+end $$;
+
+-- ── 3. Group quizzes ────────────────────────────────────────────────────────
+create table if not exists room_quizzes (
+  id             uuid        primary key default gen_random_uuid(),
+  room_id        uuid        not null references study_rooms(id) on delete cascade,
+  created_by     uuid        not null references auth.users(id) on delete cascade,
+  title          text        not null,
+  question_count int         not null check (question_count between 1 and 20),
+  status         text        not null default 'voting'
+                             check (status in ('voting', 'running', 'finished', 'cancelled')),
+  created_at     timestamptz not null default now(),
+  started_at     timestamptz,
+  finished_at    timestamptz
+);
+-- One quiz on the go per room.
+create unique index if not exists room_quizzes_one_open
+  on room_quizzes(room_id) where status in ('voting', 'running');
+
+create table if not exists room_quiz_questions (
+  id            uuid   primary key default gen_random_uuid(),
+  room_quiz_id  uuid   not null references room_quizzes(id) on delete cascade,
+  order_index   int    not null,
+  question      text   not null,
+  options       text[] not null check (array_length(options, 1) = 4),
+  correct_index int    not null check (correct_index between 0 and 3),
+  explanation   text
+);
+create index if not exists room_quiz_questions_quiz_idx
+  on room_quiz_questions(room_quiz_id, order_index);
+
+-- Everyone in the room when the quiz was proposed. vote null = not yet.
+create table if not exists room_quiz_players (
+  room_quiz_id uuid        not null references room_quizzes(id) on delete cascade,
+  user_id      uuid        not null references auth.users(id) on delete cascade,
+  vote         boolean,
+  picks        jsonb,
+  score        int,
+  submitted_at timestamptz,
+  rank         int,
+  xp_awarded   int         not null default 0,
+  primary key (room_quiz_id, user_id)
+);
+
+alter table room_quizzes        enable row level security;
+alter table room_quiz_questions enable row level security;
+alter table room_quiz_players   enable row level security;
+-- No policies and no grants: every read and write goes through the functions
+-- below, which is what keeps correct answers away from clients mid-quiz.
+revoke all on room_quizzes, room_quiz_questions, room_quiz_players
+  from anon, authenticated;
+
+-- XP for the podium. Read through app_private.xp_for like every other award.
+insert into xp_rules (action, xp, unit, description) values
+  ('room_quiz_first',  30, 'quiz', 'First place in a group quiz (two or more players).'),
+  ('room_quiz_second', 20, 'quiz', 'Second place in a group quiz.'),
+  ('room_quiz_third',  10, 'quiz', 'Third place in a group quiz.')
+on conflict (action) do update
+  set xp = excluded.xp, unit = excluded.unit, description = excluded.description;
+
+-- Everything a room screen shows about one quiz, in one call. Correct answers
+-- and explanations only once it's finished; picks only your own until then.
+create or replace function public.get_room_quiz(p_quiz uuid)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_quiz room_quizzes;
+  v_done boolean;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz;
+  if not found or not exists (
+       select 1 from room_members
+        where room_id = v_quiz.room_id and user_id = v_uid)
+     and not exists (
+       select 1 from room_quiz_players
+        where room_quiz_id = p_quiz and user_id = v_uid) then
+    raise exception 'That quiz isn''t in your room.';
+  end if;
+  v_done := v_quiz.status = 'finished';
+
+  return json_build_object(
+    'id', v_quiz.id,
+    'room_id', v_quiz.room_id,
+    'created_by', v_quiz.created_by,
+    'title', v_quiz.title,
+    'question_count', v_quiz.question_count,
+    'status', v_quiz.status,
+    'players', (
+      select coalesce(json_agg(json_build_object(
+               'user_id', pl.user_id,
+               'full_name', pr.full_name,
+               'avatar_initial', pr.avatar_initial,
+               'vote', pl.vote,
+               'submitted', pl.submitted_at is not null,
+               'score', case when v_done or pl.user_id = v_uid then pl.score end,
+               'rank', pl.rank,
+               'xp_awarded', pl.xp_awarded
+             ) order by pl.rank nulls last, pr.full_name), '[]'::json)
+        from room_quiz_players pl
+        join profiles pr on pr.id = pl.user_id
+       where pl.room_quiz_id = p_quiz),
+    'questions', case when v_quiz.status in ('running', 'finished') then (
+      select coalesce(json_agg(json_build_object(
+               'id', q.id,
+               'question', q.question,
+               'options', q.options,
+               'correct_index', case when v_done then q.correct_index end,
+               'explanation', case when v_done then q.explanation end
+             ) order by q.order_index), '[]'::json)
+        from room_quiz_questions q
+       where q.room_quiz_id = p_quiz) end,
+    'my_picks', (select picks from room_quiz_players
+                  where room_quiz_id = p_quiz and user_id = v_uid)
+  );
+end $$;
+
+-- The quiz on the go in a room (voting or running), or the latest finished
+-- one from the last hour so a returning student still sees the results.
+create or replace function public.get_active_room_quiz(p_room uuid)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  if not exists (select 1 from room_members
+                  where room_id = p_room and user_id = auth.uid()) then
+    raise exception 'You are not in this room.';
+  end if;
+  select id into v_id from room_quizzes
+   where room_id = p_room
+     and (status in ('voting', 'running')
+          or (status = 'finished' and finished_at > now() - interval '1 hour'))
+   order by created_at desc
+   limit 1;
+  if v_id is null then
+    return null;
+  end if;
+  return public.get_room_quiz(v_id);
+end $$;
+
+-- Ranks the submitted players and pays the podium. Ties go to whoever
+-- submitted first. XP needs two or more players, a score above zero, and at
+-- most three paid group quizzes per student per day, so a pair can't farm it.
+create or replace function app_private.finish_room_quiz(p_quiz uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_players int;
+  v_row     record;
+  v_xp      int;
+  v_today   int;
+begin
+  update room_quizzes
+     set status = 'finished', finished_at = now()
+   where id = p_quiz and status = 'running';
+  if not found then
+    return;
+  end if;
+
+  with ranked as (
+    select user_id,
+           row_number() over (order by score desc, submitted_at asc) as r
+      from room_quiz_players
+     where room_quiz_id = p_quiz and submitted_at is not null
+  )
+  update room_quiz_players p
+     set rank = ranked.r
+    from ranked
+   where p.room_quiz_id = p_quiz and p.user_id = ranked.user_id;
+
+  select count(*) into v_players from room_quiz_players
+   where room_quiz_id = p_quiz and submitted_at is not null;
+  if v_players < 2 then
+    return;
+  end if;
+
+  for v_row in
+    select user_id, rank, score from room_quiz_players
+     where room_quiz_id = p_quiz and rank between 1 and 3 and score > 0
+  loop
+    select count(*) into v_today
+      from room_quiz_players pl
+      join room_quizzes q on q.id = pl.room_quiz_id
+     where pl.user_id = v_row.user_id
+       and pl.xp_awarded > 0
+       and q.finished_at::date = current_date;
+    continue when v_today >= 3;
+
+    v_xp := app_private.xp_for(case v_row.rank
+      when 1 then 'room_quiz_first'
+      when 2 then 'room_quiz_second'
+      else 'room_quiz_third' end);
+    update room_quiz_players set xp_awarded = v_xp
+     where room_quiz_id = p_quiz and user_id = v_row.user_id;
+    perform app_private.log_activity(v_row.user_id, 0, 0, v_xp);
+    perform app_private.award_xp(v_row.user_id, v_xp);
+  end loop;
+end $$;
+
+create or replace function public.vote_room_quiz(p_quiz uuid, p_agree boolean)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  -- Lock the quiz so the last two votes can't both miss "everyone agreed".
+  perform 1 from room_quizzes where id = p_quiz and status = 'voting' for update;
+  if not found then
+    raise exception 'That quiz isn''t waiting for votes any more.';
+  end if;
+
+  update room_quiz_players set vote = p_agree
+   where room_quiz_id = p_quiz and user_id = v_uid;
+  if not found then
+    raise exception 'You weren''t in the room when this quiz was proposed.';
+  end if;
+
+  if not p_agree then
+    update room_quizzes set status = 'cancelled', finished_at = now()
+     where id = p_quiz;
+  elsif not exists (select 1 from room_quiz_players
+                     where room_quiz_id = p_quiz and vote is distinct from true) then
+    update room_quizzes set status = 'running', started_at = now()
+     where id = p_quiz;
+  end if;
+
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+create or replace function public.submit_room_quiz(p_quiz uuid, p_picks jsonb)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_score int;
+begin
+  perform 1 from room_quizzes where id = p_quiz and status = 'running' for update;
+  if not found then
+    raise exception 'That quiz has already ended.';
+  end if;
+  if not exists (select 1 from room_quiz_players
+                  where room_quiz_id = p_quiz and user_id = v_uid
+                    and submitted_at is null) then
+    raise exception 'You''ve already handed this quiz in.';
+  end if;
+
+  select count(*) into v_score
+    from room_quiz_questions q
+   where q.room_quiz_id = p_quiz
+     and nullif(p_picks ->> q.id::text, '')::int = q.correct_index;
+
+  update room_quiz_players
+     set picks = coalesce(p_picks, '{}'::jsonb), score = v_score, submitted_at = now()
+   where room_quiz_id = p_quiz and user_id = v_uid;
+
+  if not exists (select 1 from room_quiz_players
+                  where room_quiz_id = p_quiz and submitted_at is null) then
+    perform app_private.finish_room_quiz(p_quiz);
+  end if;
+
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+-- Host only: cancel while voting, or end a running quiz for those who've
+-- handed in (someone left, or is taking too long).
+create or replace function public.end_room_quiz(p_quiz uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_quiz room_quizzes;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz for update;
+  if not found or v_quiz.created_by <> auth.uid() then
+    raise exception 'Only the person who started the quiz can end it.';
+  end if;
+  if v_quiz.status = 'voting' then
+    update room_quizzes set status = 'cancelled', finished_at = now()
+     where id = p_quiz;
+  elsif v_quiz.status = 'running' then
+    perform app_private.finish_room_quiz(p_quiz);
+  end if;
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+revoke execute on function public.set_room_timer(uuid, int, int),
+                           public.get_room_quiz(uuid),
+                           public.get_active_room_quiz(uuid),
+                           public.vote_room_quiz(uuid, boolean),
+                           public.submit_room_quiz(uuid, jsonb),
+                           public.end_room_quiz(uuid)
+  from public, anon;
+grant execute on function public.set_room_timer(uuid, int, int),
+                          public.get_room_quiz(uuid),
+                          public.get_active_room_quiz(uuid),
+                          public.vote_room_quiz(uuid, boolean),
+                          public.submit_room_quiz(uuid, jsonb),
+                          public.end_room_quiz(uuid)
+  to authenticated;
+revoke execute on function app_private.finish_room_quiz(uuid) from public;
+-- StudyTrail — 0020: hardening
+--
+-- Four fixes from REVIEW.md, none of which adds a feature:
+--   1. Study-room channels are private: only a room's members can join, hear
+--      or send on `room:<id>` (Realtime Authorization on realtime.messages).
+--   2. Someone who leaves a room mid-quiz stops holding the quiz up.
+--   3. Streaks and daily caps follow the student's own day, not UTC's — in
+--      India the server's "today" used to change at 05:30.
+--   4. Chat turns are written by the `chat` function only. A client could
+--      insert or edit its own "AI" turns and count towards curious_learner.
+--
+-- Idempotent, like every migration here.
+
+-- ── 1. Private room channels ────────────────────────────────────────────────
+-- realtime.topic() is the channel name the client joined. The app's only
+-- channel is `room:<room id>`; anything else is refused. CASE (not AND) so the
+-- uuid cast never runs on a topic that isn't one.
+create or replace function public.is_room_channel_member(p_topic text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select case
+    when p_topic ~ '^room:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      then exists (select 1 from room_members
+                    where room_id = substr(p_topic, 6)::uuid
+                      and user_id = auth.uid())
+    else false
+  end;
+$$;
+
+revoke execute on function public.is_room_channel_member(text) from public, anon;
+grant execute on function public.is_room_channel_member(text) to authenticated;
+
+-- Receiving broadcast and presence on a private channel needs SELECT; sending
+-- and tracking presence needs INSERT. Postgres changes on room_messages are
+-- still filtered by that table's own RLS.
+drop policy if exists room_channel_receive on realtime.messages;
+create policy room_channel_receive on realtime.messages
+  for select to authenticated
+  using (public.is_room_channel_member(realtime.topic()));
+
+drop policy if exists room_channel_send on realtime.messages;
+create policy room_channel_send on realtime.messages
+  for insert to authenticated
+  with check (public.is_room_channel_member(realtime.topic()));
+
+-- ── 2. Leaving a room mid-quiz ──────────────────────────────────────────────
+-- While voting, a leaver is no longer asked: if everyone left has agreed the
+-- quiz starts, and under two players it is cancelled. While running, a leaver
+-- who hadn't handed in is dropped, and if everyone left has handed in the quiz
+-- finishes. A host leaving closes the room, so a vote is cancelled outright.
+create or replace function app_private.room_quiz_on_leave()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_quiz    room_quizzes;
+  v_closing boolean;
+  v_left    int;
+begin
+  select (r.created_by = old.user_id or r.status <> 'active')
+    into v_closing
+    from study_rooms r where r.id = old.room_id;
+
+  for v_quiz in
+    select * from room_quizzes
+     where room_id = old.room_id and status in ('voting', 'running')
+     for update
+  loop
+    if v_quiz.status = 'voting' then
+      delete from room_quiz_players
+       where room_quiz_id = v_quiz.id and user_id = old.user_id;
+      select count(*) into v_left from room_quiz_players
+       where room_quiz_id = v_quiz.id;
+      if coalesce(v_closing, true) or v_left < 2 then
+        update room_quizzes set status = 'cancelled', finished_at = now()
+         where id = v_quiz.id;
+      elsif not exists (select 1 from room_quiz_players
+                         where room_quiz_id = v_quiz.id
+                           and vote is distinct from true) then
+        update room_quizzes set status = 'running', started_at = now()
+         where id = v_quiz.id;
+      end if;
+    else
+      delete from room_quiz_players
+       where room_quiz_id = v_quiz.id and user_id = old.user_id
+         and submitted_at is null;
+      if not exists (select 1 from room_quiz_players
+                      where room_quiz_id = v_quiz.id
+                        and submitted_at is null) then
+        perform app_private.finish_room_quiz(v_quiz.id);
+      end if;
+    end if;
+  end loop;
+  return old;
+end $$;
+
+drop trigger if exists room_members_quiz_leave on room_members;
+create trigger room_members_quiz_leave
+  after delete on room_members
+  for each row execute function app_private.room_quiz_on_leave();
+
+-- ── 3. The student's own day ────────────────────────────────────────────────
+-- Minutes east of UTC, sent by the app at sign-in. 330 (India) until it is.
+alter table profiles
+  add column if not exists utc_offset_min smallint not null default 330;
+do $$ begin
+  alter table profiles add constraint profiles_utc_offset_range
+    check (utc_offset_min between -720 and 840);
+exception when duplicate_object then null; end $$;
+
+create or replace function app_private.local_date(p_user uuid, p_at timestamptz)
+returns date
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select (p_at + make_interval(mins => coalesce(
+            (select utc_offset_min from profiles where id = p_user), 330)))::date;
+$$;
+
+create or replace function app_private.local_today(p_user uuid)
+returns date
+language sql
+stable
+security definer
+set search_path = public, app_private
+as $$
+  select app_private.local_date(p_user, now());
+$$;
+
+-- The phone's offset from UTC. Not a client-writable column: the range check
+-- lives here and in the constraint, and nothing else about a profile changes.
+create or replace function public.set_utc_offset(p_minutes int)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  if p_minutes is null or p_minutes not between -720 and 840 then
+    raise exception 'That is not a time zone.';
+  end if;
+  update profiles set utc_offset_min = p_minutes where id = auth.uid();
+end $$;
+
+revoke execute on function public.set_utc_offset(int) from public, anon;
+grant execute on function public.set_utc_offset(int) to authenticated;
+revoke execute on function app_private.local_date(uuid, timestamptz) from public;
+revoke execute on function app_private.local_today(uuid) from public;
+
+-- Every reward path logs through this, so the streak, the activity heatmap
+-- and the weekly totals all move to the student's day here. Otherwise
+-- unchanged from 0012.
+create or replace function app_private.log_activity(
+  p_user    uuid,
+  p_minutes int default 0,
+  p_tasks   int default 0,
+  p_xp      int default 0
+)
+returns activity_log
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_today   date := app_private.local_today(p_user);
+  v_row     activity_log;
+  v_last    date;
+  v_cur     int;
+  v_missed  int;
+  v_freezes int;
+begin
+  insert into activity_log (user_id, activity_date, minutes_studied,
+                            tasks_completed, xp_earned)
+  values (p_user, v_today, greatest(0, p_minutes), greatest(0, p_tasks),
+          greatest(0, p_xp))
+  on conflict (user_id, activity_date) do update
+    set minutes_studied = activity_log.minutes_studied + greatest(0, p_minutes),
+        tasks_completed = activity_log.tasks_completed + greatest(0, p_tasks),
+        xp_earned       = activity_log.xp_earned + greatest(0, p_xp)
+  returning * into v_row;
+
+  -- Roll the streak: same day = no-op, yesterday = +1, a gap covered by
+  -- freezes = +1 (freezes spent), anything else = reset to 1.
+  select last_active_date, current_streak
+    into v_last, v_cur
+    from streaks where user_id = p_user;
+
+  if found and v_last is distinct from v_today then
+    if v_last = v_today - 1 then
+      v_cur := coalesce(v_cur, 0) + 1;
+    else
+      v_missed := v_today - v_last - 1;   -- null when never active
+      select count(*) into v_freezes from reward_redemptions
+       where user_id = p_user and reward_key = 'streak_freeze'
+         and consumed_at is null;
+
+      if v_missed between 1 and v_freezes and coalesce(v_cur, 0) > 0 then
+        for i in 1..v_missed loop
+          update reward_redemptions
+             set consumed_at = now(), consumed_for = v_last + i
+           where id = (select id from reward_redemptions
+                        where user_id = p_user and reward_key = 'streak_freeze'
+                          and consumed_at is null
+                        order by redeemed_at
+                        limit 1);
+        end loop;
+        v_cur := v_cur + 1;
+      else
+        v_cur := 1;
+      end if;
+    end if;
+
+    update streaks
+      set current_streak   = v_cur,
+          best_streak      = greatest(best_streak, v_cur),
+          last_active_date = v_today
+      where user_id = p_user;
+  end if;
+
+  return v_row;
+end $$;
+
+-- The 16-hour daily focus cap counts the student's day. Otherwise unchanged
+-- from 0008.
+create or replace function public.record_focus_session(
+  p_subject     uuid default null,
+  p_length_min  int  default 25,
+  p_focused_min int  default null
+)
+returns study_sessions
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_user    uuid := auth.uid();
+  v_focused int;
+  v_today   int;
+  v_xp      int;
+  v_row     study_sessions;
+begin
+  if v_user is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+
+  -- A focus block longer than three hours isn't a Pomodoro, it's a forged one.
+  if p_length_min is null or p_length_min < 1 or p_length_min > 180 then
+    raise exception 'length_min must be between 1 and 180, got %', p_length_min
+      using errcode = 'check_violation';
+  end if;
+
+  v_focused := coalesce(p_focused_min, p_length_min);
+  if v_focused < 0 or v_focused > p_length_min then
+    raise exception 'focused_min must be between 0 and length_min'
+      using errcode = 'check_violation';
+  end if;
+
+  -- Parent-ownership check (REVIEW.md P2): a known subject id belonging to
+  -- someone else must not become the parent of the caller's session.
+  if p_subject is not null
+     and not exists (select 1 from subjects
+                      where id = p_subject and user_id = v_user) then
+    raise exception 'subject % not found', p_subject using errcode = 'no_data_found';
+  end if;
+
+  -- Sixteen hours of logged focus in one day is the outer edge of plausible;
+  -- past that, stop counting rather than trust the clock the client sent.
+  select coalesce(sum(focused_min), 0) into v_today
+    from study_sessions
+    where user_id = v_user
+      and session_date = app_private.local_today(v_user);
+
+  if v_today + v_focused > 960 then
+    raise exception 'daily focus limit reached' using errcode = 'check_violation';
+  end if;
+
+  insert into study_sessions (user_id, subject_id, session_date, length_min,
+                              sessions_count, focused_min, started_at, ended_at)
+  values (v_user, p_subject, app_private.local_today(v_user), p_length_min, 1,
+          v_focused, now() - make_interval(mins => v_focused), now())
+  returning * into v_row;
+
+  v_xp := v_focused * app_private.xp_for('focus_minute');
+  perform app_private.log_activity(v_user, v_focused, 0, v_xp);
+  perform app_private.award_xp(v_user, v_xp);
+  perform app_private.evaluate_badges(v_user);
+
+  return v_row;
+end $$;
+
+-- Three paid group quizzes per student's day. Otherwise unchanged from 0019.
+create or replace function app_private.finish_room_quiz(p_quiz uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_players int;
+  v_row     record;
+  v_xp      int;
+  v_today   int;
+begin
+  update room_quizzes
+     set status = 'finished', finished_at = now()
+   where id = p_quiz and status = 'running';
+  if not found then
+    return;
+  end if;
+
+  with ranked as (
+    select user_id,
+           row_number() over (order by score desc, submitted_at asc) as r
+      from room_quiz_players
+     where room_quiz_id = p_quiz and submitted_at is not null
+  )
+  update room_quiz_players p
+     set rank = ranked.r
+    from ranked
+   where p.room_quiz_id = p_quiz and p.user_id = ranked.user_id;
+
+  select count(*) into v_players from room_quiz_players
+   where room_quiz_id = p_quiz and submitted_at is not null;
+  if v_players < 2 then
+    return;
+  end if;
+
+  for v_row in
+    select user_id, rank, score from room_quiz_players
+     where room_quiz_id = p_quiz and rank between 1 and 3 and score > 0
+  loop
+    select count(*) into v_today
+      from room_quiz_players pl
+      join room_quizzes q on q.id = pl.room_quiz_id
+     where pl.user_id = v_row.user_id
+       and pl.xp_awarded > 0
+       and app_private.local_date(v_row.user_id, q.finished_at)
+           = app_private.local_today(v_row.user_id);
+    continue when v_today >= 3;
+
+    v_xp := app_private.xp_for(case v_row.rank
+      when 1 then 'room_quiz_first'
+      when 2 then 'room_quiz_second'
+      else 'room_quiz_third' end);
+    update room_quiz_players set xp_awarded = v_xp
+     where room_quiz_id = p_quiz and user_id = v_row.user_id;
+    perform app_private.log_activity(v_row.user_id, 0, 0, v_xp);
+    perform app_private.award_xp(v_row.user_id, v_xp);
+  end loop;
+end $$;
+
+-- ── 4. Chat turns are server-written ────────────────────────────────────────
+-- 0008 left these writable "until Phase C moves the write into the chat
+-- function". It has: the function verifies the thread is the caller's and
+-- writes both turns with the service-role key. Students keep read and delete.
+revoke insert, update on chat_messages, chat_citations from anon, authenticated;
+
+notify pgrst, 'reload schema';
+-- StudyTrail — 0021: study tools
+--
+--   1. Explanations in Hindi or Gujarati: `profiles.answer_language`, read by
+--      the chat, summarize-material and grade-answer functions.
+--   2. A "My mistakes" deck that fills itself: every question a student gets
+--      wrong in a quiz — their own or a room's — becomes a flashcard, due now.
+--   3. A weekly report: this week against last, in the student's own days.
+--
+-- Idempotent, like every migration here.
+
+-- ── 1. Answer language ──────────────────────────────────────────────────────
+alter table profiles
+  add column if not exists answer_language text not null default 'en';
+do $$ begin
+  alter table profiles add constraint profiles_answer_language_check
+    check (answer_language in ('en', 'hi', 'gu'));
+exception when duplicate_object then null; end $$;
+
+grant update (answer_language) on profiles to authenticated;
+
+-- ── 2. My mistakes ──────────────────────────────────────────────────────────
+alter table flashcard_decks
+  add column if not exists is_mistakes boolean not null default false;
+create unique index if not exists flashcard_decks_one_mistakes
+  on flashcard_decks(user_id) where is_mistakes;
+
+-- 'quiz:<question id>' or 'room:<question id>'. Getting the same question
+-- wrong again makes its card due now instead of adding a second one.
+alter table flashcards add column if not exists mistake_key text;
+create unique index if not exists flashcards_mistake_key
+  on flashcards(user_id, mistake_key) where mistake_key is not null;
+
+create or replace function app_private.mistakes_deck(p_user uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deck uuid;
+begin
+  select id into v_deck from flashcard_decks
+   where user_id = p_user and is_mistakes;
+  if v_deck is null then
+    insert into flashcard_decks (user_id, name, is_mistakes)
+    values (p_user, 'My mistakes', true)
+    on conflict (user_id) where is_mistakes do nothing
+    returning id into v_deck;
+    if v_deck is null then
+      select id into v_deck from flashcard_decks
+       where user_id = p_user and is_mistakes;
+    end if;
+  end if;
+  return v_deck;
+end $$;
+
+create or replace function app_private.add_mistake(
+  p_user        uuid,
+  p_key         text,
+  p_question    text,
+  p_options     text[],
+  p_correct     int,
+  p_explanation text,
+  p_unit        text,
+  p_chunk       uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+begin
+  if p_correct is null or p_correct not between 0 and 3 then
+    return;
+  end if;
+  insert into flashcards (user_id, deck_id, unit_label, front, back,
+                          source_chunk_id, mistake_key, due_at)
+  values (p_user, app_private.mistakes_deck(p_user), p_unit, p_question,
+          'Answer: ' || p_options[p_correct + 1]
+            || coalesce(E'\n\n' || nullif(btrim(p_explanation), ''), ''),
+          p_chunk, p_key, now())
+  on conflict (user_id, mistake_key) where mistake_key is not null
+  do update set due_at = least(flashcards.due_at, now());
+end $$;
+
+-- Solo quizzes: quiz_answers is written only by finish_quiz_attempt.
+create or replace function app_private.quiz_answer_mistake()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_q quiz_questions;
+begin
+  if new.is_correct is distinct from false then
+    return new;
+  end if;
+  select * into v_q from quiz_questions where id = new.question_id;
+  if found then
+    perform app_private.add_mistake(new.user_id, 'quiz:' || v_q.id, v_q.question,
+      v_q.options, v_q.correct_index, v_q.explanation, v_q.unit_label,
+      v_q.source_chunk_id);
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists quiz_answers_mistakes on quiz_answers;
+create trigger quiz_answers_mistakes
+  after insert on quiz_answers
+  for each row execute function app_private.quiz_answer_mistake();
+
+-- Group quizzes: once the quiz is over — not at hand-in, which would put the
+-- answers in a deck while others are still answering (D-031) — each question
+-- every player who handed in missed or left.
+create or replace function app_private.room_quiz_mistakes()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_row record;
+begin
+  for v_row in
+    select pl.user_id, q.*
+      from room_quiz_players pl
+      join room_quiz_questions q on q.room_quiz_id = pl.room_quiz_id
+     where pl.room_quiz_id = new.id
+       and pl.submitted_at is not null
+       and nullif(pl.picks ->> q.id::text, '')::int is distinct from q.correct_index
+  loop
+    perform app_private.add_mistake(v_row.user_id, 'room:' || v_row.id,
+      v_row.question, v_row.options, v_row.correct_index, v_row.explanation,
+      null, null);
+  end loop;
+  return new;
+end $$;
+
+drop trigger if exists room_quiz_players_mistakes on room_quiz_players;
+drop trigger if exists room_quizzes_mistakes on room_quizzes;
+create trigger room_quizzes_mistakes
+  after update of status on room_quizzes
+  for each row
+  when (new.status = 'finished' and old.status is distinct from 'finished')
+  execute function app_private.room_quiz_mistakes();
+
+revoke execute on function app_private.mistakes_deck(uuid) from public;
+revoke execute on function app_private.add_mistake(uuid, text, text, text[], int, text, text, uuid) from public;
+
+-- ── 3. Weekly report ────────────────────────────────────────────────────────
+-- Totals for [p_from, p_to] in the student's own days ([p_off] minutes east
+-- of UTC).
+create or replace function app_private.week_totals(
+  p_user uuid, p_from date, p_to date, p_off int
+)
+returns json
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select json_build_object(
+    'minutes', coalesce((select sum(minutes_studied) from activity_log
+                          where user_id = p_user
+                            and activity_date between p_from and p_to), 0),
+    'xp', coalesce((select sum(xp_earned) from activity_log
+                     where user_id = p_user
+                       and activity_date between p_from and p_to), 0),
+    'tasks', coalesce((select sum(tasks_completed) from activity_log
+                        where user_id = p_user
+                          and activity_date between p_from and p_to), 0),
+    'active_days', (select count(*) from activity_log
+                     where user_id = p_user
+                       and activity_date between p_from and p_to
+                       and (minutes_studied > 0 or tasks_completed > 0
+                            or xp_earned > 0)),
+    'quizzes', (select count(*) from quiz_attempts
+                 where user_id = p_user and completed_at is not null
+                   and (completed_at + make_interval(mins => p_off))::date
+                       between p_from and p_to),
+    'quiz_correct', coalesce((select sum(score) from quiz_attempts
+                               where user_id = p_user and completed_at is not null
+                                 and (completed_at + make_interval(mins => p_off))::date
+                                     between p_from and p_to), 0),
+    'quiz_total', coalesce((select sum(total) from quiz_attempts
+                             where user_id = p_user and completed_at is not null
+                               and (completed_at + make_interval(mins => p_off))::date
+                                   between p_from and p_to), 0),
+    'group_quizzes', (select count(*) from room_quiz_players
+                       where user_id = p_user and submitted_at is not null
+                         and (submitted_at + make_interval(mins => p_off))::date
+                             between p_from and p_to),
+    'podiums', (select count(*) from room_quiz_players pl
+                 where pl.user_id = p_user and pl.rank between 1 and 3
+                   and (pl.submitted_at + make_interval(mins => p_off))::date
+                       between p_from and p_to
+                   -- A podium of one isn't one.
+                   and (select count(*) from room_quiz_players o
+                         where o.room_quiz_id = pl.room_quiz_id
+                           and o.submitted_at is not null) >= 2),
+    'answers', (select count(*) from answer_attempts
+                 where user_id = p_user
+                   and (created_at + make_interval(mins => p_off))::date
+                       between p_from and p_to),
+    'answer_percent', (select round(avg(score / max_marks) * 100)
+                         from answer_attempts
+                        where user_id = p_user
+                          and (created_at + make_interval(mins => p_off))::date
+                              between p_from and p_to)
+  );
+$$;
+
+-- The last seven days (today included) against the seven before, a day-by-day
+-- series, and per-unit quiz accuracy with last week's for comparison.
+create or replace function public.get_weekly_report()
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_user  uuid := auth.uid();
+  v_off   int;
+  v_today date;
+  v_from  date;
+  v_prev  date;
+begin
+  if v_user is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  select coalesce(utc_offset_min, 330) into v_off from profiles where id = v_user;
+  v_off   := coalesce(v_off, 330);
+  v_today := (now() + make_interval(mins => v_off))::date;
+  v_from  := v_today - 6;
+  v_prev  := v_from - 7;
+
+  return json_build_object(
+    'from', v_from,
+    'to', v_today,
+    'this_week', app_private.week_totals(v_user, v_from, v_today, v_off),
+    'last_week', app_private.week_totals(v_user, v_prev, v_from - 1, v_off),
+    'days', (
+      select json_agg(json_build_object(
+               'date', d::date,
+               'minutes', coalesce(a.minutes_studied, 0),
+               'xp', coalesce(a.xp_earned, 0)) order by d)
+        from generate_series(v_from::timestamp, v_today::timestamp,
+                             interval '1 day') d
+        left join activity_log a
+          on a.user_id = v_user and a.activity_date = d::date),
+    'units', (
+      select coalesce(json_agg(u order by u.correct::float / u.answered,
+                                         u.unit_label), '[]'::json)
+        from (
+          select q.unit_label,
+                 count(*) filter (where t.day >= v_from) as answered,
+                 count(*) filter (where t.day >= v_from and a.is_correct) as correct,
+                 count(*) filter (where t.day < v_from) as answered_before,
+                 count(*) filter (where t.day < v_from and a.is_correct) as correct_before
+            from quiz_answers a
+            join (select id, (completed_at + make_interval(mins => v_off))::date as day
+                    from quiz_attempts
+                   where user_id = v_user and completed_at is not null) t
+              on t.id = a.attempt_id
+            join quiz_questions q on q.id = a.question_id
+           where a.user_id = v_user
+             and q.unit_label is not null
+             and t.day between v_prev and v_today
+           group by q.unit_label
+          having count(*) filter (where t.day >= v_from) > 0
+        ) u),
+    'streak', (select json_build_object('current', current_streak,
+                                        'best', best_streak)
+                 from streaks where user_id = v_user),
+    'mistakes_due', (select count(*) from flashcards c
+                       join flashcard_decks d on d.id = c.deck_id
+                      where c.user_id = v_user and d.is_mistakes
+                        and c.due_at <= now())
+  );
+end $$;
+
+revoke execute on function app_private.week_totals(uuid, date, date, int) from public;
+revoke execute on function public.get_weekly_report() from public, anon;
+grant execute on function public.get_weekly_report() to authenticated;
+
+notify pgrst, 'reload schema';
+-- StudyTrail — 0022: speed rounds
+--
+-- A second kind of group quiz. Everyone sees the same question at the same
+-- moment, has `seconds_per_question` to answer, and a right answer is worth
+-- 500 points plus up to 500 more for speed. After each question there's a
+-- short reveal: the right option and the live scores. The clock, not the
+-- players, runs the round:
+--
+--   5 s "get ready" lead, then for question i:
+--     [lead + i·slot, lead + i·slot + T)   answering   (T = seconds_per_question)
+--     [lead + i·slot + T, lead + (i+1)·slot) reveal    (slot = T + 4 s)
+--
+-- Answers live in room_quiz_answers, which — like every room_quiz table — no
+-- client can read. A question's right option, and the points scored on it,
+-- are only returned once its answering window has closed (D-031).
+--
+-- Idempotent, like every migration here.
+
+alter table room_quizzes
+  add column if not exists mode text not null default 'standard',
+  add column if not exists seconds_per_question int;
+do $$ begin
+  alter table room_quizzes add constraint room_quizzes_mode_check
+    check (mode in ('standard', 'speed'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table room_quizzes add constraint room_quizzes_speed_seconds_check
+    check ((mode = 'speed') = (seconds_per_question is not null)
+           and (seconds_per_question is null
+                or seconds_per_question between 10 and 60));
+exception when duplicate_object then null; end $$;
+
+create table if not exists room_quiz_answers (
+  room_quiz_id uuid        not null references room_quizzes(id) on delete cascade,
+  question_id  uuid        not null references room_quiz_questions(id) on delete cascade,
+  user_id      uuid        not null references auth.users(id) on delete cascade,
+  pick         int         not null check (pick between 0 and 3),
+  answered_at  timestamptz not null default now(),
+  points       int         not null default 0,
+  primary key (room_quiz_id, question_id, user_id)
+);
+alter table room_quiz_answers enable row level security;
+revoke all on room_quiz_answers from anon, authenticated;
+
+-- Where the round is now: `cur` is the question index (-1 during the lead),
+-- `in_slot` the seconds into that question's slot.
+create or replace function app_private.speed_clock(
+  p_started timestamptz, p_secs int,
+  out cur int, out in_slot numeric
+)
+language sql
+stable
+as $$
+  select floor(e / (p_secs + 4))::int,
+         e - floor(e / (p_secs + 4)) * (p_secs + 4)
+    from (select extract(epoch from (now() - p_started)) - 5 as e) t;
+$$;
+
+-- Closes a speed round: every player who answered anything gets their points
+-- as their score and their answers as their picks (so My mistakes fills the
+-- same way), then the usual ranking and podium XP.
+create or replace function app_private.finish_speed_quiz(p_quiz uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+begin
+  update room_quiz_players pl
+     set score = a.points,
+         picks = a.picks,
+         submitted_at = a.last_at
+    from (select user_id,
+                 sum(points)::int as points,
+                 jsonb_object_agg(question_id::text, pick) as picks,
+                 max(answered_at) as last_at
+            from room_quiz_answers
+           where room_quiz_id = p_quiz
+           group by user_id) a
+   where pl.room_quiz_id = p_quiz
+     and pl.user_id = a.user_id
+     and pl.submitted_at is null;
+  perform app_private.finish_room_quiz(p_quiz);
+end $$;
+
+-- Everything a room screen shows about one quiz, in one call. For a standard
+-- quiz, unchanged from 0019. For a speed round: only the questions opened so
+-- far, each one's answer once its window has closed, and everyone's points on
+-- closed questions (live), plus the clock to draw the countdown from.
+create or replace function public.get_room_quiz(p_quiz uuid)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_quiz  room_quizzes;
+  v_done  boolean;
+  v_speed boolean;
+  v_secs  int;
+  v_cur   int := -1;
+  v_in    numeric := 0;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz;
+  if not found or not exists (
+       select 1 from room_members
+        where room_id = v_quiz.room_id and user_id = v_uid)
+     and not exists (
+       select 1 from room_quiz_players
+        where room_quiz_id = p_quiz and user_id = v_uid) then
+    raise exception 'That quiz isn''t in your room.';
+  end if;
+  v_done  := v_quiz.status = 'finished';
+  v_speed := v_quiz.mode = 'speed';
+  v_secs  := v_quiz.seconds_per_question;
+  if v_speed and v_quiz.status = 'running' then
+    select c.cur, c.in_slot into v_cur, v_in
+      from app_private.speed_clock(v_quiz.started_at, v_secs) c;
+  end if;
+
+  return json_build_object(
+    'id', v_quiz.id,
+    'room_id', v_quiz.room_id,
+    'created_by', v_quiz.created_by,
+    'title', v_quiz.title,
+    'question_count', v_quiz.question_count,
+    'status', v_quiz.status,
+    'mode', v_quiz.mode,
+    'seconds_per_question', v_secs,
+    'started_at', v_quiz.started_at,
+    'server_now', now(),
+    'players', (
+      select coalesce(json_agg(json_build_object(
+               'user_id', pl.user_id,
+               'full_name', pr.full_name,
+               'avatar_initial', pr.avatar_initial,
+               'vote', pl.vote,
+               'submitted', pl.submitted_at is not null,
+               'score', case
+                 when v_done then pl.score
+                 when v_speed then (
+                   select coalesce(sum(a.points), 0)::int
+                     from room_quiz_answers a
+                     join room_quiz_questions q on q.id = a.question_id
+                    where a.room_quiz_id = p_quiz and a.user_id = pl.user_id
+                      and (q.order_index < v_cur
+                           or (q.order_index = v_cur and v_in >= v_secs)))
+                 when pl.user_id = v_uid then pl.score
+               end,
+               'answered_current', v_speed and exists (
+                 select 1 from room_quiz_answers a
+                   join room_quiz_questions q on q.id = a.question_id
+                  where a.room_quiz_id = p_quiz and a.user_id = pl.user_id
+                    and q.order_index = v_cur),
+               'rank', pl.rank,
+               'xp_awarded', pl.xp_awarded
+             ) order by pl.rank nulls last, pr.full_name), '[]'::json)
+        from room_quiz_players pl
+        join profiles pr on pr.id = pl.user_id
+       where pl.room_quiz_id = p_quiz),
+    'questions', case when v_quiz.status in ('running', 'finished') then (
+      select coalesce(json_agg(json_build_object(
+               'id', q.id,
+               'question', q.question,
+               'options', q.options,
+               'correct_index', case
+                 when v_done or (v_speed and (q.order_index < v_cur
+                      or (q.order_index = v_cur and v_in >= v_secs)))
+                 then q.correct_index end,
+               'explanation', case when v_done then q.explanation end
+             ) order by q.order_index), '[]'::json)
+        from room_quiz_questions q
+       where q.room_quiz_id = p_quiz
+         and (not v_speed or v_done or q.order_index <= v_cur)) end,
+    'my_picks', case
+      when v_speed and not v_done then (
+        select jsonb_object_agg(question_id::text, pick)
+          from room_quiz_answers
+         where room_quiz_id = p_quiz and user_id = v_uid)
+      else (select picks from room_quiz_players
+             where room_quiz_id = p_quiz and user_id = v_uid) end
+  );
+end $$;
+
+-- One answer in a speed round, inside that question's window (with 1.5 s of
+-- grace for the trip from the phone). Points: 0 when wrong; when right, 500
+-- plus up to 500 for speed.
+create or replace function public.answer_room_quiz_question(
+  p_quiz uuid, p_question uuid, p_pick int
+)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_quiz   room_quizzes;
+  v_q      room_quiz_questions;
+  v_cur    int;
+  v_in     numeric;
+  v_points int;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz for update;
+  if not found or v_quiz.mode <> 'speed' then
+    raise exception 'That isn''t a speed round.';
+  end if;
+  if v_quiz.status <> 'running' then
+    raise exception 'That quiz has already ended.';
+  end if;
+  if not exists (select 1 from room_quiz_players
+                  where room_quiz_id = p_quiz and user_id = v_uid) then
+    raise exception 'You weren''t in the room when this quiz was proposed.';
+  end if;
+  if p_pick is null or p_pick not between 0 and 3 then
+    raise exception 'Pick one of the four options.';
+  end if;
+  select * into v_q from room_quiz_questions
+   where id = p_question and room_quiz_id = p_quiz;
+  if not found then
+    raise exception 'That question isn''t in this quiz.';
+  end if;
+
+  select c.cur, c.in_slot into v_cur, v_in
+    from app_private.speed_clock(v_quiz.started_at, v_quiz.seconds_per_question) c;
+  if v_q.order_index <> v_cur or v_in > v_quiz.seconds_per_question + 1.5 then
+    raise exception 'Time''s up for that question.';
+  end if;
+
+  v_points := case when p_pick = v_q.correct_index
+    then 500 + floor(500 * greatest(0, 1 - least(v_in, v_quiz.seconds_per_question)
+                                         / v_quiz.seconds_per_question))::int
+    else 0 end;
+  insert into room_quiz_answers (room_quiz_id, question_id, user_id, pick, points)
+  values (p_quiz, p_question, v_uid, p_pick, v_points)
+  on conflict do nothing;
+  if not found then
+    raise exception 'You''ve already answered that one.';
+  end if;
+
+  -- Everyone has answered the last question: no need to wait out the clock.
+  if v_q.order_index = v_quiz.question_count - 1
+     and (select count(*) from room_quiz_answers
+           where room_quiz_id = p_quiz and question_id = p_question)
+       >= (select count(*) from room_quiz_players where room_quiz_id = p_quiz) then
+    perform app_private.finish_speed_quiz(p_quiz);
+  end if;
+
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+-- Any player's phone calls this when its clock says the round is over; the
+-- first one in closes it. Too early, it changes nothing.
+create or replace function public.tick_room_quiz(p_quiz uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_quiz room_quizzes;
+  v_cur  int;
+  v_in   numeric;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz for update;
+  if found and v_quiz.mode = 'speed' and v_quiz.status = 'running' then
+    select c.cur, c.in_slot into v_cur, v_in
+      from app_private.speed_clock(v_quiz.started_at, v_quiz.seconds_per_question) c;
+    if v_cur > v_quiz.question_count - 1
+       or (v_cur = v_quiz.question_count - 1
+           and v_in >= v_quiz.seconds_per_question + 1.5) then
+      perform app_private.finish_speed_quiz(p_quiz);
+    end if;
+  end if;
+  return public.get_room_quiz(p_quiz);  -- also checks the caller is in the room
+end $$;
+
+-- Hand-ins are for standard quizzes. Otherwise unchanged from 0019.
+create or replace function public.submit_room_quiz(p_quiz uuid, p_picks jsonb)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_score int;
+begin
+  perform 1 from room_quizzes where id = p_quiz and status = 'running' for update;
+  if not found then
+    raise exception 'That quiz has already ended.';
+  end if;
+  if exists (select 1 from room_quizzes where id = p_quiz and mode = 'speed') then
+    raise exception 'A speed round is answered one question at a time.';
+  end if;
+  if not exists (select 1 from room_quiz_players
+                  where room_quiz_id = p_quiz and user_id = v_uid
+                    and submitted_at is null) then
+    raise exception 'You''ve already handed this quiz in.';
+  end if;
+
+  select count(*) into v_score
+    from room_quiz_questions q
+   where q.room_quiz_id = p_quiz
+     and nullif(p_picks ->> q.id::text, '')::int = q.correct_index;
+
+  update room_quiz_players
+     set picks = coalesce(p_picks, '{}'::jsonb), score = v_score, submitted_at = now()
+   where room_quiz_id = p_quiz and user_id = v_uid;
+
+  if not exists (select 1 from room_quiz_players
+                  where room_quiz_id = p_quiz and submitted_at is null) then
+    perform app_private.finish_room_quiz(p_quiz);
+  end if;
+
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+-- The host ending a speed round scores it as it stands. Otherwise unchanged
+-- from 0019.
+create or replace function public.end_room_quiz(p_quiz uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_quiz room_quizzes;
+begin
+  select * into v_quiz from room_quizzes where id = p_quiz for update;
+  if not found or v_quiz.created_by <> auth.uid() then
+    raise exception 'Only the person who started the quiz can end it.';
+  end if;
+  if v_quiz.status = 'voting' then
+    update room_quizzes set status = 'cancelled', finished_at = now()
+     where id = p_quiz;
+  elsif v_quiz.status = 'running' and v_quiz.mode = 'speed' then
+    perform app_private.finish_speed_quiz(p_quiz);
+  elsif v_quiz.status = 'running' then
+    perform app_private.finish_room_quiz(p_quiz);
+  end if;
+  return public.get_room_quiz(p_quiz);
+end $$;
+
+-- A leaver drops off a speed round's board. Otherwise unchanged from 0020.
+create or replace function app_private.room_quiz_on_leave()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_quiz    room_quizzes;
+  v_closing boolean;
+  v_left    int;
+begin
+  select (r.created_by = old.user_id or r.status <> 'active')
+    into v_closing
+    from study_rooms r where r.id = old.room_id;
+
+  for v_quiz in
+    select * from room_quizzes
+     where room_id = old.room_id and status in ('voting', 'running')
+     for update
+  loop
+    if v_quiz.status = 'voting' then
+      delete from room_quiz_players
+       where room_quiz_id = v_quiz.id and user_id = old.user_id;
+      select count(*) into v_left from room_quiz_players
+       where room_quiz_id = v_quiz.id;
+      if coalesce(v_closing, true) or v_left < 2 then
+        update room_quizzes set status = 'cancelled', finished_at = now()
+         where id = v_quiz.id;
+      elsif not exists (select 1 from room_quiz_players
+                         where room_quiz_id = v_quiz.id
+                           and vote is distinct from true) then
+        update room_quizzes set status = 'running', started_at = now()
+         where id = v_quiz.id;
+      end if;
+    elsif v_quiz.mode = 'speed' then
+      -- The clock runs the round, so nobody waits on a leaver; they just
+      -- drop off the board. An empty room has no round left to play.
+      delete from room_quiz_answers
+       where room_quiz_id = v_quiz.id and user_id = old.user_id;
+      delete from room_quiz_players
+       where room_quiz_id = v_quiz.id and user_id = old.user_id;
+      if coalesce(v_closing, true) or not exists (
+           select 1 from room_quiz_players where room_quiz_id = v_quiz.id) then
+        perform app_private.finish_speed_quiz(v_quiz.id);
+      end if;
+    else
+      delete from room_quiz_players
+       where room_quiz_id = v_quiz.id and user_id = old.user_id
+         and submitted_at is null;
+      if not exists (select 1 from room_quiz_players
+                      where room_quiz_id = v_quiz.id
+                        and submitted_at is null) then
+        perform app_private.finish_room_quiz(v_quiz.id);
+      end if;
+    end if;
+  end loop;
+  return old;
+end $$;
+
+revoke execute on function app_private.speed_clock(timestamptz, int) from public;
+revoke execute on function app_private.finish_speed_quiz(uuid) from public;
+revoke execute on function public.answer_room_quiz_question(uuid, uuid, int),
+                           public.tick_room_quiz(uuid)
+  from public, anon;
+grant execute on function public.answer_room_quiz_question(uuid, uuid, int),
+                          public.tick_room_quiz(uuid)
+  to authenticated;
+
+notify pgrst, 'reload schema';
+-- StudyTrail — 0023: the doubt board
+--
+-- A class's own Q&A. A student posts a doubt; classmates answer; answers can
+-- be upvoted, and the asker marks the one that solved it. The `doubt-ai`
+-- function can add one first answer, written from the asker's own notes.
+--
+-- Everything goes through the RPCs below — the tables have no client grants,
+-- the way study rooms work (D-024): each write has a check the client can't
+-- be trusted with (same class, own post, a daily limit), and names come from
+-- profiles, which are owner-only. Blocks from 0013 apply: a blocked student's
+-- doubts and answers are hidden from whoever blocked them.
+--
+-- Idempotent, like every migration here.
+
+create table if not exists doubts (
+  id         uuid        primary key default gen_random_uuid(),
+  class_id   uuid        not null references classes(id) on delete cascade,
+  user_id    uuid        not null references auth.users(id) on delete cascade,
+  subject    text        check (subject is null or char_length(subject) <= 80),
+  title      text        not null check (char_length(title) between 5 and 200),
+  body       text        check (body is null or char_length(body) <= 4000),
+  solved_answer_id uuid,
+  created_at timestamptz not null default now()
+);
+create index if not exists doubts_class_idx on doubts(class_id, created_at desc);
+
+create table if not exists doubt_answers (
+  id         uuid        primary key default gen_random_uuid(),
+  doubt_id   uuid        not null references doubts(id) on delete cascade,
+  -- For an AI answer, the asker whose notes it was written from.
+  user_id    uuid        not null references auth.users(id) on delete cascade,
+  is_ai      boolean     not null default false,
+  body       text        not null check (char_length(body) between 1 and 6000),
+  created_at timestamptz not null default now()
+);
+create index if not exists doubt_answers_doubt_idx on doubt_answers(doubt_id, created_at);
+create unique index if not exists doubt_answers_one_ai on doubt_answers(doubt_id) where is_ai;
+
+do $$ begin
+  alter table doubts add constraint doubts_solved_fk
+    foreign key (solved_answer_id) references doubt_answers(id) on delete set null;
+exception when duplicate_object then null; end $$;
+
+create table if not exists doubt_votes (
+  answer_id  uuid not null references doubt_answers(id) on delete cascade,
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  primary key (answer_id, user_id)
+);
+
+create table if not exists doubt_reports (
+  id           uuid        primary key default gen_random_uuid(),
+  reporter_id  uuid        not null references auth.users(id) on delete cascade,
+  reported_id  uuid        not null references auth.users(id) on delete cascade,
+  doubt_id     uuid        references doubts(id) on delete set null,
+  answer_id    uuid        references doubt_answers(id) on delete set null,
+  body         text,
+  reason       text        not null
+                           check (reason in ('spam', 'harassment', 'inappropriate', 'other')),
+  status       text        not null default 'open'
+                           check (status in ('open', 'reviewed', 'dismissed')),
+  created_at   timestamptz not null default now()
+);
+
+alter table doubts        enable row level security;
+alter table doubt_answers enable row level security;
+alter table doubt_votes   enable row level security;
+alter table doubt_reports enable row level security;
+revoke all on doubts, doubt_answers, doubt_votes, doubt_reports
+  from anon, authenticated;
+
+-- The caller's class, or an error that says what to do about it.
+create or replace function app_private.my_class()
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_class uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  select class_id into v_class from profiles where id = auth.uid();
+  if v_class is null then
+    raise exception 'Join your class first — the doubt board is shared with your classmates.';
+  end if;
+  return v_class;
+end $$;
+
+-- A doubt in the caller's class, or an error.
+create or replace function app_private.class_doubt(p_doubt uuid)
+returns doubts
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_row doubts;
+begin
+  select * into v_row from doubts
+   where id = p_doubt and class_id = app_private.my_class();
+  if not found then
+    raise exception 'That doubt isn''t on your class''s board.';
+  end if;
+  return v_row;
+end $$;
+
+-- ── Reads ───────────────────────────────────────────────────────────────────
+-- The class's board, newest first. p_filter: 'all' | 'open' (not solved) |
+-- 'mine'.
+create or replace function public.get_class_doubts(
+  p_filter text default 'all',
+  p_limit  int  default 40
+)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_class uuid := app_private.my_class();
+begin
+  return coalesce((
+    select json_agg(row_to_json(t) order by t.created_at desc)
+      from (
+        select d.id, d.title, d.subject, d.created_at,
+               d.solved_answer_id is not null as solved,
+               d.user_id = v_uid as is_mine,
+               coalesce(nullif(btrim(pr.full_name), ''), 'Student') as author,
+               pr.avatar_initial,
+               (select count(*) from doubt_answers a
+                 where a.doubt_id = d.id
+                   and not exists (select 1 from user_blocks b
+                                    where b.blocker_id = v_uid
+                                      and b.blocked_id = a.user_id
+                                      and not a.is_ai))::int as answers,
+               exists (select 1 from doubt_answers a
+                        where a.doubt_id = d.id and a.is_ai) as has_ai
+          from doubts d
+          join profiles pr on pr.id = d.user_id
+         where d.class_id = v_class
+           and not exists (select 1 from user_blocks b
+                            where b.blocker_id = v_uid and b.blocked_id = d.user_id)
+           and (p_filter = 'all'
+                or (p_filter = 'open' and d.solved_answer_id is null)
+                or (p_filter = 'mine' and d.user_id = v_uid))
+         order by d.created_at desc
+         limit least(greatest(coalesce(p_limit, 40), 1), 100)
+      ) t), '[]'::json);
+end $$;
+
+-- One doubt with its answers: the solving answer first, then by votes.
+create or replace function public.get_doubt(p_doubt uuid)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_d   doubts := app_private.class_doubt(p_doubt);
+begin
+  return json_build_object(
+    'id', v_d.id,
+    'title', v_d.title,
+    'body', v_d.body,
+    'subject', v_d.subject,
+    'created_at', v_d.created_at,
+    'user_id', v_d.user_id,
+    'is_mine', v_d.user_id = v_uid,
+    'solved_answer_id', v_d.solved_answer_id,
+    'author', (select coalesce(nullif(btrim(full_name), ''), 'Student')
+                 from profiles where id = v_d.user_id),
+    'avatar_initial', (select avatar_initial from profiles where id = v_d.user_id),
+    'answers', (
+      select coalesce(json_agg(row_to_json(t)
+               order by (t.id = v_d.solved_answer_id) desc, t.votes desc,
+                        t.created_at), '[]'::json)
+        from (
+          select a.id, a.body, a.is_ai, a.created_at, a.user_id,
+                 a.user_id = v_uid and not a.is_ai as is_mine,
+                 coalesce(nullif(btrim(pr.full_name), ''), 'Student') as author,
+                 pr.avatar_initial,
+                 (select count(*) from doubt_votes v where v.answer_id = a.id)::int as votes,
+                 exists (select 1 from doubt_votes v
+                          where v.answer_id = a.id and v.user_id = v_uid) as voted
+            from doubt_answers a
+            join profiles pr on pr.id = a.user_id
+           where a.doubt_id = v_d.id
+             and (a.is_ai or not exists (
+                   select 1 from user_blocks b
+                    where b.blocker_id = v_uid and b.blocked_id = a.user_id))
+        ) t)
+  );
+end $$;
+
+-- ── Writes ──────────────────────────────────────────────────────────────────
+create or replace function public.post_doubt(
+  p_title   text,
+  p_body    text default null,
+  p_subject text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_class uuid := app_private.my_class();
+  v_title text := btrim(coalesce(p_title, ''));
+  v_id    uuid;
+begin
+  if char_length(v_title) < 5 then
+    raise exception 'Say a bit more in the title — at least 5 characters.';
+  end if;
+  if char_length(v_title) > 200 or char_length(coalesce(p_body, '')) > 4000 then
+    raise exception 'That doubt is too long.';
+  end if;
+  if (select count(*) from doubts
+       where user_id = v_uid and created_at > now() - interval '1 day') >= 10 then
+    raise exception 'That''s ten doubts today — try again tomorrow.';
+  end if;
+  insert into doubts (class_id, user_id, title, body, subject)
+  values (v_class, v_uid, v_title, nullif(btrim(coalesce(p_body, '')), ''),
+          nullif(btrim(coalesce(p_subject, '')), ''))
+  returning id into v_id;
+  return public.get_doubt(v_id);
+end $$;
+
+create or replace function public.answer_doubt(p_doubt uuid, p_body text)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_d    doubts := app_private.class_doubt(p_doubt);
+  v_body text := btrim(coalesce(p_body, ''));
+begin
+  if char_length(v_body) < 2 then
+    raise exception 'Write an answer first.';
+  end if;
+  if char_length(v_body) > 6000 then
+    raise exception 'That answer is too long.';
+  end if;
+  if (select count(*) from doubt_answers
+       where user_id = v_uid and not is_ai
+         and created_at > now() - interval '1 day') >= 50 then
+    raise exception 'That''s a lot of answers for one day — try again tomorrow.';
+  end if;
+  insert into doubt_answers (doubt_id, user_id, body)
+  values (v_d.id, v_uid, v_body);
+  return public.get_doubt(v_d.id);
+end $$;
+
+-- Toggles the caller's upvote. Not on your own answer.
+create or replace function public.vote_doubt_answer(p_answer uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_a   doubt_answers;
+begin
+  select * into v_a from doubt_answers where id = p_answer;
+  if not found then
+    raise exception 'That answer has gone.';
+  end if;
+  perform app_private.class_doubt(v_a.doubt_id);
+  if v_a.user_id = v_uid and not v_a.is_ai then
+    raise exception 'You can''t upvote your own answer.';
+  end if;
+  delete from doubt_votes where answer_id = p_answer and user_id = v_uid;
+  if not found then
+    insert into doubt_votes (answer_id, user_id) values (p_answer, v_uid);
+  end if;
+  return public.get_doubt(v_a.doubt_id);
+end $$;
+
+-- The asker marks the answer that solved it; null un-marks.
+create or replace function public.mark_doubt_solved(p_doubt uuid, p_answer uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_d doubts := app_private.class_doubt(p_doubt);
+begin
+  if v_d.user_id <> auth.uid() then
+    raise exception 'Only whoever asked can mark it solved.';
+  end if;
+  if p_answer is not null and not exists (
+       select 1 from doubt_answers where id = p_answer and doubt_id = v_d.id) then
+    raise exception 'That answer isn''t on this doubt.';
+  end if;
+  update doubts set solved_answer_id = p_answer where id = v_d.id;
+  return public.get_doubt(v_d.id);
+end $$;
+
+create or replace function public.delete_doubt(p_doubt uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+begin
+  delete from doubts where id = p_doubt and user_id = auth.uid();
+  if not found then
+    raise exception 'You can only delete your own doubt.';
+  end if;
+end $$;
+
+create or replace function public.delete_doubt_answer(p_answer uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+begin
+  delete from doubt_answers
+   where id = p_answer and user_id = auth.uid() and not is_ai;
+  if not found then
+    raise exception 'You can only delete your own answer.';
+  end if;
+end $$;
+
+-- Reports a doubt or an answer, with a snapshot of what was said.
+create or replace function public.report_doubt_content(
+  p_reason text,
+  p_doubt  uuid default null,
+  p_answer uuid default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, app_private
+as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_author uuid;
+  v_body   text;
+  v_doubt  uuid := p_doubt;
+begin
+  if p_reason not in ('spam', 'harassment', 'inappropriate', 'other') then
+    raise exception 'Pick a reason for the report.';
+  end if;
+  if p_answer is not null then
+    select user_id, body, doubt_id into v_author, v_body, v_doubt
+      from doubt_answers where id = p_answer and not is_ai;
+  elsif p_doubt is not null then
+    select user_id, title || coalesce(E'\n\n' || body, '') into v_author, v_body
+      from doubts where id = p_doubt;
+  end if;
+  if v_author is null then
+    raise exception 'There''s nothing there to report.';
+  end if;
+  perform app_private.class_doubt(v_doubt);
+  if v_author = v_uid then
+    raise exception 'You can''t report yourself.';
+  end if;
+  if exists (select 1 from doubt_reports
+              where reporter_id = v_uid and status = 'open'
+                and doubt_id is not distinct from v_doubt
+                and answer_id is not distinct from p_answer) then
+    return;
+  end if;
+  insert into doubt_reports (reporter_id, reported_id, doubt_id, answer_id, body, reason)
+  values (v_uid, v_author, v_doubt, p_answer, left(v_body, 6000), p_reason);
+end $$;
+
+revoke execute on function app_private.my_class(),
+                           app_private.class_doubt(uuid)
+  from public;
+revoke execute on function public.get_class_doubts(text, int),
+                           public.get_doubt(uuid),
+                           public.post_doubt(text, text, text),
+                           public.answer_doubt(uuid, text),
+                           public.vote_doubt_answer(uuid),
+                           public.mark_doubt_solved(uuid, uuid),
+                           public.delete_doubt(uuid),
+                           public.delete_doubt_answer(uuid),
+                           public.report_doubt_content(text, uuid, uuid)
+  from public, anon;
+grant execute on function public.get_class_doubts(text, int),
+                          public.get_doubt(uuid),
+                          public.post_doubt(text, text, text),
+                          public.answer_doubt(uuid, text),
+                          public.vote_doubt_answer(uuid),
+                          public.mark_doubt_solved(uuid, uuid),
+                          public.delete_doubt(uuid),
+                          public.delete_doubt_answer(uuid),
+                          public.report_doubt_content(text, uuid, uuid)
+  to authenticated;
+
+notify pgrst, 'reload schema';
+-- StudyTrail — 0024: a YouTube playlist is one library item
+--
+-- A playlist used to become one `materials` row per video, so a 92-lecture
+-- course spent all 20 library slots on its first 20 videos and stopped. Now
+-- the playlist is one `material_playlists` row and counts as one item; its
+-- videos are still ordinary `video_link` materials (transcript file, chunks,
+-- retry, summaries — all unchanged) that point back at it (D-038).
+--
+-- The video list is stored when the playlist is added. The phone reads the
+-- captions (D-037), so an import is only as long-lived as the app; with the
+-- list on the server, one the phone couldn't finish — app closed, signal lost
+-- — carries on at the next launch, on any device.
+--
+-- Idempotent, like every migration here.
+
+create table if not exists material_playlists (
+  id          uuid        primary key default gen_random_uuid(),
+  user_id     uuid        not null default auth.uid()
+                          references auth.users(id) on delete cascade,
+  youtube_id  text        not null check (youtube_id ~ '^[A-Za-z0-9_-]{12,64}$'),
+  title       text        not null check (char_length(title) between 1 and 300),
+  -- The playlist's videos in playlist order, as listed when it was added.
+  -- YouTube lists 100 per page; that is the ceiling the app reads.
+  video_ids   text[]      not null
+                          check (cardinality(video_ids) between 1 and 100),
+  -- Videos that won't be read: no captions, private or deleted, or removed
+  -- from the playlist by the student. Never retried.
+  skipped_ids text[]      not null default '{}'
+                          check (cardinality(skipped_ids) <= 100),
+  created_at  timestamptz not null default now(),
+  unique (user_id, youtube_id)
+);
+create index if not exists material_playlists_user_idx
+  on material_playlists(user_id);
+
+alter table material_playlists enable row level security;
+drop policy if exists owner_all on material_playlists;
+create policy owner_all on material_playlists
+  for all to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+revoke all on material_playlists from anon, authenticated;
+grant select, insert, delete on material_playlists to authenticated;
+-- After creation only the skip list moves. The video list is what the import
+-- was asked for and stays as listed.
+grant update (skipped_ids) on material_playlists to authenticated;
+
+alter table materials
+  add column if not exists playlist_id uuid
+    references material_playlists(id) on delete cascade;
+create index if not exists materials_playlist_idx
+  on materials(playlist_id) where playlist_id is not null;
+
+-- RLS on `materials` checks the row's own `user_id`, not whose playlist it
+-- names. Without this a student could hang a video off a classmate's playlist
+-- id — unreadable to them, but deleted along with it. `playlist_id` is set at
+-- insert only: 0009's update grant (goal_id, title, status) doesn't include it.
+create or replace function app_private.material_playlist_owner()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.playlist_id is not null and not exists (
+    select 1 from material_playlists
+    where id = new.playlist_id and user_id = new.user_id
+  ) then
+    raise exception 'playlist % is not yours', new.playlist_id
+      using errcode = '42501';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists materials_playlist_owner on materials;
+create trigger materials_playlist_owner
+  before insert or update of playlist_id on materials
+  for each row execute function app_private.material_playlist_owner();
+
+notify pgrst, 'reload schema';

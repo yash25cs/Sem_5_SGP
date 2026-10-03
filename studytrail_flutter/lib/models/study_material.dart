@@ -12,6 +12,7 @@ class StudyMaterial {
     this.externalUrl,
     this.status = IngestStatus.uploaded,
     this.createdAt,
+    this.playlistId,
   });
 
   final String id;
@@ -24,6 +25,10 @@ class StudyMaterial {
   final String? externalUrl;
   final IngestStatus status;
   final DateTime? createdAt;
+
+  /// Set on a video read in as part of a YouTube playlist; the playlist, not
+  /// the video, is what takes a library slot.
+  final String? playlistId;
 
   /// File name for display, derived from the storage path.
   String get displayName {
@@ -49,6 +54,7 @@ class StudyMaterial {
         externalUrl: externalUrl,
         status: status,
         createdAt: createdAt,
+        playlistId: playlistId,
       );
 
   factory StudyMaterial.fromMap(Map<String, dynamic> m) => StudyMaterial(
@@ -62,6 +68,7 @@ class StudyMaterial {
         createdAt: m['created_at'] == null
             ? null
             : DateTime.parse(m['created_at'] as String),
+        playlistId: m['playlist_id'] as String?,
       );
 
   Map<String, dynamic> toInsertMap() => {
@@ -70,6 +77,7 @@ class StudyMaterial {
         if (title != null) 'title': title,
         if (storagePath != null) 'storage_path': storagePath,
         if (externalUrl != null) 'external_url': externalUrl,
+        if (playlistId != null) 'playlist_id': playlistId,
         'status': status.db,
       };
 }

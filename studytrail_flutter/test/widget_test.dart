@@ -197,6 +197,9 @@ class _FakeMaterials extends MaterialRepository {
   const _FakeMaterials();
 
   @override
+  Future<List<MaterialPlaylist>> getPlaylists() async => const [];
+
+  @override
   Future<List<StudyMaterial>> getMaterials({String? goalId}) async => const [
         StudyMaterial(
           id: 'embedded-1',

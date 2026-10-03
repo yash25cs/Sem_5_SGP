@@ -11,6 +11,7 @@ class Subject {
     this.isFocus = true,
     this.progress = 0,
     this.accuracy = 0,
+    this.examDate,
   });
 
   final String id;
@@ -22,6 +23,19 @@ class Subject {
   final double progress;
   final double accuracy;
 
+  /// This subject's own paper, when the semester has several exam days.
+  final DateTime? examDate;
+
+  /// Whole days from today (the phone's date) to [examDate]; null if undated.
+  int? daysUntilExam([DateTime? now]) {
+    final exam = examDate;
+    if (exam == null) return null;
+    final n = now ?? DateTime.now();
+    return DateTime(exam.year, exam.month, exam.day)
+        .difference(DateTime(n.year, n.month, n.day))
+        .inDays;
+  }
+
   factory Subject.fromMap(Map<String, dynamic> m) => Subject(
         id: m['id'] as String,
         name: (m['name'] as String?) ?? '',
@@ -31,6 +45,9 @@ class Subject {
         isFocus: (m['is_focus'] as bool?) ?? true,
         progress: (m['progress'] as num?)?.toDouble() ?? 0,
         accuracy: (m['accuracy'] as num?)?.toDouble() ?? 0,
+        examDate: m['exam_date'] == null
+            ? null
+            : DateTime.parse(m['exam_date'] as String),
       );
 
   Map<String, dynamic> toInsertMap() => {

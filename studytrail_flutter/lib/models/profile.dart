@@ -1,5 +1,20 @@
 import 'enums.dart';
 
+/// The language AI explanations come back in (`profiles.answer_language`).
+/// Questions stay in English, like the exams.
+enum AnswerLanguage {
+  english('en', 'English'),
+  hindi('hi', 'हिन्दी (Hindi)'),
+  gujarati('gu', 'ગુજરાતી (Gujarati)');
+
+  const AnswerLanguage(this.code, this.label);
+  final String code;
+  final String label;
+
+  static AnswerLanguage fromCode(String? code) => AnswerLanguage.values
+      .firstWhere((l) => l.code == code, orElse: () => AnswerLanguage.english);
+}
+
 /// A row of `profiles`. PK is the Supabase auth user id.
 class Profile {
   const Profile({
@@ -14,6 +29,7 @@ class Profile {
     this.xp = 0,
     this.xpToNext = 500,
     this.classId,
+    this.answerLanguage = AnswerLanguage.english,
   });
 
   final String id;
@@ -27,6 +43,7 @@ class Profile {
   final int xp;
   final int xpToNext;
   final String? classId;
+  final AnswerLanguage answerLanguage;
 
   /// First letter for the avatar circle, falling back through name → email.
   String get initial {
@@ -54,6 +71,7 @@ class Profile {
         xp: (m['xp'] as num?)?.toInt() ?? 0,
         xpToNext: (m['xp_to_next'] as num?)?.toInt() ?? 500,
         classId: m['class_id'] as String?,
+        answerLanguage: AnswerLanguage.fromCode(m['answer_language'] as String?),
       );
 
   /// Only the user-editable fields; ids and XP are server-owned.
@@ -86,6 +104,7 @@ class Profile {
         xp: xp ?? this.xp,
         xpToNext: xpToNext ?? this.xpToNext,
         classId: classId ?? this.classId,
+        answerLanguage: answerLanguage,
       );
 }
 
@@ -100,6 +119,7 @@ class Goal {
     this.currentDay = 1,
     this.overallPercent = 0,
     this.isActive = true,
+    this.roadmapStartedOn,
   });
 
   final String id;
@@ -110,6 +130,9 @@ class Goal {
   final int currentDay;
   final double overallPercent;
   final bool isActive;
+
+  /// When the generated roadmap's week 1 began (`0015_catch_up.sql`).
+  final DateTime? roadmapStartedOn;
 
   /// Whole days until the exam, floored at 0. Null when no date is set.
   int? get daysLeft {
@@ -131,6 +154,9 @@ class Goal {
         roadmapDays: (m['roadmap_days'] as num?)?.toInt(),
         currentDay: (m['current_day'] as num?)?.toInt() ?? 1,
         overallPercent: (m['overall_percent'] as num?)?.toDouble() ?? 0,
+        roadmapStartedOn: m['roadmap_started_on'] == null
+            ? null
+            : DateTime.parse(m['roadmap_started_on'] as String),
         isActive: (m['is_active'] as bool?) ?? true,
       );
 

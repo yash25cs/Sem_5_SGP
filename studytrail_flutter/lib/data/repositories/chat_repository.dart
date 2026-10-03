@@ -59,35 +59,17 @@ class ChatRepository {
     return rows.map(ChatMessage.fromMap).toList();
   }
 
-  /// Persists a message. Used for the user's turn when running without the
-  /// Edge Function; the AI turn is normally written server-side.
-  Future<ChatMessage> addMessage({
-    required String threadId,
-    required ChatRole role,
-    required String text,
-  }) async {
-    final row = await db
-        .from('chat_messages')
-        .insert({
-          'user_id': requireUserId,
-          'thread_id': threadId,
-          'role': role.db,
-          'text': text,
-        })
-        .select('*, chat_citations(*)')
-        .single();
-    return ChatMessage.fromMap(row);
-  }
-
   /// Asks the `chat` Edge Function for a grounded answer.
   ///
-  /// Returns the answer text. Both rows are already in `chat_messages` by the
-  /// time this resolves, so the caller reloads rather than trusting this string
-  /// — that's also what picks up the citation chips.
+  /// Returns the answer text and up to three suggested follow-up questions.
+  /// Both rows are already in `chat_messages` by the time this resolves, so the
+  /// caller reloads rather than trusting this string — that's also what picks
+  /// up the citation chips. The suggestions aren't stored anywhere; they're for
+  /// the composer right now.
   ///
   /// [subjectId] narrows retrieval to one subject's materials; null searches
   /// everything the student has uploaded.
-  Future<String> askAi({
+  Future<({String answer, List<String> suggestions})> askAi({
     required String threadId,
     required String question,
     String? subjectId,
@@ -98,8 +80,14 @@ class ChatRepository {
       'subjectId': ?subjectId,
     });
     final data = res.data;
-    if (data is Map && data['answer'] is String) return data['answer'] as String;
-    return '';
+    if (data is! Map) return (answer: '', suggestions: const <String>[]);
+    return (
+      answer: data['answer'] is String ? data['answer'] as String : '',
+      suggestions: [
+        for (final s in (data['suggestions'] as List? ?? const []))
+          if (s is String && s.trim().isNotEmpty) s.trim(),
+      ],
+    );
   }
 
   Future<void> deleteThread(String threadId) =>

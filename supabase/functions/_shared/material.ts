@@ -95,6 +95,144 @@ export async function loadMaterialSource(
   return { title, chunks };
 }
 
+/// The student's weakest units, as generation source.
+///
+/// Reads `get_weak_topics` through the caller's client, then each topic's own
+/// chunks. `materialId` is set when every topic comes from one file, so a
+/// generated quiz can still say which material it covers.
+export interface WeakSource extends MaterialSource {
+  materialId: string | null;
+  units: string[];
+}
+
+export async function loadWeakSource(
+  supa: SupabaseClient,
+  limit = 3,
+): Promise<WeakSource> {
+  const { data: topics, error } = await supa.rpc('get_weak_topics', {
+    p_limit: limit,
+  });
+  if (error) {
+    console.error('Could not rank weak topics', error);
+    throw new HttpError(500, "Couldn't work out your weak spots. Try again.");
+  }
+  // deno-lint-ignore no-explicit-any
+  const rows: any[] = Array.isArray(topics) ? topics : [];
+  if (rows.length === 0) {
+    throw new HttpError(
+      404,
+      'No weak spots yet. Take a quiz or review some cards first.',
+    );
+  }
+
+  const chunks: Chunk[] = [];
+  for (const topic of rows) {
+    // A null label is a file without unit headings, taken as one topic.
+    let query = supa
+      .from('material_chunks')
+      .select('id, unit_label, content')
+      .eq('material_id', topic.material_id);
+    query = topic.unit_label === null
+      ? query.is('unit_label', null)
+      : query.eq('unit_label', topic.unit_label);
+    const { data } = await query.order('chunk_index', { ascending: true });
+    for (const row of data ?? []) {
+      const content = String(row.content ?? '').trim();
+      if (content.length === 0) continue;
+      chunks.push({
+        id: String(row.id),
+        unitLabel: typeof row.unit_label === 'string' ? row.unit_label : null,
+        content,
+      });
+    }
+  }
+  if (chunks.length === 0) {
+    throw new HttpError(
+      404,
+      "Your weak spots' notes aren't available any more. Upload them again.",
+    );
+  }
+
+  const materials = new Set(rows.map((t) => String(t.material_id)));
+  const units = rows.map((t) => String(t.unit_label ?? t.material_title));
+  return {
+    title: `Weak spots: ${units.join(', ')}`.slice(0, 120),
+    chunks,
+    materialId: materials.size === 1 ? [...materials][0] : null,
+    units,
+  };
+}
+
+/// A mock exam's source: notes for the units past papers ask about most, each
+/// given room in proportion to how often it's asked, plus a few real past
+/// questions so the new ones match the exam's style and emphasis.
+export interface MockSource extends MaterialSource {
+  examples: string[];
+  papers: number;
+}
+
+export async function loadMockSource(
+  supa: SupabaseClient,
+  maxChars = 40_000,
+): Promise<MockSource> {
+  const { data: topics, error } = await supa.rpc('get_exam_topics', {
+    p_limit: 8,
+  });
+  if (error) {
+    console.error('Could not rank exam topics', error);
+    throw new HttpError(500, "Couldn't read your past papers. Try again.");
+  }
+  // deno-lint-ignore no-explicit-any
+  const ranked = ((topics ?? []) as any[]).filter((t) => t.unit_label !== 'Other');
+  if (ranked.length === 0) {
+    throw new HttpError(
+      404,
+      'Upload a past paper first — and your notes, so its questions can be '
+        + 'matched to your units.',
+    );
+  }
+
+  const asked = ranked.reduce((sum, t) => sum + Number(t.times_asked), 0);
+  const chunks: Chunk[] = [];
+  for (const topic of ranked) {
+    const budget = Math.max(3_000, (maxChars * Number(topic.times_asked)) / asked);
+    const { data } = await supa
+      .from('material_chunks')
+      .select('id, unit_label, content')
+      .eq('unit_label', topic.unit_label)
+      .order('chunk_index', { ascending: true });
+    const own: Chunk[] = (data ?? [])
+      .map((row) => ({
+        id: String(row.id),
+        unitLabel: typeof row.unit_label === 'string' ? row.unit_label : null,
+        content: String(row.content ?? '').trim(),
+      }))
+      .filter((c) => c.content.length > 0);
+    chunks.push(...sampleChunks(own, budget));
+  }
+  if (chunks.length === 0) {
+    throw new HttpError(
+      404,
+      "Your notes for the most-asked units aren't uploaded yet.",
+    );
+  }
+
+  const { data: examples } = await supa
+    .from('paper_questions')
+    .select('text')
+    .in('unit_label', ranked.map((t) => t.unit_label))
+    .order('marks', { ascending: false, nullsFirst: false })
+    .limit(8);
+
+  const papers = Math.max(...ranked.map((t) => Number(t.papers) || 0));
+  return {
+    title: `Mock exam from ${papers} past paper${papers === 1 ? '' : 's'}`,
+    chunks,
+    examples: (examples ?? []).map((e) => String(e.text).slice(0, 400)),
+    papers,
+  };
+}
+
 /// Trims a document to [maxChars] by sampling evenly across it.
 ///
 /// Deliberately not a head truncation: a 15-question quiz drawn from the first

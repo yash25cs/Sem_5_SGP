@@ -390,3 +390,229 @@ rules exercised in a rolled-back transaction.
 - 0004 and 0010 made safe to re-run; `all_migrations.sql` regenerated with all
   twelve migrations and re-run end to end on the hosted project inside a
   rolled-back transaction.
+
+## Day 18 – Fifteen features: adaptive practice, exam papers, faculty view
+
+**Status:** Completed on 1 October 2026 (not committed). Every feature was
+verified against the hosted project with throwaway accounts that deleted
+themselves afterwards; migrations 0013–0019 were dry-run in rolled-back
+transactions before being applied, and the full 19-file chain was re-run the
+same way at the end.
+
+### Quick wins
+- **Room focus earns XP.** A completed focus block in a study room is logged
+  through `record_focus_session`, crediting only the minutes this device watched.
+- **Smarter reminders.** One-off reminders for the week instead of a repeating
+  one: the 6 PM nudge is dropped on days the student already studied, and a
+  9 PM "streak at risk" nudge fires only when there's a streak to lose.
+- **Dark mode is remembered.**
+- **CI.** `.github/workflows/checks.yml` runs `flutter analyze`, `flutter test`
+  and an `all_migrations.sql` freshness check on every push.
+- **Chat extras.** Three follow-up questions after every answer (same model
+  call), and "Save as flashcards" turns one answer into real cards in a
+  "Saved from chat" deck. Live: 16/16.
+- **Photo notes.** Camera or gallery; `embed-material` reads JPG/PNG/WebP/HEIC
+  with the same vision call as PDFs. Live: 9/9, including chat answering from a
+  photo.
+- **Room moderation** (`0013`). Block (hide a person's messages everywhere),
+  report (stored with a snapshot of the message for dashboard review), and host
+  removal (can't rejoin). Live: 22/22.
+
+### The three big ones
+- **Weak topics** (`0014`). Quiz questions now record their unit;
+  `get_weak_topics` ranks units by quiz misses and "hard/again" cards. Home's
+  Weak spots card generates a quiz or deck from only those units. The text
+  splitter now recognises "Unit 3: …" headings, and a file without headings
+  counts as one topic. Live: 17/17.
+- **Catch-up planner** (`0015`). `get_roadmap_pace` measures the student against
+  a straight line to the exam; `plan_catch_up` moves missed tasks to today and
+  fills the next 7 days at the pace needed. Live: 17/17.
+- **Past papers + mock exam** (`0016`, `analyze-paper`). Papers are read into
+  questions tagged with the student's own units; "Most-asked topics" ranks them;
+  a 15-question mock exam is weighted toward them. Live: 17/17 — every sample
+  question mapped to the right unit.
+
+### Bigger ones
+- **Long-answer practice** (`0017`, `grade-answer`). Examiner-style marks and
+  feedback against the student's notes; no XP. Live: correct answer 5/5, wrong
+  answer 0/5, prompt-injection answer 0/5.
+- **Exam date per subject** (`0018`). The goal's date follows the last exam;
+  the roadmap finishes each subject by its own exam week. Live: 8/8.
+- **Offline flashcards.** Decks and a week of due cards cached per student;
+  grades queued offline replay through `apply_sr_grade` in order.
+- **Faculty view** (`0019`). Teacher code per class; aggregate-only overview,
+  withheld below three students; teachers can share notes that their class's
+  chat, quizzes and cards then use. Live: 20/20 in a throwaway class.
+  *Removed on Day 20 — the app is for students only.*
+
+### Found and fixed on the way
+- **XP farming** through a direct `daily_tasks` update (15 → 30 XP per loop),
+  closed in `0015`.
+- **Midnight–5:30 AM IST bug** in the new planner: server "today" is UTC, so
+  pace and catch-up now take the phone's date.
+- Quiz generation errors reached students as `Error: FunctionException(...)`.
+
+`flutter analyze` clean; `flutter test` 58/58 (up from 27).
+
+## Day 19 – Layout fixes and a regrouped quick-actions sheet
+
+**Status:** 2 October 2026, from device screenshots (not committed).
+
+- **"RIGHT OVERFLOWED" on buttons.** `PillButton`'s label couldn't shrink, so two
+  buttons sharing a row (Past papers, Weak spots, Answer practice, photo upload)
+  overflowed on a narrow phone or a large system font. The label now scales down
+  to fit whatever width it gets, and is unchanged when it fits.
+- **Other overflows found by a new layout test** rendering screens at 320 dp
+  with long names: section headers (`CardHeader` now wraps its action to the next
+  line), the catch-up banner and mock-exam card (button moved under the text),
+  the hero card's streak chip, Chat's status line, the Rewards balance pill, the
+  Leaderboard rank line and rows, and the faculty stat grid and weak units.
+- **Quick actions** regrouped from a ten-row list into a featured *Start a focus
+  session* card plus *Practise*, *Together* and *Progress* groups in a
+  three-column grid; the teacher-only dashboard moved to a quiet link at the
+  bottom.
+- `test/layout_overflow_test.dart` keeps it that way: 9 screens, and the test
+  binding fails on any overflow and names the widget.
+
+## Day 20 – Students only; study rooms sized at creation, with a group quiz
+
+**Status:** 2 October 2026 (not committed).
+
+- **Teacher feature removed** (D-030). The faculty screen, store, repository,
+  model, test and `0019_faculty.sql` are gone; on the live database its
+  policies, functions, column and two tables were dropped and
+  `match_material_chunks` restored to own-chunks-only. The academic-profile
+  step no longer offers *I'm a teacher*, and the quick-actions sheet has no
+  teacher link.
+- **Room size at creation.** Creating a room asks for a name and how many
+  people (2, 3, 4, 5 or 6, host included) — no focus or break length.
+  `create_study_room` refuses anything outside 2–6.
+- **Focus session inside the room.** The timer card shows the room's focus and
+  break lengths; the host taps **Change** (clock stopped) to pick 15/25/45/50
+  and 5/10/15 minutes. Saved on the room (`set_room_timer`) and carried on
+  every timer broadcast, so members and late joiners follow.
+- **Group quiz** (`0019_room_quiz.sql`, `room-quiz`, D-031). The host picks one
+  of their own notes and 5/10/15 questions. Everyone in the room is asked; it
+  starts only when all of them agree. Everyone answers the same questions on a
+  new answer screen; marking is on the server. When the last person hands in
+  (or the host ends it) the room sees every score, ranked, and the top three
+  earn 30/20/10 XP. *Answers* shows each question with the right option.
+  `generate-quiz` and `room-quiz` now share one question writer
+  (`_shared/quiz.ts`).
+- Live probe 26/26 (see `FLOW.md` change log). `flutter analyze` clean;
+  `flutter test` 84/84, with `test/room_quiz_test.dart` covering the store's
+  quiz flow, the focus-length rules, and every quiz state at 320 dp.
+
+## Day 21 – Fourteen more: hardening, study tools, together, ship prep
+
+**Status:** 2 October 2026 (not committed). Migrations 0020–0023 were each
+dry-run in a rolled-back transaction before being applied; every feature was
+probed live with throwaway accounts that deleted themselves.
+
+### Fixes (`0020_hardening.sql`)
+- **Private room channels** — only a room's members can join, hear or send
+  (D-032). The live two-account test shows an outsider refused and a public
+  channel of the same name hearing nothing.
+- **Leaving mid-quiz** — a leaver drops out of the vote or the running quiz;
+  under two players cancels; everyone left handed in finishes it.
+- **Streaks on the student's day** — the phone's UTC offset is stored; every
+  reward path logs to the local date (D-033). Live: activity lands on the
+  UTC+14 and UTC−12 dates for students in those zones.
+- **Server-only chat writes** — the client can't insert or edit chat turns
+  (D-034). Live 21/21 for the four fixes.
+
+### Study tools (`0021_study_tools.sql`)
+- **Handwritten answers** — photograph up to three pages; transcribed, marked,
+  photos deleted. Live: a rendered handwriting page was read word for word.
+- **Hindi and Gujarati** explanations in chat, summaries, answer feedback and
+  doubt-board AI answers. Live: Gujarati chat and summary, Hindi feedback.
+- **My mistakes deck** — wrong quiz answers become due cards, no duplicates;
+  group-quiz misses only once the quiz is over.
+- **Weekly report** — this week against last; Sunday 7 PM notification.
+  Live 26/27 (the one miss was the probe's own arithmetic).
+
+### Together
+- **Speed rounds** (`0022`) — same question on every phone at once, timed on
+  the server, 500 + speed bonus, live reveal (D-035). Live 21/21 with real
+  timing.
+- **Doubt board** (`0023`, `doubt-ai`) — class Q&A with an AI first answer from
+  the asker's notes, upvotes, solved, report and block (D-036). Live 27/27.
+
+### Everyday
+- **Calendar export** — an `.ics` of exams (with reminders), roadmap weeks and
+  upcoming tasks, through the share sheet.
+- **Home-screen widget** (Android) — days to the next exam, today's tasks,
+  streak; it counts the days itself, so it stays right without the app.
+
+### Engineering
+- **Live two-account room test** — `STUDYTRAIL_LIVE=1 flutter test test/live`;
+  skipped otherwise, so CI never touches the hosted project.
+- **Play Store** — `PLAY_STORE.md`: the release bundle builds; listing text,
+  data-safety answers, and privacy and deletion pages (`docs/`) are ready. The
+  Play account, upload key and upload are the owner's.
+
+## Day 22 – YouTube videos and playlists the AI can read
+
+**Status:** 3 October 2026 (not committed). `embed-material` redeployed; no
+migration.
+
+- **Crash fixed.** Adding any link on the upload step turned the screen red
+  (`'_dependents.isEmpty': is not true`). The link sheet's text controller was
+  disposed the moment the sheet *started* closing, while its field was still
+  on screen. The sheet now owns its controller (`widgets/video_link_sheet.dart`).
+  Settings' *rename goal* sheet had the same bug and is fixed the same way.
+- **YouTube videos and playlists are read** (D-037). Paste a video, a playlist,
+  or a video opened inside a playlist (the app asks *whole playlist* or *just
+  this video*). The phone fetches each video's captions — English first, then
+  Hindi, then Gujarati, a human-written track before an automatic one — and
+  stores them as a timestamped `.txt` on a `video_link` row. `embed-material`
+  chunks on the timestamps, so a citation reads `12:40 · Lecture 3`. Chat,
+  summaries, quizzes and flashcards work on videos like on notes.
+- **Playlists** add one row per video, one at a time, each turning Ready as it
+  goes. Videos already in the library are skipped; it stops at the 20-file
+  limit and says how many didn't fit; videos with no captions or that won't
+  play are skipped and counted.
+- **After onboarding** the chat screen's materials sheet has a **YouTube**
+  button — before this there was no way to add a video once onboarding was
+  over. Other links are still saved as bookmarks, and now say so.
+- Live: a 45-minute MIT lecture became 23 chunks in 9 s; chat answered from it
+  citing `9:40 · 1. Algorithms and Computation`. Probe account deleted itself.
+  `flutter analyze` clean; `flutter test` 128 passed, 4 live tests skipped.
+  `STUDYTRAIL_LIVE=1 flutter test test/live/youtube_live_test.dart` checks the
+  service against real YouTube (3/3 from a home connection).
+
+## Day 23 – Long playlists as one item, and a launch screen
+
+**Status:** 3 October 2026 (not committed). `0024_playlists.sql` dry-run in a
+rolled-back transaction, then applied; `generate-roadmap` redeployed.
+
+- **A playlist is one library item** (D-038). A 92-video playlist used to take
+  all 20 slots on its first 20 videos and stop. Now it's one row —
+  "Reading · 34 of 92 ready" with a progress bar — that opens to list its
+  videos (each with retry, summarize, remove). Up to 100 videos per playlist.
+- **Three at a time, in the background.** Adding a playlist returns at once
+  ("Reading 92 videos — about 6 minutes"); the student carries on using the
+  app. Measured per video: ~1 s on the phone for captions, ~9 s to read.
+- **It survives the app closing.** The video list is stored with the playlist,
+  so whatever wasn't read carries on at the next launch, when the app comes
+  back to the front, or from **Resume**. A dropped connection pauses it; it
+  never marks a video unreadable for that. Videos with no captions, private
+  ones, and ones the student removes are skipped for good.
+- **A busy AI no longer fails videos.** The first real run (a 92-video
+  playlist) left 39 videos `failed`: the free tier embeds ~100 chunks a minute
+  (confirmed live — four 23-chunk videos at once went through, the fifth got a
+  429). Now a 429 makes every worker wait a minute and retry; if the limit
+  doesn't clear, the reader pauses with the videos still queued. **Retry** on
+  the playlist row re-reads any that failed before this.
+- **The roadmap sees each lecture once.** It read headings from chunks, which
+  for a video are one per timestamp — and its 600-row scan reached only the
+  first couple of dozen lectures. It now reads video titles directly.
+- **Launch screen.** The bare spinner is replaced by the logo settling in with
+  a trail circling it (the logo's own teal and indigo) and the wordmark rising
+  underneath; it fades into the app. Still with "remove animations" on.
+- Live probe 16/16 (playlist row, videos under it, embed, skip list writable
+  and video list not, roadmap from video titles, delete cascading to videos,
+  chunks and files). `flutter analyze` clean; `flutter test` 138 passed, 4 live
+  skipped — new tests prove three-at-a-time, pause and resume, no doubling on a
+  second paste, waiting out a busy AI, Retry, and the playlist row and splash
+  at 320 dp.

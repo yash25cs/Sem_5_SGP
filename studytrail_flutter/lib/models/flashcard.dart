@@ -9,11 +9,16 @@ class FlashcardDeck {
     this.subjectName,
     this.total = 0,
     this.due = 0,
+    this.isMistakes = false,
   });
 
   final String id;
   final String name;
   final String? subjectId;
+
+  /// The deck the server fills with every quiz question the student got wrong
+  /// (`0021_study_tools.sql`).
+  final bool isMistakes;
 
   /// Joined from `subjects` when the query embeds it; not a column.
   final String? subjectName;
@@ -42,6 +47,7 @@ class FlashcardDeck {
       due: (stats?['due'] as num?)?.toInt() ??
           (m['due'] as num?)?.toInt() ??
           0,
+      isMistakes: m['is_mistakes'] == true,
     );
   }
 
@@ -49,6 +55,28 @@ class FlashcardDeck {
         'name': name,
         if (subjectId != null) 'subject_id': subjectId,
       };
+
+  /// Row-shaped, so [FlashcardDeck.fromMap] reads it back from the offline
+  /// cache.
+  Map<String, dynamic> toCacheMap() => {
+        'id': id,
+        'name': name,
+        'subject_id': subjectId,
+        'subjects': subjectName == null ? null : {'name': subjectName},
+        'total': total,
+        'due': due,
+        'is_mistakes': isMistakes,
+      };
+
+  FlashcardDeck withDue(int due) => FlashcardDeck(
+        id: id,
+        name: name,
+        subjectId: subjectId,
+        subjectName: subjectName,
+        total: total,
+        due: due,
+        isMistakes: isMistakes,
+      );
 }
 
 /// A row of `flashcards`, including its SM-2 scheduling state.
@@ -107,5 +135,20 @@ class Flashcard {
         'back': back,
         if (unitLabel != null) 'unit_label': unitLabel,
         if (sourceChunkId != null) 'source_chunk_id': sourceChunkId,
+      };
+
+  /// Row-shaped, so [Flashcard.fromMap] reads it back from the offline cache.
+  Map<String, dynamic> toCacheMap() => {
+        'id': id,
+        'deck_id': deckId,
+        'front': front,
+        'back': back,
+        'unit_label': unitLabel,
+        'source_chunk_id': sourceChunkId,
+        'ease': ease,
+        'interval_days': intervalDays,
+        'repetitions': repetitions,
+        'due_at': dueAt.toUtc().toIso8601String(),
+        'last_grade': lastGrade?.db,
       };
 }

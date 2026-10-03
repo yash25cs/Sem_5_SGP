@@ -20,6 +20,18 @@ class TaskRepository {
 
   Future<List<DailyTask>> getTodayTasks() => getTasksForDate(DateTime.now());
 
+  /// Unfinished tasks from today on, soonest first — for the calendar export.
+  Future<List<DailyTask>> getUpcomingTasks({int limit = 200}) async {
+    final rows = await db
+        .from('daily_tasks')
+        .select('*, subjects(name)')
+        .gte('scheduled_date', _dateOnly(DateTime.now()))
+        .eq('done', false)
+        .order('scheduled_date', ascending: true)
+        .limit(limit);
+    return rows.map(DailyTask.fromMap).toList();
+  }
+
   Future<DailyTask> createTask({
     required String title,
     String? goalId,

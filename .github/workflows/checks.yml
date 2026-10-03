@@ -1,0 +1,49 @@
+# Runs on every push to main and every pull request.
+#
+# `flutter analyze` alone is not enough — Days 8–16 passed it and still shipped
+# broken server paths — but it and the test suite are the checks that can run
+# without the Supabase project, so they run on every change.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  flutter:
+    name: Analyze and test the app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studytrail_flutter
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the version the project is developed on; the Android
+      # toolchain sits on this release's minimums (see SETUP.md).
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  migrations:
+    name: all_migrations.sql matches the migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # SETUP.md tells people to paste all_migrations.sql into the SQL editor,
+      # so a migration added without regenerating it would silently be skipped
+      # on every fresh project.
+      - name: Compare
+        run: |
+          cat supabase/migrations/*.sql > /tmp/expected.sql
+          if ! cmp -s /tmp/expected.sql supabase/all_migrations.sql; then
+            echo "::error file=supabase/all_migrations.sql::Out of date. Regenerate it: cat supabase/migrations/*.sql > supabase/all_migrations.sql"
+            exit 1
+          fi

@@ -3,16 +3,28 @@ import {
   interact,
   queryText,
 } from '../_shared/gemini.ts';
-import { HttpError, json, readJson, requireUser, serve } from '../_shared/supa.ts';
+import { languageOf, languageRule } from '../_shared/language.ts';
+import {
+  adminClient,
+  HttpError,
+  json,
+  readJson,
+  requireUser,
+  serve,
+} from '../_shared/supa.ts';
 
 /// Answers a student's question from their own uploaded materials.
 ///
 /// Body: `{ threadId: string, question: string, subjectId?: string }`.
 ///
 /// Both turns are written here rather than on the client: one round trip, and
-/// the question and the answer can't end up interleaved with another send. The
-/// client's `addMessage` survives only as the fallback for a project where this
-/// function isn't deployed.
+/// the question and the answer can't end up interleaved with another send.
+///
+/// They are written with the service-role key, because `0020_hardening.sql`
+/// revokes insert and update on `chat_messages` and `chat_citations` — a client
+/// that could write its own turns could forge "AI" answers and farm the
+/// curious_learner badge. Everything is still read as the caller, the thread is
+/// checked to be theirs first, and every `user_id` comes from the JWT.
 
 /// Excerpts fed to the model. Six is `match_material_chunks`' own default and
 /// fits comfortably in one prompt alongside the recent transcript.
@@ -42,7 +54,10 @@ and suggest uploading the relevant notes. Do not invent a citation.
 - Be direct and concrete. Explain, don't pad. Short paragraphs, and a list only \
 when the content is genuinely a list.
 - No headings, no bold, no preamble like "Great question". Just the answer, as a \
-tutor would say it out loud.`;
+tutor would say it out loud.
+- After the answer, add one final line starting with "FOLLOW-UPS:" and three \
+short questions the student could ask next about this material, separated by \
+" | ". Nothing after that line.`;
 
 serve(async (req) => {
   const { supa, userId } = await requireUser(req);
@@ -76,14 +91,18 @@ serve(async (req) => {
   }
 
   // History before the insert, so the student's new question isn't in it twice.
-  const { data: history } = await supa
-    .from('chat_messages')
-    .select('role, text')
-    .eq('thread_id', threadId)
-    .order('created_at', { ascending: false })
-    .limit(HISTORY_TURNS);
+  const [{ data: history }, lang] = await Promise.all([
+    supa
+      .from('chat_messages')
+      .select('role, text')
+      .eq('thread_id', threadId)
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_TURNS),
+    languageOf(supa, userId),
+  ]);
 
-  const { error: askError } = await supa.from('chat_messages').insert({
+  const admin = adminClient();
+  const { error: askError } = await admin.from('chat_messages').insert({
     user_id: userId,
     thread_id: threadId,
     role: 'user',
@@ -112,18 +131,22 @@ serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const excerpts: any[] = Array.isArray(chunks) ? chunks : [];
 
-  const answer = await interact({
-    systemInstruction: TUTOR_INSTRUCTION,
+  const raw = await interact({
+    systemInstruction: TUTOR_INSTRUCTION + languageRule(lang),
     temperature: 0.3,
     input: buildPrompt(question, excerpts, history ?? []),
     // A tutor's reply, not an essay. Generous enough for a worked example.
-    maxOutputTokens: 2048,
+    // Hindi and Gujarati script take roughly twice the tokens for the same text.
+    maxOutputTokens: lang === 'en' ? 2048 : 4096,
     // The student is watching a typing indicator while this runs, so it fails
     // fast rather than sitting there until the worker is killed.
     budgetMs: 30_000,
   });
+  // The follow-ups ride on the same call rather than costing a second one;
+  // only the answer itself is stored.
+  const { answer, suggestions } = splitFollowUps(raw);
 
-  const { data: reply, error: replyError } = await supa
+  const { data: reply, error: replyError } = await admin
     .from('chat_messages')
     .insert({
       user_id: userId,
@@ -142,7 +165,7 @@ serve(async (req) => {
 
   const cited = citedExcerpts(answer, excerpts);
   if (cited.length > 0) {
-    const { error: citeError } = await supa.from('chat_citations').insert(
+    const { error: citeError } = await admin.from('chat_citations').insert(
       cited.map((chunk) => ({
         user_id: userId,
         message_id: reply.id,
@@ -157,6 +180,8 @@ serve(async (req) => {
 
   return json({
     answer,
+    messageId: reply.id,
+    suggestions,
     citations: cited.map((chunk) => ({
       chunkId: chunk.id,
       materialId: chunk.material_id ?? null,
@@ -164,6 +189,23 @@ serve(async (req) => {
     })),
   });
 });
+
+/// Separates the answer from the trailing `FOLLOW-UPS:` line the tutor is asked
+/// to add. A reply without one is all answer and no suggestions — the chips
+/// are a convenience, never a reason to fail.
+function splitFollowUps(raw: string): { answer: string; suggestions: string[] } {
+  const match = raw.match(/(?:^|\n)[ \t*_]*FOLLOW-?UPS?[*_]*:\s*([\s\S]*)$/i);
+  if (!match || match.index === undefined) {
+    return { answer: raw.trim(), suggestions: [] };
+  }
+  const answer = raw.slice(0, match.index).trim();
+  const suggestions = match[1]
+    .split(/\||\n/)
+    .map((s) => s.trim().replace(/^[-*•\d.)\s]+/, '').trim())
+    .filter((s) => s.length >= 4 && s.length <= 140)
+    .slice(0, 3);
+  return { answer: answer.length > 0 ? answer : raw.trim(), suggestions };
+}
 
 /// Assembles the single text input: recent turns, then numbered excerpts, then
 /// the question.

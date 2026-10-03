@@ -58,7 +58,11 @@ class _QuizScreenState extends State<QuizScreen> {
 
     final ok = await store.finish();
     if (!mounted) return;
-    if (ok) setState(() => _showResults = true);
+    if (ok) {
+      setState(() => _showResults = true);
+      // These answers are new evidence for Home's weak spots.
+      context.read<WeakSpotsStore>().load();
+    }
   }
 
   void _backToList() {
@@ -412,6 +416,33 @@ class _Results extends StatelessWidget {
             ),
           ],
         ),
+        if (total > score) ...[
+          const SizedBox(height: 12),
+          AppCard(
+            color: p.coralSoft,
+            shadow: false,
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Icon(Symbols.replay, color: p.coral, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                      total - score == 1
+                          ? 'The one you missed is now a card in My mistakes, '
+                              'due today.'
+                          : 'The ${total - score} you missed are now cards in '
+                              'My mistakes, due today.',
+                      style: TextStyle(
+                          color: p.coralInk,
+                          fontSize: 13,
+                          height: 1.4,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         PillButton('Back to quizzes', onTap: onDone),
       ],

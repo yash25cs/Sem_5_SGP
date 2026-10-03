@@ -12,7 +12,9 @@ import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
+import '../widgets/playlist_tile.dart';
 import '../widgets/summary_sheet.dart';
+import '../widgets/video_link_sheet.dart';
 
 /// Chat tab — the AI study companion Q&A thread.
 class ChatScreen extends StatefulWidget {
@@ -86,6 +88,16 @@ class _ChatScreenState extends State<ChatScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Turns one answer into real flashcards. The composer chip that used to say
+  /// "Make 5 flashcards" only asked the AI to *type* some into the chat.
+  Future<void> _saveCards(String messageId) async {
+    final store = context.read<ChatStore>();
+    final saved = await store.makeCards(messageId);
+    if (!mounted || saved == null) return;
+    _toast('$saved card${saved == 1 ? '' : 's'} saved to "Saved from chat" — '
+        'find them in Flashcards.');
+  }
+
   /// The materials sheet: what the AI can actually read, and a way to add more.
   ///
   /// It reads [OnboardingStore] because that store already owns the upload →
@@ -149,11 +161,15 @@ class _ChatScreenState extends State<ChatScreen> {
                               color: store.sending ? p.amber : p.green,
                               shape: BoxShape.circle)),
                       const SizedBox(width: 5),
-                      Text(
-                          store.sending
-                              ? 'Thinking…'
-                              : 'Knows your syllabus',
-                          style: TextStyle(color: p.ink3, fontSize: 12)),
+                      Flexible(
+                        child: Text(
+                            store.sending
+                                ? 'Thinking…'
+                                : 'Knows your syllabus',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: p.ink3, fontSize: 12)),
+                      ),
                     ]),
                   ],
                 ),
@@ -192,7 +208,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         if (i == 0) return const _DayChip('Conversation');
                         final message = messages[i - 1];
                         if (message.isPending) return const _TypingBubble();
-                        return _MessageBlock(message: message);
+                        final saveable = !message.isUser &&
+                            !message.id.startsWith('_local_');
+                        return _MessageBlock(
+                          message: message,
+                          cardsPending: store.cardsPending(message.id),
+                          cardsSaved: store.cardsSaved(message.id),
+                          onSaveCards: saveable
+                              ? () => _saveCards(message.id)
+                              : null,
+                        );
                       },
                     ),
         ),
@@ -223,18 +248,32 @@ class _ChatScreenState extends State<ChatScreen> {
                     scrollDirection: Axis.horizontal,
                     padding: EdgeInsets.zero,
                     children: [
-                      for (final (label, icon) in const [
-                        ('Summarize this unit', Symbols.summarize),
-                        ('Make 5 flashcards', Symbols.style),
-                        ('Explain simply', Symbols.lightbulb),
-                      ]) ...[
-                        SoftChip(label,
-                            icon: icon,
-                            tone: ChipTone.neutral,
-                            small: true,
-                            onTap: store.sending ? null : () => _send(label)),
-                        const SizedBox(width: 8),
-                      ],
+                      // After an answer, the tutor's own follow-ups; before
+                      // one, general starters.
+                      if (store.suggestions.isNotEmpty)
+                        for (final label in store.suggestions) ...[
+                          SoftChip(label,
+                              icon: Symbols.subdirectory_arrow_right,
+                              tone: ChipTone.primary,
+                              small: true,
+                              onTap:
+                                  store.sending ? null : () => _send(label)),
+                          const SizedBox(width: 8),
+                        ]
+                      else
+                        for (final (label, icon) in const [
+                          ('Summarize this unit', Symbols.summarize),
+                          ('Explain simply', Symbols.lightbulb),
+                          ('Give me an example', Symbols.tips_and_updates),
+                        ]) ...[
+                          SoftChip(label,
+                              icon: icon,
+                              tone: ChipTone.neutral,
+                              small: true,
+                              onTap:
+                                  store.sending ? null : () => _send(label)),
+                          const SizedBox(width: 8),
+                        ],
                     ],
                   ),
                 ),
@@ -407,18 +446,30 @@ class _EmptyThread extends StatelessWidget {
   }
 }
 
-/// One message plus, for AI answers, its citation chips.
+/// One message plus, for AI answers, its citation chips and a way to keep it
+/// as flashcards.
 class _MessageBlock extends StatelessWidget {
-  const _MessageBlock({required this.message});
+  const _MessageBlock({
+    required this.message,
+    this.cardsPending = false,
+    this.cardsSaved = false,
+    this.onSaveCards,
+  });
 
   final ChatMessage message;
+  final bool cardsPending;
+  final bool cardsSaved;
+
+  /// Null for the student's own messages and for unsaved optimistic ones.
+  final VoidCallback? onSaveCards;
 
   @override
   Widget build(BuildContext context) {
-    if (message.isUser || message.citations.isEmpty) {
-      return _Bubble(text: message.text, me: message.isUser);
+    if (message.isUser) {
+      return _Bubble(text: message.text, me: true);
     }
 
+    final p = context.p;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -435,6 +486,25 @@ class _MessageBlock extends StatelessWidget {
                     icon: Symbols.menu_book,
                     tone: ChipTone.primary,
                     small: true),
+              if (onSaveCards != null)
+                cardsPending
+                    ? SoftChip('Making cards…',
+                        customLeading: SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 1.6, color: p.ink3),
+                        ),
+                        small: true)
+                    : cardsSaved
+                        ? const SoftChip('Saved as cards',
+                            icon: Symbols.check_circle,
+                            tone: ChipTone.green,
+                            small: true)
+                        : SoftChip('Save as flashcards',
+                            icon: Symbols.style,
+                            small: true,
+                            onTap: onSaveCards),
             ],
           ),
         ),
@@ -627,9 +697,9 @@ class _MaterialsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    final materials = context.watch<OnboardingStore>().uploaded;
+    final store = context.watch<OnboardingStore>();
     final ready =
-        materials.where((m) => m.status == IngestStatus.embedded).length;
+        store.uploaded.where((m) => m.status == IngestStatus.embedded).length;
     final needsAttention = ready == 0;
 
     return Stack(
@@ -648,7 +718,8 @@ class _MaterialsButton extends StatelessWidget {
               border: Border.all(color: p.bg, width: 1.6),
             ),
             child: Text(
-              '${materials.length}',
+              // Library items: a playlist counts once, like on its slot.
+              '${store.itemCount}',
               textAlign: TextAlign.center,
               style: const TextStyle(
                   color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
@@ -679,6 +750,20 @@ class _MaterialsSheet extends StatelessWidget {
     }
   }
 
+  Future<void> _snap(BuildContext context) async {
+    final store = context.read<OnboardingStore>();
+    final count = await store.snapAndUpload();
+    final failure = store.error;
+    if (failure != null) {
+      onToast(failure);
+    } else if (count > 0) {
+      onToast('Photo added — ask away once it says Ready');
+    }
+  }
+
+  Future<void> _addVideo(BuildContext context) =>
+      addVideoLink(context, toast: onToast);
+
   Future<void> _retry(BuildContext context, StudyMaterial material) async {
     final store = context.read<OnboardingStore>();
     final ok = await store.reingest(material);
@@ -692,6 +777,25 @@ class _MaterialsSheet extends StatelessWidget {
     final materials = store.uploaded;
     final ready =
         materials.where((m) => m.status == IngestStatus.embedded).length;
+    // A playlist's videos read in the background and hold nothing up.
+    final working = store.busy || store.addingLink;
+
+    Widget tile(StudyMaterial material) => MaterialTile(
+          key: ValueKey(material.id),
+          material: material,
+          onRetry: store.busy ? null : () => _retry(context, material),
+          onRemove: store.busy
+              ? null
+              : () => context.read<OnboardingStore>().removeMaterial(material),
+          onSummarize: () {
+            final nav = Navigator.of(context);
+            final materialId = material.id;
+            final title = material.displayName;
+            nav.pop();
+            SummarySheet.show(nav.context,
+                materialId: materialId, title: title);
+          },
+        );
 
     return SafeArea(
       top: false,
@@ -718,8 +822,8 @@ class _MaterialsSheet extends StatelessWidget {
                                 fontWeight: FontWeight.w800)),
                         const SizedBox(height: 3),
                         Text(
-                            '${materials.length} of '
-                            '${OnboardingStore.maxMaterials} files · '
+                            '${store.itemCount} of '
+                            '${OnboardingStore.maxMaterials} items · '
                             '$ready ready to search',
                             style: TextStyle(color: p.ink3, fontSize: 12.5)),
                       ],
@@ -760,7 +864,7 @@ class _MaterialsSheet extends StatelessWidget {
 
               const SizedBox(height: 14),
               Flexible(
-                child: materials.isEmpty
+                child: !store.hasMaterial
                     ? Padding(
                         padding: const EdgeInsets.symmetric(vertical: 26),
                         child: Column(
@@ -774,8 +878,8 @@ class _MaterialsSheet extends StatelessWidget {
                                     fontWeight: FontWeight.w700)),
                             const SizedBox(height: 4),
                             Text(
-                                'Add your syllabus or notes and I can answer '
-                                'from them.',
+                                'Add your syllabus, notes or a YouTube lecture '
+                                'and I can answer from them.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     color: p.ink3, fontSize: 12.5, height: 1.45)),
@@ -786,27 +890,30 @@ class _MaterialsSheet extends StatelessWidget {
                         padding: EdgeInsets.zero,
                         shrinkWrap: true,
                         children: [
-                          for (final material in materials)
-                            MaterialTile(
-                              material: material,
-                              onRetry: store.busy
+                          for (final playlist in store.playlists)
+                            PlaylistTile(
+                              key: ValueKey(playlist.id),
+                              playlist: playlist,
+                              progress: store.progressOf(playlist),
+                              videos: store.videosOf(playlist),
+                              reading: store.activePlaylistId == playlist.id,
+                              onResume: store.readingPlaylists
                                   ? null
-                                  : () => _retry(context, material),
+                                  : () => context
+                                      .read<OnboardingStore>()
+                                      .resumeImports(),
+                              onRetryFailed: () => context
+                                  .read<OnboardingStore>()
+                                  .retryFailed(playlist),
                               onRemove: store.busy
                                   ? null
                                   : () => context
                                       .read<OnboardingStore>()
-                                      .removeMaterial(material),
-                              onSummarize: () {
-                                final nav = Navigator.of(context);
-                                final materialId = material.id;
-                                final title = material.displayName;
-                                nav.pop();
-                                SummarySheet.show(nav.context,
-                                    materialId: materialId,
-                                    title: title);
-                              },
+                                      .removePlaylist(playlist),
+                              videoBuilder: tile,
                             ),
+                          for (final material in store.standalone)
+                            tile(material),
                         ],
                       ),
               ),
@@ -815,16 +922,43 @@ class _MaterialsSheet extends StatelessWidget {
                 store.atLimit
                     ? 'Limit reached — remove one first'
                     : 'Add a PDF or notes',
-                icon: store.busy ? null : Symbols.upload_file,
+                icon: working ? null : Symbols.upload_file,
                 variant:
                     store.atLimit ? PillVariant.outline : PillVariant.primary,
-                onTap: store.busy || store.atLimit ? null : () => _add(context),
+                onTap: working || store.atLimit ? null : () => _add(context),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: PillButton('Snap notes',
+                        icon: Symbols.photo_camera,
+                        variant: PillVariant.outline,
+                        onTap: working || store.atLimit
+                            ? null
+                            : () => _snap(context)),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: PillButton(
+                        store.addingLink
+                            ? store.linkProgress ?? 'Opening…'
+                            : 'YouTube',
+                        icon: store.addingLink ? null : Symbols.smart_display,
+                        variant: PillVariant.outline,
+                        onTap: working || store.atLimit
+                            ? null
+                            : () => _addVideo(context)),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               // The real ceilings, not the bucket's: `embed-material` refuses a
-              // PDF over 14 MB and a text file over 2 MB, and a file that
-              // uploads but can't be read is worse than one that's refused.
-              Text('PDF up to 14 MB · TXT or MD up to 2 MB',
+              // PDF or photo over 14 MB and a text file over 2 MB, and a file
+              // that uploads but can't be read is worse than one that's refused.
+              Text(
+                  'PDF or photo up to 14 MB · TXT or MD up to 2 MB · '
+                  'YouTube videos or playlists with captions',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: p.ink3, fontSize: 11.5)),
             ],

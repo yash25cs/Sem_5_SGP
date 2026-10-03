@@ -1,14 +1,33 @@
+import '../data/flashcard_cache.dart';
 import '../data/repositories.dart';
 import '../models/models.dart';
 import 'async_store.dart';
 
 /// Backs the Flashcards screen: the deck list and a review session over the
 /// cards that are due.
+///
+/// Works offline. Every online load caches the decks and the cards due in the
+/// next week; with no network, the deck list and review sessions come from that
+/// cache and grades are queued on the phone. The next online load replays the
+/// queue through `apply_sr_grade` in order — so scheduling and XP are still
+/// the server's, just later.
 class FlashcardStore extends AsyncStore {
-  FlashcardStore({FlashcardRepository? cards})
-      : _cards = cards ?? const FlashcardRepository();
+  FlashcardStore({FlashcardRepository? cards, FlashcardCache? cache})
+      : _cards = cards ?? const FlashcardRepository(),
+        _cache = cache ?? const FlashcardCache();
 
   final FlashcardRepository _cards;
+  final FlashcardCache _cache;
+
+  bool _offline = false;
+
+  /// True when the last load or review fell back to the phone's copy.
+  bool get offline => _offline;
+
+  int _pendingSync = 0;
+
+  /// Grades given offline and not yet sent.
+  int get pendingSync => _pendingSync;
 
   List<FlashcardDeck> _decks = const [];
   List<Flashcard> _queue = const [];
@@ -41,16 +60,96 @@ class FlashcardStore extends AsyncStore {
       _queue.isEmpty ? 0 : _index / _queue.length;
 
   Future<void> load() => runLoad(() async {
-        _decks = await _cards.getDecks();
+        try {
+          await _syncPending();
+          _decks = await _cards.getDecks();
+          _offline = false;
+          await _cache.saveDecks(_decks);
+          await _refreshCardCache();
+        } catch (e) {
+          if (!isNetworkError(e)) rethrow;
+          final cached = await _cache.decks();
+          if (cached.isEmpty) rethrow;
+          _decks = await _withCachedDueCounts(cached);
+          _offline = true;
+          _pendingSync = (await _cache.pending()).length;
+        }
       });
 
   /// Starts a review. Omit [deckId] to review everything that's due.
   Future<bool> startSession({String? deckId}) => runMutation(() async {
-        _queue = await _cards.getDueCards(deckId: deckId);
+        try {
+          await _syncPending();
+          _queue = await _cards.getDueCards(deckId: deckId);
+          _offline = false;
+        } catch (e) {
+          if (!isNetworkError(e)) rethrow;
+          _queue = await _cachedDue(deckId);
+          _offline = true;
+          if (_queue.isEmpty) {
+            throw "You're offline, and no due cards are saved on this phone.";
+          }
+        }
         _index = 0;
         _revealed = false;
         _reviewedThisSession = 0;
       });
+
+  Future<void> _refreshCardCache() async {
+    try {
+      await _cache.saveCards(await _cards.getUpcomingCards());
+    } catch (_) {
+      // The previous copy stays; it's a fallback, not a source of truth.
+    }
+  }
+
+  /// Cached cards due by now, minus any already graded offline.
+  Future<List<Flashcard>> _cachedDue(String? deckId) async {
+    final graded = {for (final p in await _cache.pending()) p.cardId};
+    final now = DateTime.now();
+    return (await _cache.cards())
+        .where((c) =>
+            !c.dueAt.isAfter(now) &&
+            !graded.contains(c.id) &&
+            (deckId == null || c.deckId == deckId))
+        .toList()
+      ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+  }
+
+  Future<List<FlashcardDeck>> _withCachedDueCounts(
+      List<FlashcardDeck> decks) async {
+    final due = await _cachedDue(null);
+    return [
+      for (final d in decks)
+        d.withDue(due.where((c) => c.deckId == d.id).length),
+    ];
+  }
+
+  /// Sends queued offline grades, oldest first. Stops (keeping the rest) at
+  /// the first network failure; drops one the server can't apply, like a card
+  /// deleted since.
+  Future<void> _syncPending() async {
+    final queued = await _cache.pending();
+    if (queued.isEmpty) {
+      _pendingSync = 0;
+      return;
+    }
+    final left = [...queued];
+    while (left.isNotEmpty) {
+      try {
+        await _cards.gradeCardId(left.first.cardId, left.first.grade);
+      } catch (e) {
+        if (isNetworkError(e)) {
+          await _cache.savePending(left);
+          _pendingSync = left.length;
+          rethrow;
+        }
+      }
+      left.removeAt(0);
+    }
+    await _cache.savePending(const []);
+    _pendingSync = 0;
+  }
 
   void reveal() {
     if (_revealed) return;
@@ -78,9 +177,24 @@ class FlashcardStore extends AsyncStore {
     notifyListeners();
 
     final ok = await runMutation(() async {
-      await _cards.gradeCard(card, grade);
+      try {
+        await _cards.gradeCard(card, grade);
+      } catch (e) {
+        if (!isNetworkError(e)) rethrow;
+        // No signal: keep the grade on the phone and move on. It's sent the
+        // next time the deck list loads online.
+        final queued = [
+          ...await _cache.pending(),
+          PendingGrade(cardId: card.id, grade: grade),
+        ];
+        await _cache.savePending(queued);
+        _pendingSync = queued.length;
+        _offline = true;
+      }
       if (sessionFinished) {
-        _decks = await _cards.getDecks();
+        _decks = _offline
+            ? await _withCachedDueCounts(_decks)
+            : await _cards.getDecks();
       }
     });
 

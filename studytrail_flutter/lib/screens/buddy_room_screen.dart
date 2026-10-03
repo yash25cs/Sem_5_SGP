@@ -108,13 +108,11 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     }
   }
 
-  /// Opens modal sheet to configure and create a new study room.
+  /// Asks for a name and how many people; the timer is set inside the room.
   Future<void> _showCreateRoomSheet() async {
     final p = context.p;
     final nameController = TextEditingController(text: 'Study Session');
-    int selectedTimer = 25;
-    int selectedBreak = 5;
-    int maxMembers = 8;
+    int maxMembers = 4;
     String? sheetError;
 
     final created = await showModalBottomSheet<StudyRoom>(
@@ -188,83 +186,42 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Focus Duration
-              Text('Focus Duration',
+              // Room size. Focus and break lengths are set inside the room.
+              Text('How many people?',
                   style: TextStyle(
                       color: p.ink2,
                       fontSize: 13,
                       fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text('Including you. Up to 6 in a room.',
+                  style: TextStyle(color: p.ink3, fontSize: 12)),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  for (final min in [25, 45, 50]) ...[
+                  for (final n in RoomStore.roomSizes) ...[
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => setModalState(() => selectedTimer = min),
+                        key: ValueKey('room-size-$n'),
+                        onTap: () => setModalState(() => maxMembers = n),
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           decoration: BoxDecoration(
-                            color: selectedTimer == min
-                                ? p.primary
-                                : p.card2,
+                            color: maxMembers == n ? p.primary : p.card2,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           alignment: Alignment.center,
                           child: Text(
-                            '$min min',
+                            '$n',
                             style: TextStyle(
-                              color: selectedTimer == min
-                                  ? Colors.white
-                                  : p.ink2,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
+                              color: maxMembers == n ? Colors.white : p.ink2,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
                             ),
                           ),
                         ),
                       ),
                     ),
-                    if (min != 50) const SizedBox(width: 8),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Break Duration
-              Text('Break Duration',
-                  style: TextStyle(
-                      color: p.ink2,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  for (final min in [5, 10, 15]) ...[
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setModalState(() => selectedBreak = min),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: selectedBreak == min
-                                ? p.amber
-                                : p.card2,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            '$min min',
-                            style: TextStyle(
-                              color: selectedBreak == min
-                                  ? p.onAmber
-                                  : p.ink2,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (min != 15) const SizedBox(width: 8),
+                    if (n != RoomStore.roomSizes.last) const SizedBox(width: 8),
                   ],
                 ],
               ),
@@ -295,8 +252,6 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   final room = await store.createRoom(
                     name: name,
                     classId: classId,
-                    timerMin: selectedTimer,
-                    breakMin: selectedBreak,
                     maxMembers: maxMembers,
                   );
 
@@ -528,19 +483,25 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Symbols.sensors, size: 20, color: p.green),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Active Study Rooms',
-                            style: TextStyle(
-                              color: p.ink,
-                              fontSize: 16.5,
-                              fontWeight: FontWeight.w800,
+                      Flexible(
+                        child: Row(
+                          children: [
+                            Icon(Symbols.sensors, size: 20, color: p.green),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                'Active Study Rooms',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.ink,
+                                  fontSize: 16.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                       if (activeRooms.isNotEmpty)
                         Container(
@@ -623,19 +584,25 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Symbols.school, size: 20, color: p.primary),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Your Class Cohort',
-                            style: TextStyle(
-                              color: p.ink,
-                              fontSize: 16.5,
-                              fontWeight: FontWeight.w800,
+                      Flexible(
+                        child: Row(
+                          children: [
+                            Icon(Symbols.school, size: 20, color: p.primary),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                'Your Class Cohort',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.ink,
+                                  fontSize: 16.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                       if (joined)
                         TextButton(

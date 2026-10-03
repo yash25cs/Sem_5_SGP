@@ -13,6 +13,7 @@ import 'state/stores.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import 'widgets/data_states.dart';
+import 'widgets/launch_splash.dart';
 import 'widgets/timer_banner.dart';
 import 'shell.dart';
 import 'data/repositories/profile_repository.dart';
@@ -125,6 +126,13 @@ class _RootFlowState extends State<RootFlow> {
   /// may run first is a second round trip.
   static const _entryProbeTimeout = Duration(seconds: 10);
 
+  /// The splash's entrance runs about a second. Landing sooner cut it off
+  /// mid-flight, which looked like a glitch rather than a quick start, so the
+  /// first landing waits for it. Later checks — after signing in — are long
+  /// past it and don't wait at all.
+  final Future<void> _splashShown =
+      Future.delayed(const Duration(milliseconds: 1200));
+
   @override
   void initState() {
     super.initState();
@@ -141,6 +149,7 @@ class _RootFlowState extends State<RootFlow> {
       return;
     }
     final seenWelcome = await LocalPrefs.hasSeenWelcome();
+    await _splashShown;
     if (!mounted) return;
     setState(() {
       _resolving = false;
@@ -183,6 +192,10 @@ class _RootFlowState extends State<RootFlow> {
     var next = _Stage.academic;
     String? failure;
     var offline = false;
+    // Best effort: the server assumes India until it hears otherwise.
+    const ProfileRepository()
+        .setUtcOffset(DateTime.now().timeZoneOffset)
+        .catchError((_) {});
     try {
       final profile = await const ProfileRepository()
           .getMyProfile()
@@ -208,6 +221,7 @@ class _RootFlowState extends State<RootFlow> {
       offline = isNetworkError(e);
     }
 
+    await _splashShown;
     if (!mounted) return;
     setState(() {
       _resolving = false;
@@ -238,22 +252,25 @@ class _RootFlowState extends State<RootFlow> {
       }
     }
 
-    if (_resolving) return const _SplashScreen();
+    if (_resolving) return _transition(const LaunchSplash(), 'splash');
 
     // Before the stage switch: with no goal read there is nothing to show, and
     // an empty shell whose every request fails is worse than saying so once.
     final failure = _failure;
     if (failure != null) {
-      return ErrorScreen(
-        message: failure,
-        offline: _failureIsOffline,
-        onRetry: _resolveEntryStage,
-        // Only when the server answered with something wrong — retrying that
-        // can't help, and a different account might. Offline it would work but
-        // lead nowhere: signing back in needs the network that just failed.
-        secondaryLabel: _failureIsOffline ? null : 'Sign out',
-        onSecondary: _failureIsOffline ? null : () => auth.signOut(),
-      );
+      return _transition(
+          ErrorScreen(
+            message: failure,
+            offline: _failureIsOffline,
+            onRetry: _resolveEntryStage,
+            // Only when the server answered with something wrong — retrying
+            // that can't help, and a different account might. Offline it
+            // would work but lead nowhere: signing back in needs the network
+            // that just failed.
+            secondaryLabel: _failureIsOffline ? null : 'Sign out',
+            onSecondary: _failureIsOffline ? null : () => auth.signOut(),
+          ),
+          'failure');
     }
 
     // Guard: never show post-auth stages without a session. Sign-in, not the
@@ -296,19 +313,23 @@ class _RootFlowState extends State<RootFlow> {
       _Stage.app => const HomeShell(),
     };
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      transitionBuilder: (child, anim) => FadeTransition(
-        opacity: anim,
-        child: SlideTransition(
-          position: Tween(begin: const Offset(0.04, 0), end: Offset.zero)
-              .animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
-          child: child,
-        ),
-      ),
-      child: KeyedSubtree(key: ValueKey(_stage), child: child),
-    );
+    return _transition(child, _stage);
   }
+
+  /// Every screen RootFlow shows goes through one switcher — the splash
+  /// included, so it fades into the app instead of cutting to it.
+  Widget _transition(Widget child, Object key) => AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween(begin: const Offset(0.04, 0), end: Offset.zero)
+                .animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+            child: child,
+          ),
+        ),
+        child: KeyedSubtree(key: ValueKey(key), child: child),
+      );
 }
 
 /// Holds the data stores for the signed-in session.
@@ -341,21 +362,13 @@ class _SignedInScope extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => PomodoroStore()),
         ChangeNotifierProvider(create: (_) => RoomStore()),
         ChangeNotifierProvider(create: (_) => OnboardingStore()),
+        ChangeNotifierProvider(create: (_) => WeakSpotsStore()),
+        ChangeNotifierProvider(create: (_) => ExamPapersStore()),
+        ChangeNotifierProvider(create: (_) => AnswerPracticeStore()),
+        ChangeNotifierProvider(create: (_) => WeeklyReportStore()),
+        ChangeNotifierProvider(create: (_) => DoubtStore()),
       ],
       child: child,
-    );
-  }
-}
-
-class _SplashScreen extends StatelessWidget {
-  const _SplashScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.p;
-    return Scaffold(
-      backgroundColor: p.bg,
-      body: Center(child: CircularProgressIndicator(color: p.primary)),
     );
   }
 }

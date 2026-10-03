@@ -11,10 +11,12 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
 import '../widgets/nav.dart';
+import '../widgets/playlist_tile.dart';
 import '../widgets/summary_sheet.dart';
+import '../widgets/video_link_sheet.dart';
 
 /// Onboarding step 2 — pick a source type, then upload real files (or paste a
-/// link). Files land in the private `materials` bucket + `materials` table, and
+/// YouTube video or playlist, read in through its captions). Files land in the private `materials` bucket + `materials` table, and
 /// the `embed-material` function reads each one straight away, so the row's chip
 /// moves Uploaded → Processing → Ready without leaving this screen.
 class UploadMaterialScreen extends StatefulWidget {
@@ -45,7 +47,7 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
     (
       Symbols.smart_display,
       'Video / playlist',
-      'Lecture recordings or YouTube',
+      'YouTube lectures or a whole playlist',
       MaterialType.videoLink
     ),
   ];
@@ -82,6 +84,19 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
     }
   }
 
+  /// Photographs a page of notes; the AI reads handwriting like a scanned PDF.
+  Future<void> _snap({required bool fromCamera}) async {
+    final store = context.read<OnboardingStore>();
+    final count = await store.snapAndUpload(fromCamera: fromCamera);
+    if (!mounted) return;
+    final failure = store.error;
+    if (failure != null) {
+      _toast(failure);
+    } else if (count > 0) {
+      _toast('Photo added — reading your notes');
+    }
+  }
+
   /// Retries a row that came back `failed` — a Gemini hiccup, a missing key, or
   /// a file it couldn't read.
   Future<void> _retry(StudyMaterial material) async {
@@ -91,76 +106,21 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
     _toast(ok ? 'Reading it again…' : store.error ?? 'Could not read that file');
   }
 
-  /// Video links have nothing to upload — they're recorded as a row so a later
-  /// phase can fetch the transcript. Nothing reads them yet, which the sheet and
-  /// the drop zone both say out loud.
-  Future<void> _addLink() async {
-    final controller = TextEditingController();
-    final p = context.p;
+  /// A YouTube video or playlist is read in through its captions; any other
+  /// link is kept as a bookmark. See [addVideoLink].
+  Future<void> _addLink() => addVideoLink(context, toast: _toast);
 
-    final url = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: p.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.fromLTRB(
-            20, 20, 20, MediaQuery.of(sheetContext).viewInsets.bottom + 24),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Add a video or article link',
-                  style: TextStyle(
-                      color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 14),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: TextInputType.url,
-                style: TextStyle(color: p.ink, fontSize: 14.5),
-                onSubmitted: (v) => Navigator.of(sheetContext).pop(v.trim()),
-                decoration: InputDecoration(
-                  hintText: 'https://youtube.com/…',
-                  hintStyle: TextStyle(color: p.ink3, fontSize: 14),
-                  filled: true,
-                  fillColor: p.card2,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 14),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide(color: p.line),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide(color: p.line),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide(color: p.primary, width: 1.6),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              PillButton('Add link',
-                  icon: Symbols.link,
-                  onTap: () =>
-                      Navigator.of(sheetContext).pop(controller.text.trim())),
-            ],
-          ),
-        ),
-      ),
-    );
-    controller.dispose();
-
-    if (url == null || url.isEmpty || !mounted) return;
+  /// One file or video row — playlists build theirs through this too.
+  Widget _tile(StudyMaterial material) {
     final store = context.read<OnboardingStore>();
-    final ok = await store.addLink(url);
-    _toast(ok ? 'Link added' : store.error ?? 'Could not add that link');
+    return MaterialTile(
+      key: ValueKey(material.id),
+      material: material,
+      onRetry: store.busy ? null : () => _retry(material),
+      onRemove: store.busy ? null : () => store.removeMaterial(material),
+      onSummarize: () => SummarySheet.show(context,
+          materialId: material.id, title: material.displayName),
+    );
   }
 
   @override
@@ -168,6 +128,9 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
     final p = context.p;
     final store = context.watch<OnboardingStore>();
     final isLink = _type == MaterialType.videoLink;
+    // Adds wait for an upload or a link being opened. A playlist's videos are
+    // read in the background afterwards and hold nothing up.
+    final working = store.busy || store.addingLink;
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -222,28 +185,56 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
 
                 _DropZone(
                   isLink: isLink,
-                  busy: store.busy,
-                  // A link has nothing to store, so the file cap doesn't apply
-                  // to it.
-                  atLimit: !isLink && store.atLimit,
-                  onTap: store.busy || (!isLink && store.atLimit)
+                  busy: working,
+                  progress: store.linkProgress,
+                  // A single video takes a slot like a file; a whole playlist
+                  // takes one slot however long it is.
+                  atLimit: store.atLimit,
+                  onTap: working || store.atLimit
                       ? null
                       : (isLink ? _addLink : _browse),
                 ),
 
+                if (!isLink) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: PillButton('Take a photo',
+                            icon: Symbols.photo_camera,
+                            variant: PillVariant.outline,
+                            onTap: working || store.atLimit
+                                ? null
+                                : () => _snap(fromCamera: true)),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: PillButton('From gallery',
+                            icon: Symbols.photo_library,
+                            variant: PillVariant.outline,
+                            onTap: working || store.atLimit
+                                ? null
+                                : () => _snap(fromCamera: false)),
+                      ),
+                    ],
+                  ),
+                ],
+
                 if (isLink) ...[
                   const SizedBox(height: 10),
-                  // Said here rather than discovered later: the row will sit on
-                  // "Uploaded" forever, and that shouldn't look like a bug.
+                  // Said up front, so a skipped video isn't a surprise.
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(Symbols.info, color: p.ink3, size: 16),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                            "Links are saved to your library, but the AI can't "
-                            'read them yet — upload a PDF or a text file for '
-                            'answers from your own material.',
+                            'Videos are read from their captions, so one '
+                            "without captions can't be added. A whole playlist "
+                            'counts as one item and is read in the background '
+                            '— up to ${OnboardingStore.maxPlaylistVideos} '
+                            'videos. Other links are saved as bookmarks only.',
                             style: TextStyle(
                                 color: p.ink3, fontSize: 12, height: 1.45)),
                       ),
@@ -251,32 +242,42 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
                   ),
                 ],
 
-                if (store.uploaded.isNotEmpty) ...[
+                if (store.hasMaterial) ...[
                   const SizedBox(height: 22),
-                  CardHeader('Added (${store.uploaded.length}'
+                  CardHeader('Added (${store.itemCount}'
                       ' of ${OnboardingStore.maxMaterials})'),
-                  for (final material in store.uploaded)
-                    MaterialTile(
-                      material: material,
-                      onRetry: store.busy ? null : () => _retry(material),
+                  for (final playlist in store.playlists)
+                    PlaylistTile(
+                      key: ValueKey(playlist.id),
+                      playlist: playlist,
+                      progress: store.progressOf(playlist),
+                      videos: store.videosOf(playlist),
+                      reading: store.activePlaylistId == playlist.id,
+                      onResume: store.readingPlaylists
+                          ? null
+                          : () => context
+                              .read<OnboardingStore>()
+                              .resumeImports(),
+                      onRetryFailed: () => context
+                          .read<OnboardingStore>()
+                          .retryFailed(playlist),
                       onRemove: store.busy
                           ? null
                           : () => context
                               .read<OnboardingStore>()
-                              .removeMaterial(material),
-                      onSummarize: () => SummarySheet.show(context,
-                          materialId: material.id,
-                          title: material.displayName),
+                              .removePlaylist(playlist),
+                      videoBuilder: _tile,
                     ),
+                  for (final material in store.standalone) _tile(material),
                 ],
               ],
             ),
           ),
           FooterBar(
             child: PillButton(
-                store.uploaded.isEmpty ? 'Skip for now' : 'Continue',
+                store.hasMaterial ? 'Continue' : 'Skip for now',
                 trailingIcon: Symbols.arrow_forward,
-                variant: store.uploaded.isEmpty
+                variant: !store.hasMaterial
                     ? PillVariant.outline
                     : PillVariant.primary,
                 onTap: store.busy ? null : widget.onNext),
@@ -356,12 +357,16 @@ class _DropZone extends StatelessWidget {
   const _DropZone({
     required this.isLink,
     required this.busy,
+    this.progress,
     this.atLimit = false,
     this.onTap,
   });
 
   final bool isLink;
   final bool busy;
+
+  /// What a running YouTube import is doing, shown in place of "Uploading…".
+  final String? progress;
   final bool atLimit;
   final VoidCallback? onTap;
 
@@ -391,20 +396,20 @@ class _DropZone extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
                 busy
-                    ? 'Uploading…'
+                    ? progress ?? 'Uploading…'
                     : atLimit
                         ? 'File limit reached'
                         : isLink
-                            ? 'Paste a video or article link'
+                            ? 'Paste a YouTube video or playlist'
                             : 'Tap to choose files',
                 style: TextStyle(
                     color: p.ink, fontSize: 14.5, fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
             Text(
-                atLimit && !isLink
+                atLimit
                     ? 'Remove one below to add another'
                     : isLink
-                        ? 'Saved for later — links are not read yet'
+                        ? 'The AI reads each video from its captions'
                         // 25 MB is the bucket's limit, not the reader's:
                         // `embed-material` refuses a PDF over 14 MB and a text
                         // file over 2 MB, so promising 25 would upload files

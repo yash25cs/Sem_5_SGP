@@ -1,9 +1,9 @@
-import { interact, parseJsonObject } from '../_shared/gemini.ts';
 import {
   loadMaterialSource,
-  numberedSource,
-  sampleChunks,
+  loadMockSource,
+  loadWeakSource,
 } from '../_shared/material.ts';
+import { writeQuiz } from '../_shared/quiz.ts';
 import {
   adminClient,
   HttpError,
@@ -13,10 +13,17 @@ import {
   serve,
 } from '../_shared/supa.ts';
 
-/// Writes a multiple-choice quiz from one material the student picked.
+/// Writes a multiple-choice quiz from one material the student picked, or from
+/// the units they keep getting wrong.
 ///
-/// Body: `{ materialId: string, length?: 5 | 10 | 15 }`. The caller is taken
-/// from the JWT, never from the body — see `requireUser`.
+/// Body: `{ materialId: string, length?: 5 | 10 | 15 }`, or
+/// `{ weak: true, length? }` to draw from `get_weak_topics` instead, or
+/// `{ mock: true, length? }` for a mock exam weighted toward the units past
+/// papers ask about most. The caller is taken from the JWT, never from the
+/// body — see `requireUser`.
+///
+/// Every question records the excerpt it was written from and that excerpt's
+/// unit, which is what lets `get_weak_topics` rank units by quiz misses.
 ///
 /// Two clients, deliberately. Reads and the ownership check go through the
 /// caller's own token so RLS decides what is theirs; only the two inserts use
@@ -31,101 +38,54 @@ const DEFAULT_LENGTH = 10;
 /// individual malformed questions rather than failing the whole batch.
 const MIN_QUESTIONS = 3;
 
-/// Output budget. A question with four options and an explanation runs about
-/// 200 tokens; the rest is JSON scaffolding and headroom.
-const TOKENS_PER_QUESTION = 320;
-const TOKENS_BASE = 900;
-
-const QUIZ_SCHEMA = {
-  type: 'object',
-  properties: {
-    title: { type: 'string' },
-    questions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          question: { type: 'string' },
-          options: { type: 'array', items: { type: 'string' } },
-          correct_index: { type: 'integer' },
-          explanation: { type: 'string' },
-        },
-        required: ['question', 'options', 'correct_index'],
-      },
-    },
-  },
-  required: ['questions'],
-};
-
-const QUIZ_INSTRUCTION = `You write exam-style multiple-choice questions from a \
-student's own study material.
-
-Rules:
-- Every question must be answerable from the excerpts alone. Do not test \
-anything the excerpts don't state.
-- Exactly four options per question. One is correct; the other three are wrong \
-but plausible — a misremembered definition, a swapped term, a near-miss number. \
-Never "all of the above" or "none of the above".
-- correct_index is the 0-based position of the correct option. Vary it; do not \
-put the answer first every time.
-- explanation is one or two sentences saying why the answer is right, in the \
-material's own terms.
-- Spread the questions across the excerpts you were given, not just the first \
-few. Prefer definitions, distinctions, causes and worked steps over trivia like \
-a page number or a figure caption.
-- Questions must stand alone. No "according to the text" or "in excerpt [2]".
-- title is a short name for the quiz, like "Unit 3 — Normalisation".`;
-
-interface Question {
-  question: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string | null;
-}
-
 serve(async (req) => {
   const { supa, userId } = await requireUser(req);
   const body = await readJson(req);
 
+  const weak = body.weak === true;
+  const mock = body.mock === true;
   const materialId = typeof body.materialId === 'string'
     ? body.materialId.trim()
     : '';
-  if (materialId.length === 0) {
+  if (!weak && !mock && materialId.length === 0) {
     throw new HttpError(400, 'That request was malformed.');
   }
-  const wanted = pickLength(body.length);
+  // A mock exam defaults to the long form; practice quizzes to the middle.
+  const wanted = mock && body.length === undefined ? 15 : pickLength(body.length);
 
-  const source = await loadMaterialSource(supa, materialId);
-  const chunks = sampleChunks(source.chunks);
-
-  // Trim the material further for quiz generation — shorter prompts respond
-  // faster and stay well inside the model's comfort zone.
-  const trimmedChunks = sampleChunks(chunks, 40_000);
-
-  const raw = await interact({
-    systemInstruction: QUIZ_INSTRUCTION,
-    // Some invention is the point here — the three wrong options have to be
-    // written, not copied. Low enough that the right one stays faithful.
-    temperature: 0.4,
-    schema: QUIZ_SCHEMA,
-    input: `Material: ${source.title}\n\n`
-      + `Write exactly ${wanted} questions from these excerpts.\n\n`
-      + `${numberedSource(trimmedChunks)}`,
-    maxOutputTokens: TOKENS_BASE + wanted * TOKENS_PER_QUESTION,
-    // 120 s total budget, 55 s per attempt — gives the retry loop room for
-    // a second try on a transient 503 or timeout, well inside the client's
-    // 180 s function budget (D-018).
-    budgetMs: 120_000,
-    attemptMs: 55_000,
+  const weakSource = weak ? await loadWeakSource(supa) : null;
+  const mockSource = mock ? await loadMockSource(supa) : null;
+  const source = weakSource ?? mockSource ??
+    await loadMaterialSource(supa, materialId);
+  const quizMaterialId = weakSource
+    ? weakSource.materialId
+    : mockSource
+    ? null
+    : materialId;
+  // Real past questions steer the new ones toward what this exam actually asks.
+  const styleGuide = mockSource && mockSource.examples.length > 0
+    ? 'Past exam questions on these topics, for style and emphasis only — '
+      + 'write new multiple-choice questions, do not copy these:\n'
+      + mockSource.examples.map((e) => `- ${e}`).join('\n') + '\n\n'
+    : '';
+  const written = await writeQuiz({
+    sourceTitle: source.title,
+    chunks: source.chunks,
+    wanted,
+    styleGuide,
   });
-
-  const parsed = parseQuiz(raw);
-  const questions = keepValid(parsed.questions).slice(0, wanted);
+  const questions = written.questions;
+  // Weak-spots and mock quizzes are named for what they are, not by the model.
+  const title = weakSource || mockSource
+    ? source.title
+    : quizTitle(written.modelTitle, source.title);
 
   if (questions.length < MIN_QUESTIONS) {
     console.error(
-      `Only ${questions.length} of ${parsed.questions.length} questions were `
-        + `usable for material ${materialId}`,
+      `Only ${questions.length} of ${written.offered} questions were `
+        + `usable for ${
+          weak ? 'weak spots' : mock ? 'a mock exam' : `material ${materialId}`
+        }`,
     );
     throw new HttpError(
       502,
@@ -142,8 +102,11 @@ serve(async (req) => {
     .from('quizzes')
     .insert({
       user_id: userId,
-      title: quizTitle(parsed.title, source.title),
+      title,
       length: questions.length,
+      material_id: quizMaterialId,
+      // Exam conditions: a little longer per question than practice.
+      ...(mock ? { timer_sec: 45 } : {}),
     })
     .select('id')
     .single();
@@ -160,6 +123,8 @@ serve(async (req) => {
       options: q.options,
       correct_index: q.correctIndex,
       explanation: q.explanation,
+      unit_label: q.unitLabel,
+      source_chunk_id: q.sourceChunkId,
       order_index: index,
       // `xp_reward` keeps its default 10 — the client reads it, so a generator
       // setting it would be the same self-certification the revokes prevent.
@@ -176,7 +141,7 @@ serve(async (req) => {
   return json({
     quizId: quiz.id,
     questions: questions.length,
-    title: quizTitle(parsed.title, source.title),
+    title,
   });
 });
 
@@ -194,62 +159,6 @@ function pickLength(value: unknown): number {
       Math.abs(option - asked) < Math.abs(best - asked) ? option : best,
     DEFAULT_LENGTH,
   );
-}
-
-interface ParsedQuiz {
-  title: string | null;
-  // deno-lint-ignore no-explicit-any
-  questions: any[];
-}
-
-function parseQuiz(raw: string): ParsedQuiz {
-  // `interact` was given a schema, so this should be plain JSON —
-  // `parseJsonObject` covers the case where it arrives fenced anyway, and turns
-  // an unreadable answer into a 502 the student can act on.
-  const parsed = parseJsonObject(raw);
-  return {
-    title: typeof parsed.title === 'string' ? parsed.title : null,
-    questions: Array.isArray(parsed.questions) ? parsed.questions : [],
-  };
-}
-
-/// Keeps the questions Postgres will actually accept.
-///
-/// `quiz_questions` has `check (array_length(options,1) = 4)` and `check
-/// (correct_index between 0 and 3)`, and a batch insert is one statement — so a
-/// single malformed question would take the other fourteen with it. Dropping it
-/// here costs one question; not dropping it costs the quiz.
-// deno-lint-ignore no-explicit-any
-function keepValid(items: any[]): Question[] {
-  const kept: Question[] = [];
-
-  for (const item of items) {
-    const question = text(item?.question);
-    const options = Array.isArray(item?.options)
-      ? item.options.map(text).filter((o: string) => o.length > 0)
-      : [];
-    const correctIndex = Number(item?.correct_index);
-
-    if (question.length === 0 || options.length !== 4) continue;
-    if (!Number.isInteger(correctIndex)) continue;
-    if (correctIndex < 0 || correctIndex > 3) continue;
-    // Two identical options mean one of them is silently also correct.
-    if (new Set(options).size !== 4) continue;
-
-    const explanation = text(item?.explanation);
-    kept.push({
-      question,
-      options,
-      correctIndex,
-      explanation: explanation.length > 0 ? explanation : null,
-    });
-  }
-
-  return kept;
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 /// The model's title when it wrote one, the file's name otherwise.

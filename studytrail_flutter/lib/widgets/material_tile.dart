@@ -34,6 +34,9 @@ class MaterialTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.p;
     final isLink = material.sourceType == MaterialType.videoLink;
+    // A YouTube video has its transcript stored behind it; a bare link is a
+    // bookmark the AI never reads.
+    final isVideo = isLink && material.storagePath != null;
 
     final (statusColor, statusTone) = switch (material.status) {
       IngestStatus.embedded => (p.green, ChipTone.green),
@@ -48,7 +51,12 @@ class MaterialTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
-            IconTile(isLink ? Symbols.link : Symbols.description,
+            IconTile(
+                isVideo
+                    ? Symbols.smart_display
+                    : isLink
+                        ? Symbols.link
+                        : Symbols.description,
                 bg: statusColor.withValues(alpha: 0.14),
                 fg: statusColor,
                 size: 40,
@@ -74,8 +82,8 @@ class MaterialTile extends StatelessWidget {
             if (material.status == IngestStatus.embedded &&
                 onSummarize != null)
               RoundIconButton(Symbols.summarize, onTap: onSummarize),
-            // Retry only on `failed`: nothing else is stuck. A link never leaves
-            // `uploaded`, so it correctly gets no retry either.
+            // Retry only on `failed`: nothing else is stuck. A bookmark link
+            // never leaves `uploaded`, so it correctly gets no retry either.
             if (material.status == IngestStatus.failed)
               RoundIconButton(Symbols.refresh, onTap: onRetry),
             RoundIconButton(Symbols.close, onTap: onRemove),

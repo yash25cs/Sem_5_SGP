@@ -37,7 +37,12 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
   }
 
   Future<void> _grade(SrGrade grade) async {
-    await context.read<FlashcardStore>().grade(grade);
+    final store = context.read<FlashcardStore>();
+    await store.grade(grade);
+    // A finished session changes which units count as weak on Home.
+    if (mounted && store.current == null) {
+      context.read<WeakSpotsStore>().load();
+    }
   }
 
   Future<void> _startSession({String? deckId, String? deckName}) async {
@@ -137,6 +142,33 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
             ErrorNotice(
               message: store.error!,
               onRetry: () => context.read<FlashcardStore>().load(),
+            ),
+
+          if (store.offline || store.pendingSync > 0)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: context.p.card2,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Icon(Symbols.cloud_off, size: 18, color: context.p.ink2),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      [
+                        if (store.offline) 'Offline — reviewing cards saved on this phone.',
+                        if (store.pendingSync > 0)
+                          '${store.pendingSync} grade${store.pendingSync == 1 ? '' : 's'} '
+                              "will sync when you're back online.",
+                      ].join(' '),
+                      style: TextStyle(color: context.p.ink2, fontSize: 12.5),
+                    ),
+                  ),
+                ],
+              ),
             ),
 
           if (inSession) ...[
@@ -250,7 +282,11 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
               onAction: store.busy ? null : _generate,
             )
           else
-            for (final deck in store.decks)
+            // The mistakes deck first: it's the one most worth a few minutes.
+            for (final deck in [
+              ...store.decks.where((d) => d.isMistakes),
+              ...store.decks.where((d) => !d.isMistakes),
+            ])
               _DeckRow(
                 deck: deck,
                 onTap: () =>
@@ -481,10 +517,13 @@ class _DeckRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    final style = SubjectStyle.of(
+    final subject = SubjectStyle.of(
       context,
       name: deck.subjectName ?? deck.name,
     );
+    final style = deck.isMistakes
+        ? (icon: Symbols.replay, color: p.coral)
+        : (icon: subject.icon, color: subject.color);
 
     return InkWell(
       onTap: onTap,
@@ -518,7 +557,9 @@ class _DeckRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                       [
-                        if ((deck.subjectName ?? '').isNotEmpty)
+                        if (deck.isMistakes)
+                          'Questions you got wrong'
+                        else if ((deck.subjectName ?? '').isNotEmpty)
                           deck.subjectName!,
                         '${deck.total} card${deck.total == 1 ? '' : 's'}',
                       ].join(' · '),

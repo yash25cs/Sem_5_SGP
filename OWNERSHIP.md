@@ -12,6 +12,7 @@ or changing any feature, be able to explain the path below in your own words.
 | `studytrail_flutter/lib/data/repositories/` | Supabase reads, writes, RPC calls, data mapping | UI state or API secrets |
 | `studytrail_flutter/lib/models/` | Typed app data and database mapping | Network calls |
 | `studytrail_flutter/lib/services/` | Device-only capabilities — the local daily reminder | Supabase calls or user data |
+| `studytrail_flutter/lib/data/flashcard_cache.dart` | The offline copy of decks, due cards and queued grades, per student | Scheduling — grades are only queued; `apply_sr_grade` decides |
 | `studytrail_flutter/lib/data/local_prefs.dart` | Per-install preferences (welcome seen, timer presets, reminder on/off) | Anything the student owns — XP, purchases, progress belong in Postgres |
 | `studytrail_flutter/lib/theme/` and `lib/widgets/` | Shared visual language and reusable UI | Feature-specific persistence |
 | `supabase/migrations/` | Database tables, RLS, RPCs, triggers, storage policy | Flutter UI behaviour |
@@ -63,9 +64,10 @@ chunks, uses the server-side Gemini secret, and saves a traceable response.
 For study rooms, the store also listens:
 
 ```text
-RoomStore subscribes to Realtime channel room:<id>
+RoomStore subscribes to the private Realtime channel room:<id> (members only)
   -> broadcast "timer" from the host  -> members mirror the countdown
   -> broadcast "room" closed          -> members are told and leave
+  -> broadcast "quiz" {quiz_id}       -> everyone re-reads the group quiz
   -> presence                         -> who is online, focusing or on a break
   -> postgres_changes on room_messages -> chat, filtered by RLS per subscriber
 ```

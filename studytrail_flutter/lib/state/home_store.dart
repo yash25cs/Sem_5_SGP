@@ -1,5 +1,6 @@
 import '../data/repositories.dart';
 import '../models/models.dart';
+import '../services/home_widget_sync.dart';
 import 'async_store.dart';
 
 /// What [HomeStore.planDayFromRoadmap] managed to do, so Home can say something
@@ -51,6 +52,11 @@ class HomeStore extends AsyncStore {
   List<Subject> _subjects = const [];
   int _plannedCount = 0;
   String? _plannedFrom;
+  RoadmapPace? _pace;
+
+  /// Pace against the active goal's roadmap; null before it loads or when the
+  /// project predates `0015_catch_up.sql`.
+  RoadmapPace? get pace => _pace;
 
   Profile? get profile => _profile;
 
@@ -64,6 +70,24 @@ class HomeStore extends AsyncStore {
   Streak get streak => _streak;
   List<DailyTask> get tasks => _tasksToday;
   List<Subject> get subjects => _subjects;
+
+  /// The soonest subject exam still ahead (today counts), for the hero card.
+  Subject? get nextExam {
+    final upcoming = [
+      for (final s in _subjects)
+        if ((s.daysUntilExam() ?? -1) >= 0) s,
+    ]..sort((a, b) => a.examDate!.compareTo(b.examDate!));
+    return upcoming.firstOrNull;
+  }
+
+  /// Dates one subject's exam, then reloads so a pushed-out goal date and the
+  /// pace banner reflect it.
+  Future<bool> setSubjectExamDate(Subject subject, DateTime? date) async {
+    final ok = await runMutation(
+        () => _goals.setSubjectExamDate(subject.id, date));
+    if (ok) await load();
+    return ok;
+  }
 
   /// Subjects the student marked as focus, for the "Focus areas" row.
   List<Subject> get focusSubjects =>
@@ -80,27 +104,74 @@ class HomeStore extends AsyncStore {
       _tasksToday.isEmpty ? 0 : doneCount / _tasksToday.length;
 
   Future<void> load() => runLoad(() async {
-        // Independent reads — run them together rather than five round-trips.
-        final results = await Future.wait([
-          _profiles.getMyProfile(),
-          _goals.getGoals(),
-          _tasks.getTodayTasks(),
-          _game.getStreak(),
-        ]);
-        _profile = results[0] as Profile?;
-        _allGoals = results[1] as List<Goal>;
-        _tasksToday = results[2] as List<DailyTask>;
-        _streak = results[3] as Streak;
-
-        // Derived from the full list rather than a separate `getActiveGoal()`
-        // round-trip. Same rule as that query: newest active row wins, so a
-        // half-finished switch still resolves to one goal.
-        _goal = _allGoals.where((g) => g.isActive).firstOrNull;
-
-        final goalId = _goal?.id;
-        _subjects =
-            goalId == null ? const [] : await _goals.getSubjects(goalId);
+        await _loadAll();
+        _syncWidget();
       });
+
+  /// Hands the home-screen widget the next exam and today's tasks.
+  void _syncWidget() {
+    final subject = nextExam;
+    final goal = _goal;
+    final next = _tasksToday.where((t) => !t.done).firstOrNull;
+    HomeWidgetSync.push(
+      examName: subject?.name ?? goal?.name,
+      examDate: subject?.examDate ?? goal?.examDate,
+      streak: _streak.currentStreak,
+      tasksDone: doneCount,
+      tasksTotal: _tasksToday.length,
+      nextTask: next?.title,
+    ).ignore();
+  }
+
+  Future<void> _loadAll() async {
+    // Independent reads — run them together rather than five round-trips.
+    final results = await Future.wait([
+      _profiles.getMyProfile(),
+      _goals.getGoals(),
+      _tasks.getTodayTasks(),
+      _game.getStreak(),
+    ]);
+    _profile = results[0] as Profile?;
+    _allGoals = results[1] as List<Goal>;
+    _tasksToday = results[2] as List<DailyTask>;
+    _streak = results[3] as Streak;
+
+    // Derived from the full list rather than a separate `getActiveGoal()`
+    // round-trip. Same rule as that query: newest active row wins, so a
+    // half-finished switch still resolves to one goal.
+    _goal = _allGoals.where((g) => g.isActive).firstOrNull;
+
+    final goalId = _goal?.id;
+    _subjects =
+        goalId == null ? const [] : await _goals.getSubjects(goalId);
+    _pace = goalId == null ? null : await _loadPace(goalId);
+  }
+
+  /// Pace is an extra on this screen, so a failure hides the banner rather
+  /// than failing the whole load.
+  Future<RoadmapPace?> _loadPace(String goalId) async {
+    try {
+      return await _roadmap.getPace(goalId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Rebuilds the next week of tasks at the pace the exam needs. Returns what
+  /// was done, or null with [error] set.
+  Future<CatchUpResult?> catchUp() async {
+    final goalId = _goal?.id;
+    if (goalId == null) return null;
+    CatchUpResult? result;
+    final ok = await runMutation(() async {
+      result = await _roadmap.planCatchUp(goalId);
+      _tasksToday = await _tasks.getTodayTasks();
+    });
+    if (!ok) return null;
+    _pace = await _loadPace(goalId);
+    notifyListeners();
+    return result;
+  }
 
   /// Switches which goal the app works against, then reloads everything scoped
   /// to it — tasks stay global, but subjects and the hero card follow the goal.
@@ -114,6 +185,7 @@ class HomeStore extends AsyncStore {
   Future<void> refresh() async {
     _tasksToday = await _tasks.getTodayTasks();
     notifyListeners();
+    _syncWidget();
   }
 
   /// Flips a checkbox optimistically, then persists. Reverts on failure so the
@@ -144,6 +216,7 @@ class HomeStore extends AsyncStore {
       notifyListeners();
       return;
     }
+    _syncWidget();
 
     // Everything below is deliberately outside the mutation. The tick is already
     // saved by this point, and this method returns void, so a throw here would

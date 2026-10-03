@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -70,7 +72,117 @@ class MaterialRepository {
     }
   }
 
-  /// Records a video/article link — nothing to upload.
+  /// Stores a YouTube video's transcript as a text file and records the video,
+  /// ready for `embed-material` to read.
+  ///
+  /// The phone fetched the transcript because YouTube won't give captions to a
+  /// server (D-037). The row is still a `video_link` — `external_url` keeps the
+  /// video itself — but now with a file behind it, so retry, summarize and
+  /// remove all work the way they do for notes. Same compensating cleanup as
+  /// [uploadFile].
+  Future<StudyMaterial> addVideoTranscript({
+    required String videoId,
+    required String title,
+    required String transcript,
+    String? playlistId,
+    String? goalId,
+  }) async {
+    final uid = requireUserId;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final path = '$uid/${stamp}_youtube_$videoId.txt';
+
+    await db.storage.from(SupabaseConfig.materialsBucket).uploadBinary(
+          path,
+          Uint8List.fromList(utf8.encode(transcript)),
+          fileOptions:
+              const FileOptions(contentType: 'text/plain; charset=utf-8'),
+        );
+
+    try {
+      final row = await db
+          .from('materials')
+          .insert({
+            'user_id': uid,
+            'source_type': MaterialType.videoLink.db,
+            'title': title,
+            'storage_path': path,
+            'external_url': 'https://www.youtube.com/watch?v=$videoId',
+            'status': IngestStatus.uploaded.db,
+            'playlist_id': ?playlistId,
+            'goal_id': ?goalId,
+          })
+          .select()
+          .single();
+      return StudyMaterial.fromMap(row);
+    } catch (_) {
+      try {
+        await db.storage.from(SupabaseConfig.materialsBucket).remove([path]);
+      } catch (_) {
+        // Swallowed deliberately — the insert error is the one worth seeing.
+      }
+      rethrow;
+    }
+  }
+
+  /// The student's YouTube playlists, newest first.
+  Future<List<MaterialPlaylist>> getPlaylists() async {
+    final rows = await db
+        .from('material_playlists')
+        .select()
+        .order('created_at', ascending: false);
+    return rows.map(MaterialPlaylist.fromMap).toList();
+  }
+
+  /// Records a playlist and the videos it will be read from (0024, D-038).
+  Future<MaterialPlaylist> createPlaylist({
+    required String youtubeId,
+    required String title,
+    required List<String> videoIds,
+  }) async {
+    final row = await db
+        .from('material_playlists')
+        .insert({
+          'user_id': requireUserId,
+          'youtube_id': youtubeId,
+          'title': title,
+          'video_ids': videoIds,
+        })
+        .select()
+        .single();
+    return MaterialPlaylist.fromMap(row);
+  }
+
+  /// Puts every failed video of a playlist back to `uploaded` in one write, for
+  /// the reader to pick up again.
+  Future<void> resetFailed(String playlistId) => db
+      .from('materials')
+      .update({'status': IngestStatus.uploaded.db})
+      .eq('playlist_id', playlistId)
+      .eq('status', IngestStatus.failed.db);
+
+  /// Replaces the playlist's skip list — the only column a student may change.
+  Future<void> setSkipped(String playlistId, Set<String> skipped) =>
+      db.from('material_playlists').update(
+          {'skipped_ids': skipped.toList()}).eq('id', playlistId);
+
+  /// Deletes the playlist — its video rows and their chunks go with it, by
+  /// cascade — then the transcript files, which no cascade reaches. Same order
+  /// and reasoning as [deleteMaterial].
+  Future<void> deletePlaylist(
+    MaterialPlaylist playlist,
+    List<String> storagePaths,
+  ) async {
+    await db.from('material_playlists').delete().eq('id', playlist.id);
+    for (var i = 0; i < storagePaths.length; i += 100) {
+      final end = i + 100 < storagePaths.length ? i + 100 : storagePaths.length;
+      await db.storage
+          .from(SupabaseConfig.materialsBucket)
+          .remove(storagePaths.sublist(i, end));
+    }
+  }
+
+  /// Records a link with nothing behind it — an article or a lecture page the
+  /// app has no way to read, kept as a bookmark.
   Future<StudyMaterial> addLink({
     required String url,
     String? title,

@@ -174,6 +174,19 @@ class GoalRepository {
   Future<void> deleteGoal(String goalId) =>
       db.from('goals').delete().eq('id', goalId);
 
+  /// Sets (or with null clears) one subject's exam date. A date later than
+  /// the goal's own pushes the goal's date out to it (0018's trigger).
+  Future<void> setSubjectExamDate(String subjectId, DateTime? date) async {
+    await db.from('subjects').update({
+      'exam_date': date == null
+          ? null
+          : DateTime(date.year, date.month, date.day)
+              .toIso8601String()
+              .split('T')
+              .first,
+    }).eq('id', subjectId);
+  }
+
   Future<List<Subject>> getSubjects(String goalId) async {
     final rows = await db
         .from('subjects')

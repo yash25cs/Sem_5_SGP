@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:provider/provider.dart';
 
-import 'data/local_prefs.dart';
+import 'models/models.dart';
 import 'theme/app_theme.dart';
 import 'widgets/common.dart';
 import 'widgets/nav.dart';
-import 'services/notification_service.dart';
+import 'widgets/quick_actions_sheet.dart';
+import 'state/reminder_sync.dart';
+import 'state/stores.dart';
 import 'screens/home_screen.dart';
 import 'screens/roadmap_screen.dart';
 import 'screens/chat_screen.dart';
@@ -15,9 +18,14 @@ import 'screens/progress_screen.dart';
 import 'screens/quiz_screen.dart';
 import 'screens/pomodoro_screen.dart';
 import 'screens/buddy_room_screen.dart';
+import 'screens/doubt_board_screen.dart';
+import 'screens/exam_papers_screen.dart';
 import 'screens/achievements_screen.dart';
+import 'screens/answer_practice_screen.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/rewards_screen.dart';
+import 'screens/weekly_report_screen.dart';
+import 'services/notification_service.dart';
 
 /// The main app shell — five bottom-nav tabs in an [IndexedStack] and a center
 /// quick-actions button for the secondary screens.
@@ -32,23 +40,62 @@ class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
 
   late final List<Widget> _tabs = [
-    HomeScreen(onOpenProfile: () => setState(() => _tab = 4)),
+    HomeScreen(
+      onOpenProfile: () => setState(() => _tab = 4),
+      onOpenQuiz: () => setState(() => _tab = 3),
+    ),
     const RoadmapScreen(),
     const ChatScreen(),
     const QuizScreen(),
     const ProfileScreen(),
   ];
 
+  late final AppLifecycleListener _lifecycle;
+
   @override
   void initState() {
     super.initState();
-    _initNotifications();
+    // Once per launch it may ask for the notification permission; the
+    // lifecycle re-syncs never do, or a denied dialog would reappear on every
+    // resume.
+    ReminderSync.run(askPermission: true);
+    _lifecycle = AppLifecycleListener(
+      onResume: () {
+        ReminderSync.run();
+        _resumeImports();
+      },
+      // Leaving the app is when today's studying is known, so a 6 PM nudge
+      // for work already done gets dropped.
+      onPause: ReminderSync.run,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _resumeImports());
+    // A tapped weekly-report notification, now or the one that launched us.
+    NotificationService().opened.addListener(_onNotificationOpened);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationOpened());
   }
 
-  /// Re-applies the student's reminder choice from Settings (on by default).
-  Future<void> _initNotifications() async {
-    final enabled = await LocalPrefs.remindersEnabled();
-    await NotificationService().applyDailyReminder(enabled: enabled);
+  /// A playlist the phone didn't finish reading carries on (D-038) — at launch
+  /// and whenever the app comes back to the front, since the phone is what
+  /// fetches the captions and Android may have paused it mid-way.
+  void _resumeImports() {
+    if (!mounted) return;
+    context.read<OnboardingStore>().resumeImports();
+  }
+
+  @override
+  void dispose() {
+    NotificationService().opened.removeListener(_onNotificationOpened);
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  void _onNotificationOpened() {
+    final opened = NotificationService().opened;
+    if (!mounted || opened.value != NotificationService.weeklyReportPayload) {
+      return;
+    }
+    opened.value = null;
+    _open(WeeklyReportScreen(onBack: () => Navigator.pop(context)));
   }
 
   void _open(Widget screen) {
@@ -57,120 +104,140 @@ class _HomeShellState extends State<HomeShell> {
 
   void _showQuickActions() {
     final p = context.p;
+    // Each action closes the sheet first, then opens its screen.
+    VoidCallback go(BuildContext sheetCtx, Widget Function() screen) => () {
+          Navigator.pop(sheetCtx);
+          _open(screen());
+        };
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      // Without this the sheet is capped at 9/16 of the screen, which is 14px
-      // short of the five rows below. The scroll view then covers landscape and
-      // large font scales, where even the full height isn't enough.
+      // Lets the sheet grow past 9/16 of the screen at large font scales; the
+      // sheet scrolls inside itself when even that isn't enough.
       isScrollControlled: true,
-      builder: (sheetCtx) => Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: p.card,
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: p.shadow,
+      builder: (sheetCtx) => QuickActionsSheet(
+        featured: QuickAction(
+          icon: Symbols.timer,
+          title: 'Start a focus session',
+          subtitle: 'Pomodoro timer — focused minutes earn XP',
+          color: p.coral,
+          onTap: go(sheetCtx,
+              () => PomodoroScreen(onBack: () => Navigator.pop(context))),
         ),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                      color: p.line2, borderRadius: BorderRadius.circular(99)),
+        sections: [
+          (
+            'Practise',
+            [
+              QuickAction(
+                icon: Symbols.style,
+                title: 'Flashcards',
+                color: p.primary,
+                onTap: go(sheetCtx,
+                    () => FlashcardsScreen(onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.edit_note,
+                title: 'Answer practice',
+                color: const Color(0xFF14B8A6),
+                onTap: go(
+                    sheetCtx,
+                    () => AnswerPracticeScreen(
+                        onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.history_edu,
+                title: 'Past papers & mock',
+                color: const Color(0xFF0EA5E9),
+                onTap: go(
+                  sheetCtx,
+                  () => ExamPapersScreen(
+                    onBack: () => Navigator.pop(context),
+                    onOpenQuiz: () {
+                      Navigator.pop(context);
+                      setState(() => _tab = 3);
+                    },
+                    onPractice: (q) => _open(AnswerPracticeScreen(
+                      onBack: () => Navigator.pop(context),
+                      initial: PracticeQuestion(
+                        text: q.text,
+                        marks: q.marks ?? 5,
+                        unitLabel: q.unitLabel,
+                        paperQuestionId: q.id,
+                      ),
+                    )),
+                  ),
                 ),
-                const SizedBox(height: 18),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Quick actions',
-                      style: TextStyle(
-                          color: p.ink,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800)),
-                ),
-                const SizedBox(height: 16),
-                _QuickAction(
-                  icon: Symbols.style,
-                  title: 'Flashcards',
-                  subtitle: 'Review spaced-repetition decks',
-                  color: p.primary,
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(FlashcardsScreen(onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.timer,
-                  title: 'Focus session',
-                  subtitle: 'Start a Pomodoro timer',
-                  color: p.coral,
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(PomodoroScreen(onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.groups,
-                  title: 'Study buddy room',
-                  subtitle: 'Focus with your classmates',
-                  color: p.green,
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(BuddyRoomScreen(onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.leaderboard,
-                  title: 'Achievements',
-                  subtitle: 'Streaks, badges & leaderboard',
-                  color: p.amber,
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(
-                        AchievementsScreen(onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.emoji_events,
-                  title: 'Class leaderboard',
-                  subtitle: 'See where you rank in your class',
-                  color: const Color(0xFFF59E0B),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(LeaderboardScreen(
-                        onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.featured_seasonal_and_gifts,
-                  title: 'My Rewards',
-                  subtitle: 'Spend XP on streak freezes and more',
-                  color: const Color(0xFF6366F1),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(RewardsScreen(
-                        onBack: () => Navigator.pop(context)));
-                  },
-                ),
-                _QuickAction(
-                  icon: Symbols.insights,
-                  title: 'Analytics',
-                  subtitle: 'Study time, accuracy & consistency',
-                  color: p.primary2,
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    _open(const _ProgressPage());
-                  },
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ),
+          (
+            'Together',
+            [
+              QuickAction(
+                icon: Symbols.groups,
+                title: 'Study rooms',
+                color: p.green,
+                onTap: go(sheetCtx,
+                    () => BuddyRoomScreen(onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.forum,
+                title: 'Doubt board',
+                color: const Color(0xFF8B5CF6),
+                onTap: go(
+                    sheetCtx,
+                    () => DoubtBoardScreen(
+                        onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.emoji_events,
+                title: 'Class leaderboard',
+                color: const Color(0xFFF59E0B),
+                onTap: go(
+                    sheetCtx,
+                    () => LeaderboardScreen(
+                        onBack: () => Navigator.pop(context))),
+              ),
+            ],
+          ),
+          (
+            'Progress',
+            [
+              QuickAction(
+                icon: Symbols.calendar_view_week,
+                title: 'Weekly report',
+                color: p.coral,
+                onTap: go(
+                    sheetCtx,
+                    () => WeeklyReportScreen(
+                        onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.military_tech,
+                title: 'Achievements',
+                color: p.amber,
+                onTap: go(
+                    sheetCtx,
+                    () => AchievementsScreen(
+                        onBack: () => Navigator.pop(context))),
+              ),
+              QuickAction(
+                icon: Symbols.insights,
+                title: 'Analytics',
+                color: p.primary2,
+                onTap: go(sheetCtx, () => const _ProgressPage()),
+              ),
+              QuickAction(
+                icon: Symbols.featured_seasonal_and_gifts,
+                title: 'My rewards',
+                color: const Color(0xFF6366F1),
+                onTap: go(sheetCtx,
+                    () => RewardsScreen(onBack: () => Navigator.pop(context))),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -230,55 +297,6 @@ class _ProgressPage extends StatelessWidget {
           ),
           const Expanded(child: ProgressScreen()),
         ],
-      ),
-    );
-  }
-}
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.color,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String title, subtitle;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.p;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            IconTile(icon,
-                bg: color.withValues(alpha: 0.14), fg: color, size: 48),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          color: p.ink,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(color: p.ink3, fontSize: 12.5)),
-                ],
-              ),
-            ),
-            Icon(Symbols.chevron_right, color: p.ink3, size: 22),
-          ],
-        ),
       ),
     );
   }

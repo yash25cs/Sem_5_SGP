@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:studytrail_flutter/data/repositories.dart';
 import 'package:studytrail_flutter/models/models.dart';
+import 'package:studytrail_flutter/state/reminder_sync.dart';
 import 'package:studytrail_flutter/state/stores.dart';
 
 void main() {
@@ -92,6 +93,89 @@ void main() {
     });
   });
 
+  group('RoomStore focus credit', () {
+    StudyRoom room() => StudyRoom(
+          id: 'r1',
+          name: 'Room',
+          inviteCode: 'ABC123',
+          createdBy: 'host-id',
+          createdAt: DateTime(2026, 9, 30),
+        );
+
+    // The host's end-of-block broadcast can beat a member's own countdown by a
+    // second or two; that member still finished the block.
+    testWidgets('a member who watched a block finish is credited what they saw',
+        (tester) async {
+      final game = _FakeGame();
+      final store = RoomStore(game: game)..debugEnterRoomOffline(room());
+      addTearDown(store.dispose);
+
+      // Joined with just over two minutes left.
+      store.applyTimerCommand({
+        'action': 'sync',
+        'phase': 'focus',
+        'remaining_secs': 125,
+        'total_secs': 1500,
+        'running': true,
+      });
+      await tester.pump(const Duration(seconds: 122));
+      store.applyTimerCommand({
+        'action': 'switch_phase',
+        'phase': 'break',
+        'remaining_secs': 300,
+        'total_secs': 300,
+      });
+      await tester.pump();
+
+      expect(game.sessions, [(25, 2)]);
+      expect(store.focusReward, contains('2 min'));
+    });
+
+    testWidgets('a block the host cut short earns nothing', (tester) async {
+      final game = _FakeGame();
+      final store = RoomStore(game: game)..debugEnterRoomOffline(room());
+      addTearDown(store.dispose);
+
+      store.applyTimerCommand(
+          {'action': 'start', 'phase': 'focus', 'remaining_secs': 1500});
+      await tester.pump(const Duration(seconds: 300));
+      store.applyTimerCommand({
+        'action': 'switch_phase',
+        'phase': 'break',
+        'remaining_secs': 300,
+        'total_secs': 300,
+      });
+      await tester.pump();
+
+      expect(game.sessions, isEmpty);
+    });
+  });
+
+  group('ReminderPlan', () {
+    // 12:30 UTC is 6 PM in India — when the first reminder would fire.
+    final now = DateTime.utc(2026, 9, 30, 12, 30);
+
+    test('studied today: no nudge today, streak still worth protecting', () {
+      final plan = ReminderPlan.from(
+          Streak(currentStreak: 4, lastActiveDate: DateTime(2026, 9, 30)), now);
+      expect(plan.studiedToday, isTrue);
+      expect(plan.streak, 4);
+    });
+
+    test('last studied yesterday: the streak is at risk today', () {
+      final plan = ReminderPlan.from(
+          Streak(currentStreak: 4, lastActiveDate: DateTime(2026, 9, 29)), now);
+      expect(plan.studiedToday, isFalse);
+      expect(plan.streak, 4);
+    });
+
+    test('a lapsed streak has nothing to protect', () {
+      final plan = ReminderPlan.from(
+          Streak(currentStreak: 4, lastActiveDate: DateTime(2026, 9, 27)), now);
+      expect(plan.streak, 0);
+    });
+  });
+
   test('message ids are v4 UUIDs, unique per call', () {
     final a = RoomRepository.newMessageId();
     final b = RoomRepository.newMessageId();
@@ -157,4 +241,19 @@ void main() {
       expect(w.rewards.last.atCap, isFalse);
     });
   });
+}
+
+/// Records focus sessions instead of calling `record_focus_session`.
+class _FakeGame extends GamificationRepository {
+  final sessions = <(int, int)>[];
+
+  @override
+  Future<StudySession> recordSession({
+    String? subjectId,
+    int? lengthMin,
+    int? focusedMin,
+  }) async {
+    sessions.add((lengthMin ?? 0, focusedMin ?? 0));
+    return StudySession(id: 's', sessionDate: DateTime(2026, 9, 30));
+  }
 }

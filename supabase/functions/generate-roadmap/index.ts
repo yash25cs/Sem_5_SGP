@@ -46,13 +46,20 @@ const PACE_DAYS: Record<string, number> = {
 /// ("the roadmap generator clamps, it doesn't refuse").
 const MAX_ROADMAP_DAYS = 180;
 
-/// Headings sent to the model. Enough to cover a semester's uploads without
-/// turning the prompt into a table of contents.
-const MAX_UNIT_LABELS = 60;
+/// Headings sent to the model. Enough to cover a semester's uploads — a
+/// 92-lecture playlist included — without turning the prompt into a table of
+/// contents.
+const MAX_UNIT_LABELS = 120;
 
 /// Rows scanned to collect those headings. Chunks repeat their unit label, so
 /// this is a bound on work, not on coverage.
 const LABEL_SCAN_ROWS = 600;
+
+/// The "12:40 · " a video chunk's label starts with (D-037).
+const VIDEO_STAMP_PATTERN = '^[0-9]{1,2}(:[0-9]{2}){1,2} · ';
+
+/// Lectures listed from one library — a playlist holds at most 100.
+const MAX_VIDEO_TITLES = 100;
 
 /// Below this it isn't a plan.
 const MIN_MILESTONES = 2;
@@ -94,7 +101,10 @@ characters.
 heavily. Do not spend a whole week on something the student has one heading for.
 - Build up: understand first, then practise, then revise. Leave the last week \
 for revision and mock tests.
-- Plan only from the subjects and unit headings given. Invent no topics.`;
+- Plan only from the subjects and unit headings given. Invent no topics.
+- When subjects have their own exam dates, each subject must be fully covered \
+and revised before its own exam: schedule it earlier, give the week of its \
+exam to revising it, and stop scheduling it after that week.`;
 
 interface Milestone {
   weekLabel: string;
@@ -127,16 +137,33 @@ serve(async (req) => {
 
   const { data: subjectRows, error: subjectError } = await supa
     .from('subjects')
-    .select('name')
+    .select('name, exam_date')
     .eq('goal_id', goalId)
+    .order('exam_date', { ascending: true, nullsFirst: false })
     .order('name', { ascending: true });
   if (subjectError) {
     console.error('Could not read subjects', subjectError);
     throw new HttpError(500, "Couldn't read your subjects. Try again.");
   }
 
+  // "DBMS (exam 2026-11-20, in week 2)" when the subject has its own paper
+  // date, so the plan finishes each subject before its exam rather than the
+  // last one. The week is spelled out: a date alone left the model revising a
+  // subject the week after its exam.
+  const today = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  );
   const subjects = (subjectRows ?? [])
-    .map((row) => String(row.name ?? '').trim())
+    .map((row) => {
+      const name = String(row.name ?? '').trim();
+      if (name.length === 0 || typeof row.exam_date !== 'string') return name;
+      const days = (Date.parse(row.exam_date) - today) / 86_400_000;
+      const week = Math.max(1, Math.ceil(days / 7));
+      return `${name} (exam ${row.exam_date}, in week ${week}; `
+        + `nothing on it after week ${week})`;
+    })
     .filter((name) => name.length > 0);
 
   if (subjects.length === 0) {
@@ -252,10 +279,15 @@ serve(async (req) => {
 
   // The roadmap counters are this function's to set — `0008_rewards.sql` revokes
   // them from the client for that reason. `current_day` restarts because the
-  // plan the student is on day 12 of no longer exists.
+  // plan the student is on day 12 of no longer exists, and the start date is
+  // what `get_roadmap_pace` measures "behind" from.
   const { error: goalUpdateError } = await admin
     .from('goals')
-    .update({ roadmap_days: days, current_day: 1 })
+    .update({
+      roadmap_days: days,
+      current_day: 1,
+      roadmap_started_on: new Date().toISOString().slice(0, 10),
+    })
     .eq('id', goalId)
     .eq('user_id', userId);
   // Cosmetic next to a saved roadmap: Home's "Day 3 / 30" line hides itself
@@ -272,28 +304,47 @@ serve(async (req) => {
   });
 });
 
-/// The distinct unit headings across everything the student has uploaded.
+/// The distinct unit headings across everything the student has uploaded:
+/// the units of their files, then one heading per YouTube lecture.
+///
+/// Videos are read by title rather than from their chunks. Each chunk of a
+/// video is labelled "12:40 · Lecture title" (D-037) — right for a citation,
+/// but here it would be dozens of near-identical headings per lecture, and at
+/// ~25 chunks a video the 600-row scan would reach only the first two dozen
+/// lectures of a long playlist.
 ///
 /// Read through the caller's client, so RLS scopes it to their own materials.
 /// Failure is not fatal — headings sharpen the plan, subject names alone still
 /// produce one.
 async function unitLabels(supa: SupabaseClient): Promise<string[]> {
-  const { data, error } = await supa
-    .from('material_chunks')
-    .select('unit_label')
-    .not('unit_label', 'is', null)
-    .order('material_id', { ascending: true })
-    .order('chunk_index', { ascending: true })
-    .limit(LABEL_SCAN_ROWS);
-  if (error) {
-    console.error('Could not read unit labels', error);
-    return [];
-  }
+  const [chunks, videos] = await Promise.all([
+    supa
+      .from('material_chunks')
+      .select('unit_label')
+      .not('unit_label', 'is', null)
+      .not('unit_label', 'match', VIDEO_STAMP_PATTERN)
+      .order('material_id', { ascending: true })
+      .order('chunk_index', { ascending: true })
+      .limit(LABEL_SCAN_ROWS),
+    supa
+      .from('materials')
+      .select('title')
+      .eq('source_type', 'video_link')
+      .eq('status', 'embedded')
+      .order('created_at', { ascending: true })
+      .limit(MAX_VIDEO_TITLES),
+  ]);
+  if (chunks.error) console.error('Could not read unit labels', chunks.error);
+  if (videos.error) console.error('Could not read video titles', videos.error);
 
   const seen = new Set<string>();
   const labels: string[] = [];
-  for (const row of data ?? []) {
-    const label = String(row.unit_label ?? '').trim();
+  const all = [
+    ...(chunks.data ?? []).map((row) => row.unit_label),
+    ...(videos.data ?? []).map((row) => row.title),
+  ];
+  for (const value of all) {
+    const label = String(value ?? '').trim().slice(0, 80);
     if (label.length === 0 || seen.has(label.toLowerCase())) continue;
     seen.add(label.toLowerCase());
     labels.push(label);

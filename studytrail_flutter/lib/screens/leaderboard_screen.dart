@@ -393,8 +393,11 @@ class _RankCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            // Wraps rather than overflowing when both figures are large.
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 2,
               children: [
                 Text('You · ${me.totalXp} XP',
                     style: TextStyle(
@@ -477,36 +480,43 @@ class _LeaderboardItemTile extends StatelessWidget {
           ),
           const SizedBox(width: 14),
 
-          // Student name, with the golden border reward if they bought it.
+          // Student name (with the golden border reward if they bought it),
+          // and the level under it rather than beside it, so a long name
+          // keeps its room on a narrow phone.
           Expanded(
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  child: Text(
-                    isMe ? '${entry.fullName} (You)' : entry.fullName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: p.ink,
-                      fontSize: 14.5,
-                      fontWeight: isMe ? FontWeight.w900 : FontWeight.w700,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        isMe ? '${entry.fullName} (You)' : entry.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: p.ink,
+                          fontSize: 14.5,
+                          fontWeight: isMe ? FontWeight.w900 : FontWeight.w700,
+                        ),
+                      ),
                     ),
+                    if (entry.goldenBorder) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Symbols.military_tech,
+                          size: 16, color: _gold, fill: 1),
+                    ],
+                  ],
+                ),
+                Text(
+                  'Level ${entry.level}',
+                  style: TextStyle(
+                    color: p.ink3,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                if (entry.goldenBorder) ...[
-                  const SizedBox(width: 4),
-                  const Icon(Symbols.military_tech,
-                      size: 16, color: _gold, fill: 1),
-                ],
               ],
-            ),
-          ),
-          Text(
-            'Lv ${entry.level}',
-            style: TextStyle(
-              color: p.ink3,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(width: 10),

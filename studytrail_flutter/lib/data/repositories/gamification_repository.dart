@@ -201,6 +201,12 @@ class GamificationRepository {
         .toList();
   }
 
+  /// This week against last, in the student's own days.
+  Future<WeeklyReport> getWeeklyReport() async {
+    final res = await db.rpc('get_weekly_report');
+    return WeeklyReport.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
   /// XP balance and the rewards catalog with what the caller holds.
   Future<RewardWallet> getRewardWallet() async {
     final res = await db.rpc('get_reward_wallet');

@@ -57,6 +57,11 @@ class ProfileStore extends AsyncStore {
         );
       });
 
+  Future<bool> setAnswerLanguage(AnswerLanguage language) =>
+      runMutation(() async {
+        _profile = await _profiles.setAnswerLanguage(language);
+      });
+
   Future<bool> loadClasses() => runMutation(() async {
         _classes = await _profiles.getClasses();
       });

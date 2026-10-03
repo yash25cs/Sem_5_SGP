@@ -2,8 +2,11 @@
 library;
 
 export 'repositories/analytics_repository.dart';
+export 'repositories/answer_repository.dart';
 export 'repositories/auth_repository.dart';
 export 'repositories/chat_repository.dart';
+export 'repositories/doubt_repository.dart';
+export 'repositories/exam_paper_repository.dart';
 export 'repositories/flashcard_repository.dart';
 export 'repositories/gamification_repository.dart';
 export 'repositories/goal_repository.dart';

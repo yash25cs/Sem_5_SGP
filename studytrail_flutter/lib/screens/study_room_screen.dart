@@ -9,9 +9,11 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/nav.dart';
+import 'room_quiz_screen.dart';
 
 /// Screen displayed when the student is inside an active Study Buddy Room.
-/// Provides synchronized timer, live peer presence, and real-time room chat.
+/// Provides the shared focus session (the host sets its length here, not when
+/// creating the room), a group quiz, live peer presence, and room chat.
 class StudyRoomScreen extends StatefulWidget {
   const StudyRoomScreen({super.key, this.onLeave});
 
@@ -49,6 +51,201 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
+  }
+
+  /// Report / block / (host) remove, for someone else in the room. Opened by
+  /// long-pressing their message or tapping their avatar.
+  Future<void> _personActions({
+    required String userId,
+    required String name,
+    String? messageId,
+  }) async {
+    if (userId == currentUserId) return;
+    final store = context.read<RoomStore>();
+    final p = context.p;
+    final blocked = store.isBlocked(userId);
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Text(name,
+                style: TextStyle(
+                    color: p.ink, fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            ListTile(
+              leading: Icon(Symbols.flag, color: p.error),
+              title: Text(messageId == null ? 'Report' : 'Report this message',
+                  style: TextStyle(color: p.ink)),
+              onTap: () => Navigator.of(sheetCtx).pop('report'),
+            ),
+            ListTile(
+              leading: Icon(blocked ? Symbols.visibility : Symbols.block,
+                  color: p.ink2),
+              title: Text(blocked ? 'Unblock' : 'Block — hide their messages',
+                  style: TextStyle(color: p.ink)),
+              onTap: () => Navigator.of(sheetCtx).pop('block'),
+            ),
+            if (store.isHost)
+              ListTile(
+                leading: Icon(Symbols.person_remove, color: p.error),
+                title: Text('Remove from room',
+                    style: TextStyle(color: p.error)),
+                onTap: () => Navigator.of(sheetCtx).pop('remove'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case 'report':
+        final reason = await showDialog<String>(
+          context: context,
+          builder: (dialogCtx) => SimpleDialog(
+            backgroundColor: p.card,
+            title: Text('Why are you reporting this?',
+                style: TextStyle(color: p.ink, fontSize: 17)),
+            children: [
+              for (final (value, label) in const [
+                ('spam', 'Spam or advertising'),
+                ('harassment', 'Bullying or harassment'),
+                ('inappropriate', 'Inappropriate content'),
+                ('other', 'Something else'),
+              ])
+                SimpleDialogOption(
+                  onPressed: () => Navigator.of(dialogCtx).pop(value),
+                  child: Text(label, style: TextStyle(color: p.ink2)),
+                ),
+            ],
+          ),
+        );
+        if (!mounted || reason == null) return;
+        final ok = await store.report(
+            userId: userId, reason: reason, messageId: messageId);
+        _toast(ok
+            ? 'Reported. Thanks — it will be reviewed.'
+            : store.error ?? 'Could not send the report.');
+      case 'block':
+        final ok = blocked
+            ? await store.unblockUser(userId)
+            : await store.blockUser(userId);
+        _toast(!ok
+            ? store.error ?? 'Something went wrong.'
+            : blocked
+                ? '$name unblocked.'
+                : '$name blocked. You won\'t see their messages.');
+      case 'remove':
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogCtx) => AlertDialog(
+            backgroundColor: p.card,
+            title: Text('Remove $name?', style: TextStyle(color: p.ink)),
+            content: Text("They'll leave the room and can't rejoin it.",
+                style: TextStyle(color: p.ink2)),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(false),
+                  child: const Text('Cancel')),
+              TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(true),
+                  child: Text('Remove', style: TextStyle(color: p.error))),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        final ok = await store.removeMember(userId);
+        _toast(ok ? '$name removed.' : store.error ?? 'Could not remove them.');
+    }
+  }
+
+  /// Host only, while the clock is stopped: how long a focus block and a break
+  /// last for everyone in the room.
+  Future<void> _editSessionLength() async {
+    final store = context.read<RoomStore>();
+    final room = store.currentRoom;
+    if (room == null) return;
+    final p = context.p;
+    var focus = room.timerDurationMin;
+    var rest = room.breakDurationMin;
+
+    Widget choices(List<int> options, int value, ChipTone tone,
+            void Function(int) onPick) =>
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final m in options)
+              SoftChip('$m min',
+                  tone: m == value ? tone : ChipTone.neutral,
+                  onTap: () => onPick(m)),
+          ],
+        );
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Focus session',
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(height: 3),
+                Text('Everyone in the room uses these lengths.',
+                    style: TextStyle(color: p.ink3, fontSize: 12.5)),
+                const SizedBox(height: 16),
+                Text('Focus',
+                    style: TextStyle(
+                        color: p.ink2,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                choices(RoomStore.focusChoices, focus, ChipTone.primary,
+                    (m) => setSheet(() => focus = m)),
+                const SizedBox(height: 14),
+                Text('Break',
+                    style: TextStyle(
+                        color: p.ink2,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                choices(RoomStore.breakChoices, rest, ChipTone.amber,
+                    (m) => setSheet(() => rest = m)),
+                const SizedBox(height: 20),
+                PillButton(
+                  'Save',
+                  icon: Symbols.check,
+                  onTap: () => Navigator.of(sheetCtx).pop(true),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+    final ok = await store.setTimerLengths(focusMin: focus, breakMin: rest);
+    _toast(ok
+        ? 'Focus $focus min, break $rest min for everyone.'
+        : store.error ?? 'Stop the timer first, then change its length.');
   }
 
   void _copyCode(String code) {
@@ -134,6 +331,15 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     final store = context.watch<RoomStore>();
     final room = store.currentRoom;
     final closedNotice = store.closedNotice;
+
+    final reward = store.focusReward;
+    if (reward != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<RoomStore>().clearFocusReward();
+        _toast(reward);
+      });
+    }
 
     if (room == null || closedNotice != null) {
       return PopScope(
@@ -240,12 +446,16 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                         onTap: () => _copyCode(room.inviteCode),
                         child: Row(
                           children: [
-                            Text(
-                              'Code: ${room.inviteCode}',
-                              style: TextStyle(
-                                color: p.primary,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w700,
+                            Flexible(
+                              child: Text(
+                                'Code: ${room.inviteCode}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.primary,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 4),
@@ -291,7 +501,7 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
             ),
           ),
 
-          // ── Scrollable Upper Content (Timer + Presence) ──
+          // ── Scrollable Upper Content (Timer + Quiz + Presence) ──
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -304,45 +514,86 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Icon(
-                                store.isFocus
-                                    ? Symbols.timer
-                                    : Symbols.coffee,
-                                color: store.isFocus ? p.primary : p.amber,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                store.isFocus ? 'FOCUS BLOCK' : 'BREAK TIME',
-                                style: TextStyle(
-                                  color: store.isFocus ? p.primary : p.amber,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.8,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (!isHost)
-                            Row(
+                          Flexible(
+                            child: Row(
                               children: [
-                                Icon(Symbols.sync,
-                                    size: 14, color: p.ink3),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Sync with host',
-                                  style: TextStyle(
-                                      color: p.ink3,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600),
+                                Icon(
+                                  store.isFocus
+                                      ? Symbols.timer
+                                      : Symbols.coffee,
+                                  color: store.isFocus ? p.primary : p.amber,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    store.isFocus ? 'FOCUS BLOCK' : 'BREAK TIME',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          store.isFocus ? p.primary : p.amber,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
+                          ),
+                          if (!isHost) ...[
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Symbols.sync,
+                                      size: 14, color: p.ink3),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      'Sync with host',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: p.ink3,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 10),
+
+                      // Session lengths. The host sets them here, with the
+                      // clock stopped; members see what the room uses.
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          SoftChip('${room.timerDurationMin} min focus',
+                              icon: Symbols.timer,
+                              tone: ChipTone.primary,
+                              small: true),
+                          SoftChip('${room.breakDurationMin} min break',
+                              icon: Symbols.coffee,
+                              tone: ChipTone.amber,
+                              small: true),
+                          if (isHost && !store.timerRunning)
+                            SoftChip('Change',
+                                key: const ValueKey('edit-session-length'),
+                                icon: Symbols.tune,
+                                small: true,
+                                onTap: _editSessionLength),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
 
                       // Countdown display
                       Text(
@@ -428,6 +679,10 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
+
+                // ── Group quiz ──
+                const RoomQuizCard(),
                 const SizedBox(height: 18),
 
                 // ── Study Buddies in Room (Presence) ──
@@ -452,7 +707,10 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                       separatorBuilder: (_, _) => const SizedBox(width: 12),
                       itemBuilder: (context, index) {
                         final peer = presence[index];
-                        return Column(
+                        return GestureDetector(
+                          onTap: () => _personActions(
+                              userId: peer.userId, name: peer.fullName),
+                          child: Column(
                           children: [
                             Stack(
                               children: [
@@ -495,6 +753,7 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                               ),
                             ),
                           ],
+                          ),
                         );
                       },
                     ),
@@ -532,9 +791,18 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                   )
                 else
                   for (final msg in store.messages) ...[
-                    _ChatMessageBubble(
-                      message: msg,
-                      isMe: msg.userId == currentUserId,
+                    GestureDetector(
+                      onLongPress: msg.userId == currentUserId || msg.pending
+                          ? null
+                          : () => _personActions(
+                                userId: msg.userId,
+                                name: msg.senderName ?? 'Student',
+                                messageId: msg.id,
+                              ),
+                      child: _ChatMessageBubble(
+                        message: msg,
+                        isMe: msg.userId == currentUserId,
+                      ),
                     ),
                     const SizedBox(height: 8),
                   ],

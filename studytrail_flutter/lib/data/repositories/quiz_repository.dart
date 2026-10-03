@@ -1,3 +1,5 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../models/models.dart';
 import '../supabase_client.dart';
 
@@ -94,8 +96,40 @@ class QuizRepository {
           ? msg
           : 'Quiz generation failed — try a different file.';
     } catch (e) {
-      if (e is String) rethrow;
+      // The function's own message ("That file isn't yours.") is inside the
+      // FunctionException; friendlyError reads it out. Wrapping it in
+      // 'Error: …' showed students the raw exception instead.
+      if (e is String || e is FunctionException) rethrow;
       throw 'Error: $e';
     }
+  }
+
+  /// Units the student keeps getting wrong, weakest first.
+  Future<List<WeakTopic>> getWeakTopics({int limit = 5}) async {
+    final rows = await db.rpc('get_weak_topics', params: {'p_limit': limit});
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map(WeakTopic.fromMap)
+        .toList();
+  }
+
+  /// A 15-question mock exam weighted toward the units past papers ask about
+  /// most. Returns the new quiz's id.
+  Future<String> generateMockExam() async {
+    final res = await db.functions.invoke('generate-quiz', body: {'mock': true});
+    final data = res.data;
+    if (data is Map && data['quizId'] is String) return data['quizId'] as String;
+    throw 'Mock exam generation failed. Try again.';
+  }
+
+  /// A quiz drawn only from the weakest units. Returns the new quiz's id.
+  Future<String> generateWeakQuiz({int length = 5}) async {
+    final res = await db.functions.invoke(
+      'generate-quiz',
+      body: {'weak': true, 'length': length},
+    );
+    final data = res.data;
+    if (data is Map && data['quizId'] is String) return data['quizId'] as String;
+    throw 'Quiz generation failed. Try again.';
   }
 }

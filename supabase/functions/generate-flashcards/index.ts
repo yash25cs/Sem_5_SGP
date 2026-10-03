@@ -2,15 +2,20 @@ import { interact, parseJsonObject } from '../_shared/gemini.ts';
 import {
   type Chunk,
   loadMaterialSource,
+  loadWeakSource,
   numberedSource,
   sampleChunks,
 } from '../_shared/material.ts';
 import { HttpError, json, readJson, requireUser, serve } from '../_shared/supa.ts';
 
-/// Writes a flashcard deck from one material the student picked.
+/// Writes flashcards from one material the student picked, or from one chat
+/// answer.
 ///
-/// Body: `{ materialId: string, count?: 10 | 20 | 30 }`. The caller is taken
-/// from the JWT, never from the body — see `requireUser`.
+/// Body: `{ materialId: string, count?: 10 | 20 | 30 }` for a new deck from a
+/// file, or `{ messageId: string }` to save a few cards from a Trail AI answer
+/// into the student's "Saved from chat" deck, or `{ weak: true, count? }` for a
+/// deck drawn from the units they keep getting wrong. The caller is taken from
+/// the JWT, never from the body — see `requireUser`.
 ///
 /// No `adminClient()` here, unlike the other two generators: `0008_rewards.sql`
 /// grants `insert (user_id, deck_id, unit_label, front, back, source_chunk_id)
@@ -35,6 +40,12 @@ const TOKENS_BASE = 700;
 /// should have them cut rather than have the card dropped.
 const MAX_FRONT_CHARS = 240;
 const MAX_BACK_CHARS = 700;
+
+/// Chat mode: a handful of cards from one answer, all into one deck, so saving
+/// from chat a dozen times doesn't leave a dozen tiny decks.
+const CHAT_CARDS = 5;
+const CHAT_MIN_CARDS = 2;
+const CHAT_DECK_NAME = 'Saved from chat';
 
 const CARD_SCHEMA = {
   type: 'object',
@@ -87,15 +98,26 @@ serve(async (req) => {
   const { supa, userId } = await requireUser(req);
   const body = await readJson(req);
 
+  const messageId = typeof body.messageId === 'string'
+    ? body.messageId.trim()
+    : '';
+  if (messageId.length > 0) {
+    return await cardsFromChat(supa, userId, messageId);
+  }
+
+  const weak = body.weak === true;
   const materialId = typeof body.materialId === 'string'
     ? body.materialId.trim()
     : '';
-  if (materialId.length === 0) {
+  if (!weak && materialId.length === 0) {
     throw new HttpError(400, 'That request was malformed.');
   }
-  const wanted = pickCount(body.count);
+  // Weak-spot decks default to the smallest size: a few units, reviewed soon.
+  const wanted = weak && body.count === undefined ? 10 : pickCount(body.count);
 
-  const source = await loadMaterialSource(supa, materialId);
+  const source = weak
+    ? await loadWeakSource(supa)
+    : await loadMaterialSource(supa, materialId);
   const chunks = sampleChunks(source.chunks);
 
   const raw = await interact({
@@ -118,8 +140,8 @@ serve(async (req) => {
 
   if (cards.length < MIN_CARDS) {
     console.error(
-      `Only ${cards.length} of ${items.length} cards were usable for material `
-        + materialId,
+      `Only ${cards.length} of ${items.length} cards were usable for `
+        + (weak ? 'weak spots' : `material ${materialId}`),
     );
     throw new HttpError(
       502,
@@ -129,11 +151,14 @@ serve(async (req) => {
 
   // `subject_id` stays null for the same reason as in `generate-quiz`: nothing
   // associates a material with a subject yet.
+  const name = weak
+    ? source.title
+    : deckName(parsed?.deck_name, source.title);
   const { data: deck, error: deckError } = await supa
     .from('flashcard_decks')
     .insert({
       user_id: userId,
-      name: deckName(parsed?.deck_name, source.title),
+      name,
     })
     .select('id')
     .single();
@@ -165,9 +190,141 @@ serve(async (req) => {
   return json({
     deckId: deck.id,
     cards: cards.length,
-    deckName: deckName(parsed?.deck_name, source.title),
+    deckName: name,
   });
 });
+
+/// Chat mode. Reads the answer, the question it answered, and the excerpts it
+/// cited — all through the caller's client, so another student's message id
+/// comes back as not found — and saves cards into "Saved from chat".
+async function cardsFromChat(
+  // deno-lint-ignore no-explicit-any
+  supa: any,
+  userId: string,
+  messageId: string,
+): Promise<Response> {
+  const { data: message, error: messageError } = await supa
+    .from('chat_messages')
+    .select('id, thread_id, role, text, created_at')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (messageError) {
+    console.error('Could not read chat message', messageError);
+    throw new HttpError(500, "Couldn't open that answer. Try again.");
+  }
+  if (!message || message.role !== 'ai') {
+    throw new HttpError(404, "That answer isn't yours.");
+  }
+
+  const { data: asked } = await supa
+    .from('chat_messages')
+    .select('text')
+    .eq('thread_id', message.thread_id)
+    .eq('role', 'user')
+    .lte('created_at', message.created_at)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: citations } = await supa
+    .from('chat_citations')
+    .select('chunk_id')
+    .eq('message_id', messageId);
+  const chunkIds = (citations ?? [])
+    // deno-lint-ignore no-explicit-any
+    .map((c: any) => c.chunk_id)
+    .filter((id: unknown): id is string => typeof id === 'string');
+
+  // deno-lint-ignore no-explicit-any
+  let cited: any[] = [];
+  if (chunkIds.length > 0) {
+    const { data } = await supa
+      .from('material_chunks')
+      .select('id, unit_label, content')
+      .in('id', chunkIds);
+    cited = data ?? [];
+  }
+
+  // The answer is excerpt [1]; a card drawn from it has no chunk to point at,
+  // which [keepValid] turns into a null `source_chunk_id`.
+  const chunks: Chunk[] = [
+    {
+      id: '',
+      unitLabel: 'Tutor answer',
+      content: `Question: ${text(asked?.text)}\n\nAnswer: ${text(message.text)}`,
+    },
+    ...cited
+      .map((row) => ({
+        id: String(row.id),
+        unitLabel: text(row.unit_label) || null,
+        content: text(row.content),
+      }))
+      .filter((chunk) => chunk.content.length > 0),
+  ];
+
+  const raw = await interact({
+    systemInstruction: CARD_INSTRUCTION,
+    temperature: 0.2,
+    schema: CARD_SCHEMA,
+    input: `Write exactly ${CHAT_CARDS} flashcards that capture what the tutor `
+      + 'answer in excerpt [1] teaches. Use the other excerpts only to get '
+      + `details right.\n\n${numberedSource(chunks)}`,
+    maxOutputTokens: TOKENS_BASE + CHAT_CARDS * TOKENS_PER_CARD,
+    budgetMs: 45_000,
+  });
+
+  const parsed = parseJsonObject(raw);
+  // deno-lint-ignore no-explicit-any
+  const items: any[] = Array.isArray(parsed?.cards) ? parsed.cards : [];
+  const cards = keepValid(items, chunks).slice(0, CHAT_CARDS);
+  if (cards.length < CHAT_MIN_CARDS) {
+    console.error(`Only ${cards.length} cards usable from message ${messageId}`);
+    throw new HttpError(
+      502,
+      "The AI couldn't make cards from that answer. Try a longer one.",
+    );
+  }
+
+  // RLS scopes this to the caller's own decks.
+  const { data: existing } = await supa
+    .from('flashcard_decks')
+    .select('id')
+    .eq('name', CHAT_DECK_NAME)
+    .limit(1)
+    .maybeSingle();
+  let deckId: string | null = existing?.id ?? null;
+  const createdDeck = deckId === null;
+  if (createdDeck) {
+    const { data: deck, error: deckError } = await supa
+      .from('flashcard_decks')
+      .insert({ user_id: userId, name: CHAT_DECK_NAME })
+      .select('id')
+      .single();
+    if (deckError || !deck) {
+      console.error('Could not create the chat deck', deckError);
+      throw new HttpError(500, "Couldn't save those cards. Try again.");
+    }
+    deckId = deck.id;
+  }
+
+  const { error: cardError } = await supa.from('flashcards').insert(
+    cards.map((card) => ({
+      user_id: userId,
+      deck_id: deckId,
+      unit_label: card.unitLabel,
+      front: card.front,
+      back: card.back,
+      source_chunk_id: card.sourceChunkId,
+    })),
+  );
+  if (cardError) {
+    console.error('Could not save chat cards', cardError);
+    if (createdDeck) await supa.from('flashcard_decks').delete().eq('id', deckId);
+    throw new HttpError(500, "Couldn't save those cards. Try again.");
+  }
+
+  return json({ deckId, cards: cards.length, deckName: CHAT_DECK_NAME });
+}
 
 /// Clamps the requested count to one of [COUNTS] — see `generate-quiz`'s
 /// `pickLength` for why this rounds instead of refusing.
@@ -214,7 +371,8 @@ function keepValid(items: any[], chunks: Chunk[]): Card[] {
       front,
       back,
       unitLabel: label.length > 0 ? label.slice(0, 80) : chunk?.unitLabel ?? null,
-      sourceChunkId: chunk?.id ?? null,
+      // `||` rather than `??`: chat mode's answer excerpt has an empty id.
+      sourceChunkId: chunk?.id || null,
     });
   }
 

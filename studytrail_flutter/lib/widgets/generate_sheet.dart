@@ -121,7 +121,9 @@ class _GenerateSheetState<S extends AsyncStore>
     final materials = context.watch<OnboardingStore>();
     final store = context.watch<S>();
 
-    final ready = materials.uploaded
+    // Files first, then each playlist's videos in playlist order — a course
+    // reads in order, so its lectures should too.
+    final ready = materials.libraryOrder
         .where((m) => m.status == IngestStatus.embedded)
         .toList();
     final hidden = materials.uploaded.length - ready.length;

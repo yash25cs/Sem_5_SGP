@@ -422,6 +422,179 @@ non-trivial choice.
   are still `current_date` on a UTC server, so a day boundary falls at 05:30 IST —
   unchanged from 0008, and the freeze doesn't paper over it.
 
+### D-026 — Offline flashcards queue grades; the server still grades
+
+- **Decision:** Decks and every card due in the next seven days are cached on
+  the phone per student. Offline, reviews come from that cache and each grade
+  is queued; the next online load replays the queue through `apply_sr_grade`
+  in order, dropping any the server refuses (a deleted card).
+- **Why:** SM-2 scheduling and XP stay server-side (D-011, 0008). Computing a
+  schedule on the phone would mean two implementations that drift, and XP a
+  modified client could award itself.
+- **Trade-off:** A card graded offline isn't rescheduled until sync, so it can't
+  come round again in the same offline session.
+
+### D-027 — Teachers see aggregates only, and nothing below three students
+
+- **Decision:** `get_class_overview` returns totals, averages and a 14-day
+  series for the class, plus units three or more students miss. Below three
+  students it returns only the count. Teacher codes live in a table with no
+  API access at all.
+- **Why:** A "class average" of one student is that student's data. The
+  project's privacy stance (README) says who sees what; a teacher view that
+  showed individuals would break it.
+- **Trade-off:** A teacher can't help one struggling student from the
+  dashboard — that stays a conversation, not a query.
+- **Superseded by D-030:** the teacher view was removed on 2 October 2026.
+
+### D-028 — Long answers are graded, but pay no XP
+
+- **Decision:** `grade-answer` stores its grade with the service-role key
+  (insert is revoked from students) and awards nothing.
+- **Why:** An AI grade can be retried until lucky or gamed by pasting the notes
+  back in. XP stays tied to what the server can verify.
+
+### D-029 — Planner dates come from the phone
+
+- **Decision:** `get_roadmap_pace` and `plan_catch_up` take the student's own
+  date, refused if more than a day from the server's.
+- **Why:** The database clock is UTC; between midnight and 05:30 in India its
+  "today" is yesterday, and Home lists tasks by the phone's date — tasks
+  scheduled by the server in that window never appeared.
+- **Trade-off:** Streaks (`log_activity`, 0008) still use the server's date;
+  moving them is a larger change to every reward path.
+
+### D-030 — StudyTrail is for students only
+
+- **Decision:** The faculty view (D-027: teacher codes, `class_teachers`,
+  `get_class_overview`, shared materials) is removed from the app, the
+  migrations and the live database. `match_material_chunks` is back to the
+  student's own chunks only, and `0019` is now the room quiz.
+- **Why:** The app's audience is students. A second kind of account meant a
+  second onboarding path, a dashboard most users never see, and class-shared
+  notes leaking into every student's chat and quizzes.
+- **Trade-off:** Notes a teacher had shared stop reaching the class, and a
+  class's progress is no longer visible to anyone outside it.
+
+### D-031 — A group quiz keeps its answers on the server until it's over
+
+- **Decision:** The quiz, its questions and its players live in three tables
+  with no client grants at all. Clients read through `get_room_quiz`, which
+  leaves out the questions while voting, and the correct answers and other
+  players' scores until the quiz is finished. Hand-ins are marked by
+  `submit_room_quiz`. It starts only when every player has agreed, and one
+  "no" cancels it. XP goes to the top three (30/20/10) only with at least two
+  hand-ins and a score above zero, and for at most three paid quizzes a day.
+- **Why:** Everyone gets the same questions, so any answer readable early —
+  through the API or a broadcast — is the whole room's answer key. Requiring
+  agreement means nobody is dragged into a quiz mid-focus-block. The XP rules
+  stop two accounts trading wins, or a host farming solo podiums.
+- **Trade-off:** Results reach other phones by a ping and a re-read rather
+  than in the broadcast itself, so they can lag by up to the 15-second poll
+  when a ping is missed. Someone who joins after a quiz is proposed sits that
+  one out.
+
+### D-032 — Room channels are private
+
+- **Decision:** `room:<id>` is a private Realtime channel. Policies on
+  `realtime.messages` admit a member of that room only, through
+  `is_room_channel_member()`, which refuses any topic that isn't a room id.
+- **Why:** On a public channel anyone who learned a room id could hear the chat
+  pings, presence and quiz traffic, or send fake timer commands.
+- **Checked:** a live two-account test shows an outsider refused, and a public
+  channel of the same name hearing nothing, so the dashboard's "allow public
+  access" setting can stay as it is.
+- **Trade-off:** a member can still send a timer broadcast, and other members
+  will follow it. Realtime checks authorization when you join, not per
+  message, and a broadcast carries no verified sender, so "host only" can't be
+  enforced for an event. Outsiders are what this closes.
+
+### D-033 — The student's day, not UTC's
+
+- **Decision:** the phone sends its UTC offset at sign-in (`set_utc_offset`);
+  `log_activity`, the daily focus cap and the group-quiz cap use
+  `app_private.local_today()`. India (330) is assumed until the phone says.
+- **Why:** between midnight and 05:30 in India the server's date was
+  yesterday, so studying then counted for the wrong day and could break a
+  streak. One function fixes every reward path instead of a date parameter on
+  each RPC (D-029 did that for the planner only).
+- **Trade-off:** the task-XP daily cap in `complete_task` still resets on UTC.
+
+### D-034 — Chat turns are written by the server
+
+- **Decision:** `0020` revokes insert and update on `chat_messages` and
+  `chat_citations`; the `chat` function writes both turns with the service
+  key after checking the thread is the caller's.
+- **Why:** `curious_learner` counts the student's questions, and a client could
+  write — or rewrite — any turn, including "AI" ones.
+- **Trade-off:** no offline or no-function fallback for sending; the app shows
+  the error instead.
+
+### D-035 — Speed rounds run on the server's clock
+
+- **Decision:** a speed round's schedule is derived from `started_at` — a 5 s
+  lead, then each question's window and a 4 s reveal. The server refuses late
+  answers, scores speed from its own clock, and only returns a question's
+  answer and its points once that window has closed. Phones draw the countdown
+  from `server_now`.
+- **Why:** players' phones disagree about the time by seconds; a fair speed
+  bonus needs one clock, and the answer key must not leak while anyone can
+  still answer (D-031).
+- **Trade-off:** no pause, and a slow network eats into thinking time — the
+  1.5 s grace covers the trip, not a bad connection.
+
+### D-036 — The doubt board is class-scoped and RPC-only
+
+- **Decision:** doubts belong to a class; every read and write is an RPC that
+  checks the caller's class; blocks hide a person's posts. The AI's answer is
+  one per doubt, requested by the asker only, written from the asker's notes,
+  and labelled as such.
+- **Why:** names live in owner-only profiles, and each write has a rule the
+  client can't be trusted with (same class, own post, daily limits). Writing
+  the AI answer from anyone else's notes would show classmates material that
+  isn't theirs to see.
+- **Trade-off:** reports are reviewed in the dashboard; there is no moderator
+  role in the app (students only, D-030).
+
+### D-037 — The phone reads YouTube captions; the server only embeds them
+
+- **Decision:** the app fetches a video's captions (and a playlist's video
+  list) from YouTube itself, uploads the transcript as a `.txt`, and
+  `embed-material` chunks it on its timestamps. No Gemini video call.
+- **Why:** measured on 2026-10-02. From Supabase's servers YouTube's player API
+  answered every client with "Sign in to confirm you're not a bot"; from a home
+  connection the same call returned caption tracks needing no extra token.
+  Gemini can watch a YouTube URL, but a cold 60-second clip took 80 s and a
+  10-minute video didn't finish in 115 s — a lecture would outlive the
+  function. Captions cost no AI tokens and a 45-minute lecture embeds in 9 s.
+- **Trade-off:** a video without captions can't be added. The calls are the
+  ones YouTube's own apps make, not a published API, so a YouTube change can
+  break them; the playlist list falls back to the RSS feed (first 15 videos),
+  every failure is a plain sentence, and `test/live/youtube_live_test.dart`
+  shows quickly whether YouTube still answers the same way.
+
+### D-038 — A playlist is one library item, read three videos at a time
+
+- **Decision:** a YouTube playlist is one `material_playlists` row that counts
+  once against the 20-item limit; its videos are ordinary `video_link`
+  materials pointing at it. The phone reads them three at a time in the
+  background, and the playlist's stored video list lets an unfinished import
+  carry on at the next launch.
+- **Why:** one row per video spent a whole library on one course. The 20 cap
+  exists for Gemini reading cost and retrieval noise; a video costs only an
+  embedding call, and a course's own lectures are on-topic for its questions.
+  Three at a time took a measured ~11.5 s per video down to ~4 s (92 videos:
+  ~18 → ~6 minutes) at one embedding call each.
+- **Trade-off:** the phone has to be on for the reading, since captions can
+  only be fetched from it (D-037); a paused import shows **Resume** and picks
+  up on its own at launch. One playlist page is read — 100 videos.
+- **Rate limit (found in the first real run):** the free tier embeds about
+  100 chunks a minute, and a 92-video playlist read three at a time ran past
+  it in its second minute — 39 videos ended `failed`. A busy answer (429) now
+  makes every worker wait a minute and the video go again; three cooldowns in
+  a row with nothing read means the day's limit, so the reader pauses with
+  the videos still queued. The playlist row has **Retry** for any left failed.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

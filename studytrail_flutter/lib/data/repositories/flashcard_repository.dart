@@ -101,12 +101,29 @@ class FlashcardRepository {
     return Flashcard.fromMap(row);
   }
 
+  /// Every card due within the next [days] — what the offline cache keeps, so
+  /// a day or two without signal still has something to review.
+  Future<List<Flashcard>> getUpcomingCards({int days = 7, int limit = 300}) async {
+    final until = DateTime.now().toUtc().add(Duration(days: days));
+    final rows = await db
+        .from('flashcards')
+        .select()
+        .lte('due_at', until.toIso8601String())
+        .order('due_at', ascending: true)
+        .limit(limit);
+    return rows.map(Flashcard.fromMap).toList();
+  }
+
   /// Applies a review grade. The RPC updates ease/interval/repetitions/due_at
   /// per SM-2 and returns the rescheduled row.
-  Future<Flashcard> gradeCard(Flashcard card, SrGrade grade) async {
+  Future<Flashcard> gradeCard(Flashcard card, SrGrade grade) =>
+      gradeCardId(card.id, grade);
+
+  /// Same, by id — how a grade queued offline is replayed.
+  Future<Flashcard> gradeCardId(String cardId, SrGrade grade) async {
     final row = await db.rpc(
       'apply_sr_grade',
-      params: {'card_id': card.id, 'grade': grade.db},
+      params: {'card_id': cardId, 'grade': grade.db},
     );
     // The function returns a single `flashcards` record.
     final map = row is List
@@ -136,6 +153,29 @@ class FlashcardRepository {
     final res = await db.functions.invoke(
       'generate-flashcards',
       body: {'materialId': materialId, 'count': count},
+    );
+    final data = res.data;
+    if (data is Map && data['cards'] is int) return data['cards'] as int;
+    return 0;
+  }
+
+  /// A deck drawn only from the weakest units. Returns how many cards landed.
+  Future<int> generateWeakDeck() async {
+    final res = await db.functions.invoke(
+      'generate-flashcards',
+      body: {'weak': true},
+    );
+    final data = res.data;
+    if (data is Map && data['cards'] is int) return data['cards'] as int;
+    return 0;
+  }
+
+  /// Saves a few cards from one Trail AI answer into the student's
+  /// "Saved from chat" deck (created on first use). Returns how many landed.
+  Future<int> cardsFromChat(String messageId) async {
+    final res = await db.functions.invoke(
+      'generate-flashcards',
+      body: {'messageId': messageId},
     );
     final data = res.data;
     if (data is Map && data['cards'] is int) return data['cards'] as int;

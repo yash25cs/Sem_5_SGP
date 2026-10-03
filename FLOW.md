@@ -18,8 +18,9 @@ Flutter app starts
       -> signed in with a goal: HomeShell
   -> HomeShell keeps five tabs alive with IndexedStack
       -> Home | Roadmap | Chat | Quiz | Profile
-      -> the + button opens Flashcards, Focus timer, Study rooms,
-         Achievements, Leaderboard, Rewards, Analytics
+      -> the + button opens a focus session, then Practise (Flashcards,
+         Answer practice, Past papers & mock), Together (Study rooms, Class
+         leaderboard) and Progress (Achievements, Analytics, My rewards)
 ```
 
 ## Data flow
@@ -39,7 +40,7 @@ sign-out and sign-in.
 
 Study rooms add a second path beside it: `RoomStore` also holds one Supabase
 Realtime channel per room (`room:<id>`) for the host's timer broadcasts,
-presence, and inserts on `room_messages`.
+group-quiz pings, presence, and inserts on `room_messages`.
 
 ## Important user journeys
 
@@ -51,8 +52,8 @@ presence, and inserts on `room_messages`.
 4. `AcademicProfileScreen` saves college, program/branch with semester, and
    enrollment ID to `profiles`. A returning student missing any of those is sent
    here first on sign-in.
-5. `UploadMaterialScreen` uploads a file to the private `materials` bucket or
-   records a video link.
+5. `UploadMaterialScreen` uploads a file to the private `materials` bucket, or
+   reads in a YouTube video or playlist through its captions.
 6. `SetTargetScreen` creates the active goal and its subjects.
 7. `RootFlow` detects an existing goal on later launches and opens the app.
 
@@ -110,20 +111,74 @@ presence, and inserts on `room_messages`.
 
 1. The lobby (`BuddyRoomScreen`) lists open rooms from the student's class plus
    unscoped ones, newest first, hiding any older than 12 hours.
-2. Creating calls `create_study_room`, which validates the settings, closes any
-   other room the host left open, and enrols the host. Joining — by typed code or
-   the lobby's **Join** button — calls `join_room_by_code`, which checks the room
-   is open and not full under a row lock.
+2. Creating asks for a name and how many people (2–6, host included) — nothing
+   about the timer. `create_study_room` validates both, closes any other room
+   the host left open, and enrols the host. Joining — by typed code or the
+   lobby's **Join** button — calls `join_room_by_code`, which checks the room is
+   open and not full under a row lock.
 3. Entering loads names through `get_room_members` (profiles are owner-only) and
    the last 50 messages, then subscribes to the room's Realtime channel.
-4. Only the host drives the timer. Each start/pause/reset/phase change is a
-   `timer` broadcast carrying the seconds left; members mirror it. When a new
-   member's presence arrives, the host re-sends the current state as `sync`.
+4. Only the host drives the focus session. Inside the room, with the clock
+   stopped, the host sets the focus and break lengths (`set_room_timer`, saved
+   on the room so late joiners get them too). Each start/pause/reset/phase
+   change is a `timer` broadcast carrying the seconds left and both lengths;
+   members mirror it. When a new member's presence arrives, the host re-sends
+   the current state as `sync`.
 5. Chat inserts a `room_messages` row under an id the client picks, shows it
    immediately, and de-duplicates the Realtime echo on that id.
 6. Leaving deletes the student's own membership row. A trigger closes the room
    when the host or the last member leaves; a host closing on purpose also
    broadcasts `room: closed` so members are told.
+7. **Group quiz** (`0019`). The host picks one of their own ready materials and
+   5, 10 or 15 questions; `room-quiz` writes them and adds everyone in the room
+   as a player, the host already agreeing. Each member answers *I'm in* or *Not
+   now* (`vote_room_quiz`): one "no" cancels it, the last "yes" starts it. Only
+   then does `get_room_quiz` return the questions — the same ones, in the same
+   order, for everyone, without answers. `submit_room_quiz` marks a hand-in on
+   the server; the last hand-in (or the host's *End quiz now*) ranks everyone,
+   reveals all scores and the answers to the whole room, and pays the top three
+   30/20/10 XP. Every change pings `quiz` on the channel with just the quiz id,
+   and everyone re-reads it; a 15-second poll covers a missed ping (D-031).
+8. **Speed round** (`0022`). The host can pick a speed round instead (10, 20 or
+   30 s a question). After everyone agrees, a 5 s lead, then each question is
+   open to everyone at once for its window and followed by a 4 s reveal of the
+   right answer and the scores so far. Phones draw the countdown on the
+   server's clock (`server_now` in every read); answers go to
+   `answer_room_quiz_question`, which refuses anything outside the window and
+   scores 500 plus up to 500 for speed. `tick_room_quiz` (or the last answer to
+   the last question) closes the round (D-035).
+9. The channel is **private** (`0020`): Realtime checks `realtime.messages`
+   policies, so only the room's members can join, hear or send. A leaver drops
+   out of an open quiz instead of holding it up.
+
+### Doubt board
+
+1. Students in the same class share one board (`get_class_doubts`); posting
+   needs a class. Everything is an RPC — the tables have no client grants.
+2. Asking can request a first answer from `doubt-ai`, written from the asker's
+   own notes and labelled so. Classmates answer; anyone but the author can
+   upvote; the asker marks the answer that solved it.
+3. Report sends a snapshot to `doubt_reports`; block (shared with rooms) hides
+   the person's doubts and answers (D-036).
+
+### Study tools (Day 21)
+
+1. **Handwritten answers.** Answer practice can take one to three photos; they
+   go to `{uid}/answer_*`, `grade-answer` transcribes and grades them in one
+   call and deletes them.
+2. **Language.** `profiles.answer_language` (Settings) makes `chat`,
+   `summarize-material`, `grade-answer` feedback and `doubt-ai` answer in
+   Hindi or Gujarati; questions stay English.
+3. **My mistakes.** Every wrong or unanswered quiz question becomes a card in
+   one deck, due now — at finish for solo quizzes, when a group quiz ends for
+   group ones (never earlier: D-031).
+4. **Weekly report.** `get_weekly_report` totals the last seven of the
+   student's days against the seven before; a local Sunday 19:00 notification
+   opens the screen.
+5. **Calendar.** Settings → *Add to my calendar* builds an `.ics` on the phone
+   (exams with reminders, roadmap weeks, upcoming tasks) and shares it.
+6. **Home-screen widget.** Home pushes the next exam's date and today's tasks
+   to `StudyTrailWidget` (Android); it works out "days left" itself.
 
 ### Rewards and leaderboard
 
@@ -147,6 +202,29 @@ presence, and inserts on `room_messages`.
    removes the student's Storage objects and then the auth user; every user
    table cascades from it. The app then signs out.
 
+### Adaptive practice (Day 18)
+
+1. **Weak spots.** `get_weak_topics` ranks (material, unit) pairs by wrong quiz
+   answers and cards last graded hard/again. Home shows the top three;
+   *Practice quiz* / *Review cards* call `generate-quiz` / `generate-flashcards`
+   with `{weak: true}`, which read only those units' chunks.
+2. **Catch up.** Home loads `get_roadmap_pace(goal, today)`; when the student is
+   behind a straight line to the exam or has missed tasks, *Catch up* calls
+   `plan_catch_up`, which moves missed tasks to today and fills the next seven
+   days at the needed pace. Both take the phone's date (D-029).
+3. **Past papers.** The paper is uploaded as `{uid}/paper_*`, an `exam_papers`
+   row is created, and `analyze-paper` writes `paper_questions` tagged with the
+   student's own units. `get_exam_topics` ranks units by how often they're asked;
+   `generate-quiz {mock: true}` writes a 15-question mock weighted the same way.
+4. **Answer practice.** `grade-answer` writes a question from the weakest unit
+   (or takes a past-paper question), then grades the typed answer against that
+   unit's notes into `answer_attempts`. No XP (D-028).
+5. **Chat extras.** `chat` returns three follow-ups from the same call;
+   `generate-flashcards {messageId}` saves cards from one answer into "Saved from
+   chat".
+6. **Offline flashcards.** `FlashcardStore` falls back to `FlashcardCache` on a
+   network failure and queues grades; the next online load replays them (D-026).
+
 ### Material ingestion
 
 1. The upload screen stores the file in the private `materials` bucket and
@@ -155,8 +233,16 @@ presence, and inserts on `room_messages`.
    sections, embeds each one, and writes `material_chunks`.
 3. Chunks are inserted before `materials.status` becomes `embedded` — the
    `0009` status trigger rejects that status while a material has no chunks.
-4. Video links are recorded but not read: `embed-material` refuses them and the
-   screen says so.
+4. A YouTube video or playlist is read on the phone first (D-037): the app
+   fetches each video's captions, stores them as a timestamped `.txt` on a
+   `video_link` row, then invokes `embed-material`, which chunks on the
+   timestamps — each chunk is labelled like `12:40 · Lecture title`. YouTube
+   refuses caption requests from Supabase's servers, which is why the phone
+   does it. Any other link is saved as a bookmark that nothing reads.
+5. A playlist is one `material_playlists` row holding its video list (D-038);
+   its videos point at it through `materials.playlist_id`. The app reads them
+   three at a time in the background, and on launch or return to the
+   foreground carries on with any it hadn't reached.
 
 ## Backend boundaries
 
@@ -165,9 +251,11 @@ presence, and inserts on `room_messages`.
 - The `materials` Storage bucket is private and scoped to `/{user-id}/...`.
 - Gemini is called only from Supabase Edge Functions. Its API key is a function
   secret and never enters Flutter, requests, documentation, or version control.
-- `embed-material`, `chat`, `generate-flashcards` and `summarize-material` act
-  as the calling student: they forward the request's JWT to `supabase-js` and
-  rely on RLS, so no service-role key is used in any of the four.
+- `embed-material`, `generate-flashcards` and `summarize-material` act as the
+  calling student: they forward the request's JWT to `supabase-js` and rely on
+  RLS, so no service-role key is used in any of the three. `chat` reads the
+  same way but writes its two turns with the service-role key, since `0020`
+  took chat writes away from clients (D-034).
 - `generate-roadmap` and `generate-quiz` are the only functions that hold the
   service-role key, because `0008_rewards.sql` revokes `insert` on `milestones`,
   `milestone_tasks`, `quizzes` and `quiz_questions` from `authenticated`. Even
@@ -182,6 +270,16 @@ presence, and inserts on `room_messages`.
   (`DECISIONS.md` D-024).
 - XP spending is server-side: `reward_redemptions` has no client write grant, and
   `redeem_reward` is the only way in (`DECISIONS.md` D-025).
+- `grade-answer` also holds the service-role key, only to insert into
+  `answer_attempts`, which students cannot write.
+- `room-quiz` holds the service-role key only to insert a group quiz, its
+  questions and its players. The three `room_quiz*` tables have no client grants
+  at all, so a correct answer can't be read until the quiz is finished; voting,
+  marking, ranking and XP are RPCs (`DECISIONS.md` D-031).
+- `doubt-ai` holds the service-role key only to insert its one answer; the
+  doubt tables, like the quiz tables, have no client grants (D-036).
+- Room channels are private: `realtime.messages` policies admit only the
+  room's members (`is_room_channel_member`, D-032).
 
 ## Current implementation status — 30 September 2026
 
@@ -277,3 +375,9 @@ in `DECISIONS.md`.
 | 2026-09-04 | Closed the never-done Day 1–3 test debt and made the Android release build work, then verified the artefact rather than the exit code. | `studytrail_flutter/test/stores_test.dart` (new), `test/widget_test.dart`, `android/app/build.gradle.kts`, `SETUP.md`, `README.md`, `DECISIONS.md`, `DAILY_PLAN.md` | Day 3's four journeys had shipped and been hand-verified but were never pinned by a test. There is no mocking package here — the repositories reach Supabase through a global `db` getter, so the seam is the repository itself and each fake subclasses the real one, overriding only what the test exercises; the optimistic write, the revert, the re-queue and the derived state therefore all run for real. 12 store tests plus 7 widget/transport tests, `flutter test` 19/19, `flutter analyze` clean. The `HomeStore.planDayFromRoadmap` group moved out of `widget_test.dart` so the split is one file per level. The first `flutter build apk --release` **failed**: `isMinifyEnabled = false` in the app module turned off half of a pair the Flutter Gradle plugin sets together (`FlutterPlugin.kt` sets `isShrinkResources = true` alongside it), and AGP refused to configure — the earlier worry about needing per-plugin keep rules was simply wrong, since they arrive inside each plugin's AAR (D-023). With the override removed the build is exit 0 (54.1 MB fat APK, 202 s), and `aapt2` + `apksigner` confirm package `in.charusat.studytrail`, label `StudyTrail`, `versionCode 1` / `versionName 1.0.0`, `INTERNET` as the only permission, all 11 launcher resources intact through resource shrinking, and `CN=Android Debug` from the signing fallback. Measured per-ABI payloads (arm64 18.8 MB / armeabi-v7a 16.3 MB / x86_64 20.3 MB) are what `SETUP.md` §7's `--split-per-abi` guidance rests on. `README.md` now states plainly what the app collects, including the honest gap that there is no in-app account deletion. The physical-device pass in `SETUP.md` §8 stays outstanding. |
 | 2026-09-28 – 09-30 | Days 8–16 of `DAILY_PLAN.md`: summary and account-deletion functions, notifications and haptics, streak modal, leaderboard, rewards store, study rooms (`0010`), new logo and roadmap dashboard, academic-profile onboarding. | `studytrail_flutter/lib/**`, `supabase/functions/{summarize-material,delete-account}`, `supabase/migrations/0010_study_rooms.sql` | `flutter analyze` only. The 09-30 audit below found most of the new server paths broken or undeployed. |
 | 2026-09-30 | Audit and repair of the above against the live project. Study rooms fixed (`0011`: recursive policy, RPC-only membership, member names, host-close, late-join timer sync, deduped chat); rewards and leaderboard moved to the server (`0012`: wallet, streak freeze, total-XP ranking, no invented classmates); `delete-account` and `summarize-material` deployed; reminder fixed from 18:00 UTC to local time and wired to Settings; onboarding no longer hangs offline. | `supabase/migrations/{0004,0010,0011,0012}`, `supabase/all_migrations.sql`, `supabase/functions/delete-account`, `studytrail_flutter/lib/{data,models,state,screens,services}`, `android/app/src/main/AndroidManifest.xml`, `test/rooms_rewards_test.dart` | `flutter analyze` clean, `flutter test` 27/27, `flutter build apk --debug` exit 0. 34/34 live checks with throwaway accounts (room RLS and RPC rules, capacity, names, close trigger, wallet refusals, leaderboard order, account deletion); streak-freeze rules run in a rolled-back transaction; the full twelve-migration chain re-run on the live database inside a rolled-back transaction. Commit `c0842b7`. |
+| 2026-10-01 | Day 18: fifteen features — room XP, smarter reminders, saved dark mode, CI, chat follow-ups and save-as-cards, photo notes, room moderation, weak spots, catch-up planner, past papers + mock exam, long-answer grading, per-subject exam dates, offline flashcards, faculty view. Closed an XP-farming hole in `daily_tasks` on the way. | `supabase/migrations/0013`–`0019`, `supabase/functions/{analyze-paper,grade-answer}` (new), `chat`, `embed-material`, `generate-*`, `_shared/material.ts`, `studytrail_flutter/lib/**`, `test/*` (6 new files), `.github/workflows/checks.yml` | `flutter analyze` clean, `flutter test` 58/58, debug APK builds. Every feature probed live with self-deleting throwaway accounts (chat 16/16, photos 9/9, moderation 22/22, weak spots 17/17, catch-up 17/17, past papers 17/17, answer grading 14/16 — the two misses a bug in the probe itself, the scores were right — subject exams 8/8, faculty 20/20); the faculty probe used a temporary class so no real student's data was read. Each migration dry-run in a rolled-back transaction before applying, and the full 19-file chain re-run the same way at the end. |
+| 2026-10-02 | Day 19: layout fixes from device screenshots and a regrouped quick-actions sheet. | `studytrail_flutter/lib/widgets/{common,quick_actions_sheet}.dart`, `lib/shell.dart`, several screens, `test/layout_overflow_test.dart` (new) | `flutter analyze` clean; the new layout test renders the affected screens at 320 dp with long names and fails on any overflow, naming the widget. |
+| 2026-10-02 | Day 20: StudyTrail is for students only — the faculty view (Day 18's `0019_faculty.sql`) is removed from the app, the repo and the live database (D-030). Study rooms now ask only for a name and a size (2–6) at creation; the host sets the focus length inside the room; and a room can take a group quiz together (`0019_room_quiz.sql`, `room-quiz`). | `supabase/migrations/0019_room_quiz.sql` (replaces `0019_faculty.sql`), `supabase/functions/room-quiz` (new), `_shared/quiz.ts` (new, shared with `generate-quiz`), `supabase/config.toml`, `studytrail_flutter/lib/{models/room,data/repositories/room_repository,state/room_store}.dart`, `lib/screens/{buddy_room,study_room,room_quiz}_screen.dart`, `test/room_quiz_test.dart` (new) | Faculty objects dropped live and confirmed gone (0 left); `match_material_chunks` back to own-chunks-only. Room quiz probed live with four throwaway accounts, 26/26: a 7-person room refused, the size enforced on join, only the host sets the timer, only the host proposes, one quiz per room, questions hidden while voting and answers unreadable through the API, unanimous start, identical questions for every player, scores private until the end, double hand-in refused, last hand-in finishes, board ranked 5/3/0 with 30/20/0 XP actually paid, one "no" cancels, only the host ends; `generate-quiz` still works after the refactor. `flutter analyze` clean, `flutter test` 84/84. |
+| 2026-10-02 | Day 21: fourteen items. Fixes: private room channels, quiz leavers, streaks on the student's own day, server-only chat writes (`0020`). Features: handwritten answers, Hindi/Gujarati explanations, My mistakes deck, weekly report (`0021`), speed rounds (`0022`), class doubt board (`0023`, `doubt-ai`), calendar export, Android home-screen widget, a live two-account room test, Play Store preparation. | `supabase/migrations/0020`–`0023`, `supabase/functions/{doubt-ai (new),chat,grade-answer,summarize-material,room-quiz}`, `_shared/language.ts` (new), `studytrail_flutter/lib/**` (new: weekly report, doubt board, calendar export, home widget sync), `android/app/src/main/{AndroidManifest.xml,kotlin/.../StudyTrailWidget.kt,res/{layout,xml,drawable}}`, `test/{study_tools_test,live/rooms_live_test}.dart`, `PLAY_STORE.md`, `docs/` | Every migration dry-run in a rolled-back transaction, then applied. Live probes with self-deleting accounts: hardening 21/21, study tools 26/27 (the miss was the probe's own expected count), speed rounds 21/21 (real timing: hidden points while open, reveal after the window, early finish, podium XP), doubt board 27/27 (in a temporary class). `test/live/rooms_live_test.dart` against the hosted project: two clients on the private channel, an outsider refused, a same-named public channel hearing nothing, timer, presence, chat echo and quiz ping all delivered. Debug APK and release AAB build; the widget receiver is in the merged manifest. The widget itself is unverified on a device. |
+| 2026-10-03 | Day 22: YouTube videos and playlists are read into the library through their captions (D-037), and the link sheet that crashed the upload step (`'_dependents.isEmpty': is not true`) is fixed — plus the same bug in Settings' rename-goal sheet. | `studytrail_flutter/lib/services/youtube_service.dart` (new), `lib/widgets/video_link_sheet.dart` (new), `lib/{state/onboarding_store,data/repositories/material_repository,widgets/material_tile}.dart`, `lib/screens/{upload_material,chat,settings}_screen.dart`, `supabase/functions/embed-material`, `test/youtube_test.dart` (new), `test/live/youtube_live_test.dart` (new) | Measured first with a temporary probe function (deleted): YouTube's player API refuses Supabase's servers (bot check, every client), Gemini took 80 s for a cold 60-second clip, while a home connection gets captions with no token. Live end to end with a self-deleting account: a 10-minute video → 8 chunks and a 45-minute MIT lecture → 23 chunks in 9 s, both `embedded`; chat answered from each, citing `9:40 · 1. Algorithms and Computation`. The old sheet pattern reproduced the exact red-screen assertion in a widget test; the new sheet passes the same steps. `flutter analyze` clean, `flutter test` 128 passed (4 live skipped); live YouTube test 3/3. |
+| 2026-10-03 | Day 23: a YouTube playlist is one library item (D-038), read three videos at a time in the background and resumed at launch; the roadmap reads each lecture once; an animated launch screen. | `supabase/migrations/0024_playlists.sql` (new), `supabase/functions/generate-roadmap`, `studytrail_flutter/lib/{models/material_playlist,widgets/playlist_tile,widgets/launch_splash}.dart` (new), `lib/{state/onboarding_store,data/repositories/material_repository,services/youtube_service,models/study_material,main,shell}.dart`, `lib/screens/{upload_material,chat}_screen.dart`, `lib/widgets/generate_sheet.dart`, `test/{youtube_test,layout_overflow_test,widget_test}.dart` | 0024 dry-run in a rolled-back transaction with two real accounts (owner-only, video list not updatable, duplicate refused, no hanging a video off another student's playlist, delete cascades), then applied. Live probe 16/16 with a self-deleting account, including `generate-roadmap` planning from the video titles. The splash checked by eye in light and dark on a web build. `flutter analyze` clean, `flutter test` 138 passed (4 live skipped). The first real 92-video run hit the free tier's ~100 chunks/minute embedding limit (39 failed); confirmed live with a five-way probe, now waited out and retried. |

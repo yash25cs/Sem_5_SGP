@@ -53,16 +53,25 @@ class CardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A Wrap rather than a Row: when the title and its action don't fit on one
+    // line (a long class name, a large system font) the action drops to the
+    // next line instead of overflowing.
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        children: [
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2)),
-          const Spacer(),
-          ?action,
-        ],
+      child: SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2)),
+            ?action,
+          ],
+        ),
       ),
     );
   }
@@ -132,21 +141,35 @@ class PillButton extends StatelessWidget {
           ),
           child: Container(
             width: expand ? double.infinity : null,
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
-            child: Row(
-              mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[Icon(icon, size: 20, color: fg), const SizedBox(width: 9)],
-                Text(label,
-                    style: TextStyle(
-                        color: fg, fontSize: 15, fontWeight: FontWeight.w700)),
-                if (trailingIcon != null) ...[
-                  const SizedBox(width: 9),
-                  Icon(trailingIcon, size: 20, color: fg)
+            alignment: expand ? Alignment.center : null,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+            // Two buttons side by side on a narrow phone, or a large system
+            // font, used to push the label past the pill ("RIGHT OVERFLOWED").
+            // When the width is bounded the label now scales down to fit; it
+            // never grows, so a button with room looks exactly as before.
+            child: LayoutBuilder(builder: (context, constraints) {
+              final content = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 20, color: fg),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(label,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                          color: fg, fontSize: 15, fontWeight: FontWeight.w700)),
+                  if (trailingIcon != null) ...[
+                    const SizedBox(width: 8),
+                    Icon(trailingIcon, size: 20, color: fg)
+                  ],
                 ],
-              ],
-            ),
+              );
+              return constraints.maxWidth.isFinite
+                  ? FittedBox(fit: BoxFit.scaleDown, child: content)
+                  : content;
+            }),
           ),
         ),
       ),

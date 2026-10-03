@@ -103,6 +103,27 @@ class LocalPrefs {
   // purchase belongs to the student, not the phone; the stale keys are
   // harmless and simply never read again.
 
+  static const String _darkModeKey = 'dark_mode_v1';
+
+  /// Light unless the student switched to dark on this device.
+  static Future<bool> darkMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_darkModeKey) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setDarkMode(bool dark) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_darkModeKey, dark);
+    } catch (_) {
+      // Non-fatal: the mode still applies for this run.
+    }
+  }
+
   static const String _remindersKey = 'daily_reminder_enabled_v1';
 
   /// Whether the 6 PM study reminder is on. Defaults to on, which is what the

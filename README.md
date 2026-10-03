@@ -46,12 +46,13 @@ release builds, signing, and the manual device checklist.
 Written down plainly because an exam planner sees a student's coursework, and
 because anyone installing this deserves to know before they upload a file. There
 is no analytics SDK, no advertising library, no crash reporter, and no device
-identifier of any kind. The app declares three Android permissions:
-`INTERNET` to reach Supabase, `POST_NOTIFICATIONS` for the optional 6 PM study
-reminder (Android 13+ asks first), and `RECEIVE_BOOT_COMPLETED` so that reminder
-survives a restart. The reminder is scheduled on the phone itself — there is no
-push server. File uploads go through the system document picker, which needs no
-permission.
+identifier of any kind. The app declares four Android permissions:
+`INTERNET` to reach Supabase; `POST_NOTIFICATIONS` for the optional study
+reminders (Android 13+ asks first); `RECEIVE_BOOT_COMPLETED` so they survive a
+restart; and `VIBRATE`, which the notification plugin adds. Reminders are
+scheduled on the phone itself — there is no push server. Files come through the
+system document picker and photos through the system camera app, neither of
+which needs a permission of its own.
 
 Everything below lives in the Supabase project **you** create, under Row Level
 Security scoped to the signed-in user (`OWNERSHIP.md`):
@@ -62,28 +63,47 @@ Security scoped to the signed-in user (`OWNERSHIP.md`):
 - **Study material** — the PDFs and notes uploaded, in a private Storage bucket,
   plus the text extracted from them and its embeddings (`material_chunks`).
 - **Study activity** — goals, subjects, roadmap, daily tasks, quiz attempts and
-  answers, flashcard schedules, study-log entries, XP, streaks, badges, and
-  rewards bought with XP.
+  answers, flashcard schedules (including the "My mistakes" deck the server
+  fills from wrong quiz answers), study-log entries, XP, streaks, badges, and
+  rewards bought with XP — plus the phone's offset from UTC, so streaks follow
+  the student's own day.
 - **Chat** — questions asked, answers received, and which chunks were cited.
+- **Exam practice** — past papers uploaded and the questions read from them,
+  and written answers with the AI's marks and feedback. A photo of a
+  handwritten answer is read, marked and deleted; what was read from it is kept
+  with the grade.
+- **Doubt board** — doubts posted and answers written, upvotes, and any reports.
+- **Preferences** — the language explanations come back in (English, Hindi or
+  Gujarati).
+- **Study rooms** — messages sent, group-quiz answers and scores, plus any
+  blocks and reports the student makes (reports are kept for whoever runs the
+  project to review).
 
-Most of that is visible only to its owner. Three things are shared on purpose:
+Most of that is visible only to its owner. Four things are shared on purpose:
 
 - **Class leaderboard** — once a student joins a class, classmates see their
   name, level, total XP, and whether they bought the golden border. Leaving the
   class removes them from it.
 - **Study rooms** — members of the same room see each other's name, whether
-  they're focusing or on a break, and the room's chat messages.
+  they're focusing or on a break, and the room's chat messages. Once a group
+  quiz ends, everyone who was in it sees every player's score and rank.
 - **Open rooms** — every signed-in student can see an open room's name, invite
   code, and member count, which is how the lobby works.
+- **Doubt board** — classmates see the doubts and answers posted in their class,
+  with the author's name. An AI answer is labelled as written from the asker's
+  notes. Blocking someone hides what they post.
 
-A few preferences stay on the phone and are never uploaded: timer presets,
-whether the reminder is on, and whether the welcome tour has been seen.
+A few things stay on the phone and are never uploaded: timer presets, dark
+mode, whether reminders are on, whether the welcome tour has been seen, a copy
+of the student's flashcards for offline review, and what the home-screen widget
+shows (next exam, today's tasks, streak — cleared on sign-out).
 
 Two third parties are involved, both server-side:
 
 - **Supabase** hosts the database, storage, and Edge Functions.
-- **Google Gemini** receives material text (during ingestion and generation) and
-  chat questions, from the Edge Functions only. The Gemini key never reaches the
+- **Google Gemini** receives material text (during ingestion and generation),
+  chat questions, doubts, and answers to be marked — including answer photos —
+  from the Edge Functions only. The Gemini key never reaches the
   app (`DECISIONS.md` D-006), and nothing is sent to Gemini except in service of a
   request the student made.
 

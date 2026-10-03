@@ -3,6 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../data/local_prefs.dart';
+import '../services/calendar_export.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_colors.dart';
@@ -10,7 +11,7 @@ import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
-import '../services/notification_service.dart';
+import '../state/reminder_sync.dart';
 import '../widgets/nav.dart';
 import 'academic_profile_screen.dart';
 import 'set_target_screen.dart';
@@ -50,9 +51,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _setReminders(bool on) async {
     setState(() => _notifications = on);
-    await NotificationService().applyDailyReminder(enabled: on);
+    await LocalPrefs.setRemindersEnabled(on);
+    await ReminderSync.run(askPermission: on);
     _toast(on
-        ? 'Daily study reminder set for 6:00 PM.'
+        ? 'Reminders on: 6 PM, and 9 PM if your streak is at risk.'
         : 'Daily study reminder turned off.');
   }
 
@@ -230,13 +232,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    final controller = TextEditingController(text: goal.name);
+    // The field keeps its own controller (see [_SheetField]); this just
+    // follows what's typed.
+    var name = goal.name;
     final saved = await _showSheet<bool>(
       title: 'Study goal',
       builder: (sheetContext) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _SheetField(controller: controller, label: 'Goal name'),
+          _SheetField(
+              initialValue: goal.name,
+              label: 'Goal name',
+              onChanged: (v) => name = v),
           const SizedBox(height: 18),
           PillButton('Save',
               onTap: () => Navigator.of(sheetContext).pop(true)),
@@ -244,12 +251,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
 
-    if (saved == true && controller.text.trim().isNotEmpty) {
-      final ok = await store.updateGoal(
-          goalId: goal.id, name: controller.text.trim());
+    if (saved == true && name.trim().isNotEmpty) {
+      final ok = await store.updateGoal(goalId: goal.id, name: name.trim());
       _toast(ok ? 'Goal updated' : store.error ?? 'Could not save');
     }
-    controller.dispose();
   }
 
   Future<void> _editExamDate() async {
@@ -309,6 +314,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final ok = await store.updateGoal(pace: picked);
     _toast(ok ? 'Pace updated' : store.error ?? 'Could not save');
+  }
+
+  Future<void> _exportCalendar() async {
+    _toast('Putting your calendar together…');
+    try {
+      final events = await CalendarExport.collectAndShare();
+      if (events == 0) {
+        _toast('Nothing to add yet — set an exam date or plan a roadmap first.');
+      }
+    } catch (_) {
+      _toast("Couldn't build your calendar. Check your connection.");
+    }
+  }
+
+  Future<void> _pickLanguage() async {
+    final store = context.read<ProfileStore>();
+    final current = store.profile?.answerLanguage ?? AnswerLanguage.english;
+    final picked = await _showSheet<AnswerLanguage>(
+      title: 'Explain things in',
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+              'Chat answers, summaries and answer feedback. Questions and '
+              'technical terms stay in English, like the exam.',
+              style: TextStyle(
+                  color: context.p.ink3, fontSize: 12.5, height: 1.4)),
+          const SizedBox(height: 6),
+          for (final language in AnswerLanguage.values)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Symbols.translate, color: context.p.primary),
+              title: Text(language.label,
+                  style: TextStyle(
+                      color: context.p.ink,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600)),
+              trailing: current == language
+                  ? Icon(Symbols.check, color: context.p.primary)
+                  : null,
+              onTap: () => Navigator.of(sheetContext).pop(language),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || picked == current) return;
+    final ok = await store.setAnswerLanguage(picked);
+    _toast(ok
+        ? 'Explanations will come in ${picked.label}.'
+        : store.error ?? 'Could not save');
   }
 
   /// Joining a class is what puts the student on the leaderboard.
@@ -619,6 +675,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _notifications,
                         onChanged: _setReminders,
                       )),
+                  _Row(Symbols.translate, 'Explanations in', p.green,
+                      value: (profile?.answerLanguage ?? AnswerLanguage.english)
+                          .label
+                          .split(' ')
+                          .first,
+                      trailing: _chev(p),
+                      onTap: _pickLanguage),
                 ]),
                 _GroupLabel('Academic Profile'),
                 _Group(children: [
@@ -664,6 +727,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       value: goal?.pace.label ?? '—',
                       trailing: _chev(p),
                       onTap: _editPace),
+                  _Row(Symbols.calendar_add_on, 'Add to my calendar', p.green,
+                      value: 'Exams & plan',
+                      trailing: _chev(p),
+                      onTap: _exportCalendar),
                 ]),
                 const SizedBox(height: 20),
 
@@ -712,19 +779,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 /// Labelled text field used inside the editor sheets.
+///
+/// A [TextFormField] with an initial value owns its controller and disposes it
+/// with itself. The caller used to own one and dispose it as soon as the
+/// sheet's future completed — which happens when the sheet *starts* closing,
+/// with the field still on screen — and that crashed debug builds with
+/// `'_dependents.isEmpty': is not true`.
 class _SheetField extends StatelessWidget {
-  const _SheetField({required this.controller, required this.label});
+  const _SheetField({
+    required this.initialValue,
+    required this.label,
+    required this.onChanged,
+  });
 
-  final TextEditingController controller;
+  final String initialValue;
   final String label;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: TextField(
-        controller: controller,
+      child: TextFormField(
+        initialValue: initialValue,
+        onChanged: onChanged,
         textCapitalization: TextCapitalization.words,
         style: TextStyle(color: p.ink, fontSize: 14.5),
         decoration: InputDecoration(

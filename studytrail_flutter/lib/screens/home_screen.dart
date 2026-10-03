@@ -12,14 +12,18 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
+import 'flashcards_screen.dart';
 import 'profile_screen.dart';
 import 'set_target_screen.dart';
 
 /// Home / dashboard tab — greeting, streak, today's plan, and subject progress.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.onOpenProfile});
+  const HomeScreen({super.key, this.onOpenProfile, this.onOpenQuiz});
 
   final VoidCallback? onOpenProfile;
+
+  /// Switches the shell to the Quiz tab, for a freshly generated quiz.
+  final VoidCallback? onOpenQuiz;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -36,8 +40,87 @@ class _HomeScreenState extends State<HomeScreen> {
     _confetti = ConfettiController(duration: const Duration(seconds: 2));
     // Deferred: the store notifies listeners, which can't happen during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<HomeStore>().load();
+      if (!mounted) return;
+      context.read<HomeStore>().load();
+      context.read<WeakSpotsStore>().load();
     });
+  }
+
+  Future<void> _catchUp() async {
+    final store = context.read<HomeStore>();
+    final result = await store.catchUp();
+    if (!mounted) return;
+    if (result == null) {
+      _toast(store.error ?? 'Could not plan that. Try again.');
+      return;
+    }
+    final moved = result.moved == 0
+        ? ''
+        : ' ${result.moved} missed task${result.moved == 1 ? '' : 's'} '
+            'moved to today.';
+    _toast('Next 7 days planned at ${result.perDay} a day.$moved');
+  }
+
+  static const _monthNames = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  Future<void> _pickExamDate(Subject subject) async {
+    final store = context.read<HomeStore>();
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: subject.examDate ?? now.add(const Duration(days: 14)),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 730)),
+      helpText: '${subject.name} exam date',
+    );
+    if (picked == null || !mounted) return;
+    final ok = await store.setSubjectExamDate(subject, picked);
+    if (!mounted) return;
+    _toast(ok
+        ? '${subject.name} exam set for ${picked.day} ${_monthNames[picked.month - 1]}.'
+        : store.error ?? 'Could not save that date.');
+  }
+
+  /// One tap from "you keep missing Unit 2" to practice on Unit 2.
+  Future<void> _practiceWeak({required bool quiz}) async {
+    final weak = context.read<WeakSpotsStore>();
+    final messenger = ScaffoldMessenger.of(context);
+    if (quiz) {
+      final id = await weak.practiceQuiz();
+      if (!mounted) return;
+      if (id == null) {
+        _toast(weak.error ?? 'Could not make that quiz.');
+        return;
+      }
+      await context.read<QuizStore>().load();
+      messenger.showSnackBar(SnackBar(
+        content: const Text('Weak-spots quiz ready.'),
+        action: widget.onOpenQuiz == null
+            ? null
+            : SnackBarAction(label: 'Open', onPressed: widget.onOpenQuiz!),
+      ));
+    } else {
+      final saved = await weak.practiceCards();
+      if (!mounted) return;
+      if (saved == null) {
+        _toast(weak.error ?? 'Could not make those cards.');
+        return;
+      }
+      await context.read<FlashcardStore>().load();
+      messenger.showSnackBar(SnackBar(
+        content: Text('$saved cards on your weak spots, due now.'),
+        action: SnackBarAction(
+          label: 'Review',
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (routeCtx) => FlashcardsScreen(
+                onBack: () => Navigator.of(routeCtx).pop()),
+          )),
+        ),
+      ));
+    }
   }
 
   @override
@@ -248,7 +331,10 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         RefreshIndicator(
       color: p.primary,
-      onRefresh: () => context.read<HomeStore>().load(),
+      onRefresh: () {
+        context.read<WeakSpotsStore>().load();
+        return context.read<HomeStore>().load();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
         children: [
@@ -326,7 +412,20 @@ class _HomeScreenState extends State<HomeScreen> {
             )
           else
             _HeroCard(goal: goal, store: store),
+          if (store.nextExam case final next?) ...[
+            const SizedBox(height: 10),
+            _NextExamStrip(subject: next),
+          ],
           const SizedBox(height: 22),
+
+          if (store.pace case final pace? when pace.needsCatchUp) ...[
+            _CatchUpBanner(
+              pace: pace,
+              busy: store.busy,
+              onCatchUp: _catchUp,
+            ),
+            const SizedBox(height: 18),
+          ],
 
           // today's plan
           CardHeader(
@@ -383,6 +482,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           const SizedBox(height: 20),
 
+          _WeakSpotsCard(
+            store: context.watch<WeakSpotsStore>(),
+            onQuiz: () => _practiceWeak(quiz: true),
+            onCards: () => _practiceWeak(quiz: false),
+          ),
+
           // subject progress
           if (store.subjects.isNotEmpty) ...[
             CardHeader('Subjects'),
@@ -391,7 +496,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   for (var i = 0; i < store.subjects.length; i++) ...[
                     if (i > 0) const SizedBox(height: 16),
-                    _SubjectRow(store.subjects[i]),
+                    _SubjectRow(
+                      store.subjects[i],
+                      onSetExam: store.busy
+                          ? null
+                          : () => _pickExamDate(store.subjects[i]),
+                    ),
                   ],
                 ],
               ),
@@ -417,6 +527,188 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+/// Shown when the roadmap has slipped: missed days, or fewer topics done than
+/// a straight line to the exam says there should be.
+class _CatchUpBanner extends StatelessWidget {
+  const _CatchUpBanner({
+    required this.pace,
+    required this.busy,
+    required this.onCatchUp,
+  });
+
+  final RoadmapPace pace;
+  final bool busy;
+  final VoidCallback onCatchUp;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final String headline;
+    if (pace.overdue > 0) {
+      headline = '${pace.overdue} task${pace.overdue == 1 ? '' : 's'} '
+          'missed on earlier days';
+    } else {
+      headline = '${pace.behind} topic${pace.behind == 1 ? '' : 's'} '
+          'behind your plan';
+    }
+    return AppCard(
+      color: p.amberSoft.withValues(alpha: 0.5),
+      shadow: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Symbols.running_with_errors, color: p.onAmber, size: 26),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(headline,
+                        style: TextStyle(
+                            color: p.ink,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(
+                        '${pace.perDay} a day finishes your roadmap in the '
+                        '${pace.daysLeft} day${pace.daysLeft == 1 ? '' : 's'} left.',
+                        style: TextStyle(color: p.ink2, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Its own row: beside the text it squeezed the message to a sliver
+          // on narrow phones.
+          Align(
+            alignment: Alignment.centerRight,
+            child: PillButton('Catch up',
+                icon: Symbols.event_repeat,
+                expand: false,
+                onTap: busy ? null : onCatchUp),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The units the student keeps missing, with practice aimed at them.
+///
+/// Before there's any evidence it's a one-line hint rather than an empty card,
+/// so Home isn't padded with a section that has nothing to say yet.
+class _WeakSpotsCard extends StatelessWidget {
+  const _WeakSpotsCard({
+    required this.store,
+    required this.onQuiz,
+    required this.onCards,
+  });
+
+  final WeakSpotsStore store;
+  final VoidCallback onQuiz;
+  final VoidCallback onCards;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final topics = store.topics;
+
+    if (topics.isEmpty) {
+      if (!store.loaded) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Row(
+          children: [
+            Icon(Symbols.target, size: 18, color: p.ink3),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Take a quiz or review cards and your weak spots will show '
+                'up here.',
+                style: TextStyle(color: p.ink3, fontSize: 12.5, height: 1.35),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final busy = store.busy;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CardHeader('Weak spots'),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < topics.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(topics[i].name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: p.ink,
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 2),
+                            Text(topics[i].evidence,
+                                style: TextStyle(
+                                    color: p.ink3, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      SoftChip(
+                        '${(topics[i].missRate * 100).round()}% missed',
+                        tone: ChipTone.coral,
+                        small: true,
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: PillButton(
+                        store.making == 'quiz' ? 'Writing…' : 'Practice quiz',
+                        icon: store.making == 'quiz' ? null : Symbols.quiz,
+                        onTap: busy ? null : onQuiz,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: PillButton(
+                        store.making == 'cards' ? 'Writing…' : 'Review cards',
+                        icon: store.making == 'cards' ? null : Symbols.style,
+                        variant: PillVariant.outline,
+                        onTap: busy ? null : onCards,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _HeroCard extends StatelessWidget {
   const _HeroCard({required this.goal, required this.store});
 
@@ -439,8 +731,10 @@ class _HeroCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              InkWell(
+              Flexible(
+                child: InkWell(
                 onTap: () => showStreakCelebrationSheet(context),
                 borderRadius: BorderRadius.circular(999),
                 child: Container(
@@ -453,18 +747,23 @@ class _HeroCard extends StatelessWidget {
                     const Icon(Symbols.local_fire_department,
                         color: Color(0xFFFFC773), size: 18, fill: 1),
                     const SizedBox(width: 5),
-                    Text(
-                        streak == 0
-                            ? 'Start your streak'
-                            : '$streak-day streak',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w800)),
+                    Flexible(
+                      child: Text(
+                          streak == 0
+                              ? 'Start your streak'
+                              : '$streak-day streak',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w800)),
+                    ),
                   ]),
                 ),
               ),
-              const Spacer(),
+              ),
+              const SizedBox(width: 10),
               if ((goal.roadmapDays ?? 0) > 0)
                 Text('Day ${goal.currentDay} / ${goal.roadmapDays}',
                     style: TextStyle(
@@ -629,10 +928,62 @@ class _TaskTile extends StatelessWidget {
   }
 }
 
-class _SubjectRow extends StatelessWidget {
-  const _SubjectRow(this.subject);
+/// "Next exam: DBMS · 15 Oct · in 13 days" under the hero card.
+class _NextExamStrip extends StatelessWidget {
+  const _NextExamStrip({required this.subject});
 
   final Subject subject;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final days = subject.daysUntilExam() ?? 0;
+    final exam = subject.examDate!;
+    final when = switch (days) {
+      0 => 'today — good luck!',
+      1 => 'tomorrow',
+      _ => 'in $days days',
+    };
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: days <= 3 ? p.coralSoft : p.card,
+      shadow: false,
+      child: Row(
+        children: [
+          Icon(Symbols.event, size: 20, color: days <= 3 ? p.coral : p.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                    text: 'Next exam: ',
+                    style: TextStyle(color: p.ink3, fontSize: 13)),
+                TextSpan(
+                    text: subject.name,
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800)),
+                TextSpan(
+                    text: ' · ${exam.day} '
+                        '${_HomeScreenState._monthNames[exam.month - 1]} · $when',
+                    style: TextStyle(color: p.ink2, fontSize: 13)),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SubjectRow extends StatelessWidget {
+  const _SubjectRow(this.subject, {this.onSetExam});
+
+  final Subject subject;
+
+  /// Opens the date picker for this subject's exam.
+  final VoidCallback? onSetExam;
 
   @override
   Widget build(BuildContext context) {
@@ -677,6 +1028,28 @@ class _SubjectRow extends StatelessWidget {
               ),
               const SizedBox(height: 7),
               ProgressTrack(value, color: style.color, height: 7),
+              const SizedBox(height: 6),
+              GestureDetector(
+                onTap: onSetExam,
+                child: Row(
+                  children: [
+                    Icon(Symbols.event, size: 14, color: p.ink3),
+                    const SizedBox(width: 4),
+                    Text(
+                      switch (subject.daysUntilExam()) {
+                        null => 'Set exam date',
+                        < 0 => 'Exam done',
+                        0 => 'Exam today',
+                        final d => 'Exam in $d day${d == 1 ? '' : 's'}',
+                      },
+                      style: TextStyle(
+                          color: subject.examDate == null ? p.primary : p.ink3,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),

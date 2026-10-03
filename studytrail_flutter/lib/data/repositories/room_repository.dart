@@ -42,7 +42,7 @@ class RoomRepository {
     String? classId,
     int timerMin = 25,
     int breakMin = 5,
-    int maxMembers = 10,
+    int maxMembers = 4,
   }) async {
     final res = await db.rpc(
       'create_study_room',
@@ -129,8 +129,139 @@ class RoomRepository {
     return RoomMessage.fromMap(row);
   }
 
-  RealtimeChannel createRoomChannel(String roomId) =>
-      db.channel('room:$roomId');
+  // ── Focus length and group quizzes (0019_room_quiz.sql) ──
+
+  /// Host only: the room's focus and break lengths. They live on the room, so
+  /// someone who joins later gets the same ones.
+  Future<void> setTimer(
+    String roomId, {
+    required int focusMin,
+    required int breakMin,
+  }) async {
+    await db.rpc('set_room_timer', params: {
+      'p_room': roomId,
+      'p_focus_min': focusMin,
+      'p_break_min': breakMin,
+    });
+  }
+
+  /// Host only: writes the questions from one of the host's materials and
+  /// invites everyone in the room. Returns the new quiz's id.
+  Future<String> proposeQuiz({
+    required String roomId,
+    required String materialId,
+    required int count,
+    bool speed = false,
+    int seconds = 20,
+  }) async {
+    // A FunctionException carries the function's own message ("Only the host
+    // can start a group quiz."); friendlyError reads it out.
+    final res = await db.functions.invoke('room-quiz', body: {
+      'roomId': roomId,
+      'materialId': materialId,
+      'count': count,
+      if (speed) ...{'mode': 'speed', 'seconds': seconds},
+    });
+    final data = res.data;
+    if (data is Map && data['quizId'] is String) return data['quizId'] as String;
+    throw "Couldn't start the quiz. Try again.";
+  }
+
+  /// The quiz going on in a room, or one that ended in the last hour.
+  Future<RoomQuiz?> getActiveQuiz(String roomId) async {
+    final res = await db.rpc('get_active_room_quiz', params: {'p_room': roomId});
+    return res is Map ? RoomQuiz.fromMap(Map<String, dynamic>.from(res)) : null;
+  }
+
+  Future<RoomQuiz> getQuiz(String quizId) =>
+      _quizCall('get_room_quiz', {'p_quiz': quizId});
+
+  /// One "no" cancels the quiz; the last "yes" starts it.
+  Future<RoomQuiz> voteQuiz(String quizId, bool agree) =>
+      _quizCall('vote_room_quiz', {'p_quiz': quizId, 'p_agree': agree});
+
+  /// Hands in [picks] (question id → option index). Marked on the server.
+  Future<RoomQuiz> submitQuiz(String quizId, Map<String, int> picks) =>
+      _quizCall('submit_room_quiz', {'p_quiz': quizId, 'p_picks': picks});
+
+  /// Speed round: one answer, inside that question's window.
+  Future<RoomQuiz> answerSpeed(String quizId, String questionId, int pick) =>
+      _quizCall('answer_room_quiz_question', {
+        'p_quiz': quizId,
+        'p_question': questionId,
+        'p_pick': pick,
+      });
+
+  /// Speed round: closes it once its clock has run out. Harmless too early.
+  Future<RoomQuiz> tickQuiz(String quizId) =>
+      _quizCall('tick_room_quiz', {'p_quiz': quizId});
+
+  /// Host only: cancels a vote, or finishes a running quiz for whoever has
+  /// handed in.
+  Future<RoomQuiz> endQuiz(String quizId) =>
+      _quizCall('end_room_quiz', {'p_quiz': quizId});
+
+  Future<RoomQuiz> _quizCall(String fn, Map<String, dynamic> params) async {
+    final res = await db.rpc(fn, params: params);
+    return RoomQuiz.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
+  // ── Moderation (0013_room_moderation.sql) ──
+
+  /// Everyone this student has blocked. Their messages are hidden everywhere.
+  Future<Set<String>> getBlockedIds() async {
+    final rows = await db.from('user_blocks').select('blocked_id');
+    return {for (final r in rows) r['blocked_id'] as String};
+  }
+
+  Future<void> block(String userId) async {
+    await db.from('user_blocks').upsert(
+      {'blocker_id': requireUserId, 'blocked_id': userId},
+      onConflict: 'blocker_id,blocked_id',
+      ignoreDuplicates: true,
+    );
+  }
+
+  Future<void> unblock(String userId) async {
+    await db
+        .from('user_blocks')
+        .delete()
+        .eq('blocker_id', requireUserId)
+        .eq('blocked_id', userId);
+  }
+
+  /// Files a report for review in the dashboard. [reason] is one of `spam`,
+  /// `harassment`, `inappropriate`, `other`.
+  Future<void> report({
+    required String roomId,
+    required String userId,
+    required String reason,
+    String? messageId,
+    String? details,
+  }) async {
+    await db.rpc('report_room_user', params: {
+      'p_room_id': roomId,
+      'p_reported_id': userId,
+      'p_reason': reason,
+      'p_message_id': messageId,
+      'p_details': details,
+    });
+  }
+
+  /// Host only: takes [userId] out of the room; they can't rejoin it.
+  Future<void> removeMember(String roomId, String userId) async {
+    await db.rpc('remove_room_member', params: {
+      'p_room_id': roomId,
+      'p_user_id': userId,
+    });
+  }
+
+  /// A private channel: `0020_hardening.sql` lets only the room's members join
+  /// it, hear its broadcasts and presence, or send on it.
+  RealtimeChannel createRoomChannel(String roomId) => db.channel(
+        'room:$roomId',
+        opts: const RealtimeChannelConfig(private: true),
+      );
 
   Future<void> removeRoomChannel(RealtimeChannel channel) =>
       db.removeChannel(channel);

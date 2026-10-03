@@ -1,4 +1,5 @@
 import { interact } from '../_shared/gemini.ts';
+import { languageOf, languageRule } from '../_shared/language.ts';
 import {
   loadMaterialSource,
   numberedSource,
@@ -21,7 +22,7 @@ Rules:
 - No headings, no introduction, no conclusion. Just the bullets, each starting with •.`;
 
 serve(async (req) => {
-  const { supa } = await requireUser(req);
+  const { supa, userId } = await requireUser(req);
   const body = await readJson(req);
 
   const materialId = typeof body.materialId === 'string'
@@ -31,14 +32,18 @@ serve(async (req) => {
     throw new HttpError(400, 'That request was malformed.');
   }
 
-  const source = await loadMaterialSource(supa, materialId);
+  const [source, lang] = await Promise.all([
+    loadMaterialSource(supa, materialId),
+    languageOf(supa, userId),
+  ]);
   const chunks = sampleChunks(source.chunks);
 
   const answer = await interact({
-    systemInstruction: SYSTEM_INSTRUCTION,
+    systemInstruction: SYSTEM_INSTRUCTION + languageRule(lang),
     temperature: 0.2,
     input: `Material: ${source.title}\n\nSummarize these excerpts.\n\n${numberedSource(chunks)}`,
-    maxOutputTokens: 2048,
+    // Hindi and Gujarati script take roughly twice the tokens.
+    maxOutputTokens: lang === 'en' ? 2048 : 4096,
     budgetMs: 30_000,
   });
 

@@ -45,6 +45,8 @@ dependencies:
   confetti: ^0.8.0
   shimmer: ^4.0.0
   share_plus: ^12.0.2
+  image_picker: ^1.2.3
+  home_widget: ^0.10.0
 
 dev_dependencies:
   flutter_test:

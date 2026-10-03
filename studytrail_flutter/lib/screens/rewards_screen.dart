@@ -214,15 +214,19 @@ class _RewardsScreenState extends State<RewardsScreen>
                               color: Color(0xFFF59E0B),
                             ),
                             const SizedBox(width: 4),
-                            Text(
-                              wallet == null
-                                  ? '… XP available'
-                                  : '${wallet.balance} XP available',
-                              style: TextStyle(
-                                color:
-                                    isDark ? p.amber : const Color(0xFF78350F),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
+                            Flexible(
+                              child: Text(
+                                wallet == null
+                                    ? '… XP available'
+                                    : '${wallet.balance} XP available',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color:
+                                      isDark ? p.amber : const Color(0xFF78350F),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
                           ],
