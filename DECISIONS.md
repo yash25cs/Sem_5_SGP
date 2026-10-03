@@ -595,6 +595,19 @@ non-trivial choice.
   a row with nothing read means the day's limit, so the reader pauses with
   the videos still queued. The playlist row has **Retry** for any left failed.
 
+### D-039 — Every launch opens a new chat; the thread is written on the first question
+
+- **Decision:** the chat screen opens empty each launch; past chats are in a
+  history panel that slides in from the left. A `chat_threads` row is created
+  by the first question, not by opening the screen or tapping New chat.
+- **Why:** it is how every AI chat app the students use behaves, and a
+  months-long single thread made old answers drown new ones. Writing the row
+  late means the history only lists chats someone actually asked something
+  in; the list reads each chat's first question in the same query, so no
+  title column or title-writing call was needed.
+- **Trade-off:** chats are named by their first question rather than an AI
+  summary, and listed by when they started, not when they were last used.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

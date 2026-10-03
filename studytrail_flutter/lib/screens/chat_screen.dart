@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
+import '../widgets/chat_history_panel.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
@@ -129,20 +130,9 @@ class _ChatScreenState extends State<ChatScreen> {
           padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
           child: Row(
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                      colors: [p.primary, p.primary2],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight),
-                  boxShadow: p.glow,
-                ),
-                child: const Icon(Symbols.smart_toy,
-                    color: Colors.white, size: 24, fill: 1),
-              ),
+              // The AI's avatar doubles as the way into past chats, with a
+              // small history badge so it reads as a button.
+              _HistoryButton(onTap: () => showChatHistory(context)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -182,7 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
               // history stays on the server.
               RoundIconButton(Symbols.edit_square,
                   plain: false,
-                  onTap: store.busy
+                  onTap: store.sending
                       ? null
                       : () => context.read<ChatStore>().newThread()),
             ],
@@ -192,7 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
         // messages
         Expanded(
-          child: store.loading && !store.loaded
+          child: store.opening || (store.loading && !store.loaded)
               ? const Padding(
                   padding: EdgeInsets.fromLTRB(20, 18, 20, 18),
                   child: LoadingBlock(height: 140),
@@ -323,6 +313,63 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The AI's round avatar, which opens the chat history.
+class _HistoryButton extends StatelessWidget {
+  const _HistoryButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return Semantics(
+      button: true,
+      label: 'Chat history',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                      colors: [p.primary, p.primary2],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight),
+                  boxShadow: p.glow,
+                ),
+                child: const Icon(Symbols.smart_toy,
+                    color: Colors.white, size: 24, fill: 1),
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: p.card,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: p.bg, width: 1.6),
+                    boxShadow: p.shadowSm,
+                  ),
+                  child: Icon(Symbols.history, size: 13, color: p.primary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

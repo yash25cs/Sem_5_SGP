@@ -77,17 +77,36 @@ class ChatCitation {
 
 /// A row of `chat_threads`.
 class ChatThread {
-  const ChatThread({required this.id, this.title, this.createdAt});
+  const ChatThread({required this.id, this.title, this.preview, this.createdAt});
 
   final String id;
   final String? title;
+
+  /// The chat's first question — what the history panel lists it by, since
+  /// nothing writes [title].
+  final String? preview;
   final DateTime? createdAt;
 
-  factory ChatThread.fromMap(Map<String, dynamic> m) => ChatThread(
-        id: m['id'] as String,
-        title: m['title'] as String?,
-        createdAt: m['created_at'] == null
-            ? null
-            : DateTime.parse(m['created_at'] as String),
-      );
+  /// The name shown in the history panel.
+  String get displayTitle {
+    for (final name in [title, preview]) {
+      final clean = name?.trim().replaceAll(RegExp(r'\s+'), ' ');
+      if (clean != null && clean.isNotEmpty) return clean;
+    }
+    return 'New chat';
+  }
+
+  factory ChatThread.fromMap(Map<String, dynamic> m) {
+    final first = m['first'];
+    return ChatThread(
+      id: m['id'] as String,
+      title: m['title'] as String?,
+      preview: first is List && first.isNotEmpty && first.first is Map
+          ? (first.first as Map)['text'] as String?
+          : null,
+      createdAt: m['created_at'] == null
+          ? null
+          : DateTime.parse(m['created_at'] as String).toLocal(),
+    );
+  }
 }

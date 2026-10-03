@@ -70,7 +70,7 @@ class _FakeChat extends ChatRepository {
   List<String> suggestions;
 
   @override
-  Future<ChatThread> getOrCreateThread({String? goalId}) async =>
+  Future<ChatThread> createThread({String? title, String? goalId}) async =>
       const ChatThread(id: 't1');
 
   @override

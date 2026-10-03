@@ -390,7 +390,7 @@ class _NoGoal extends GoalRepository {
 class _Chat extends ChatRepository {
   bool _asked = false;
   @override
-  Future<ChatThread> getOrCreateThread({String? goalId}) async =>
+  Future<ChatThread> createThread({String? title, String? goalId}) async =>
       const ChatThread(id: 't');
   @override
   Future<List<ChatMessage>> getMessages(String threadId) async => !_asked

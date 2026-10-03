@@ -9,26 +9,23 @@ import '../supabase_client.dart';
 class ChatRepository {
   const ChatRepository();
 
-  Future<List<ChatThread>> getThreads({int limit = 20}) async {
+  /// The student's past chats for the history panel, newest first, each with
+  /// its first question as [ChatThread.preview].
+  ///
+  /// `!inner` leaves out threads nobody asked anything in — the app used to
+  /// open a fresh thread on every New chat tap, so there are empty ones.
+  /// `ascending: true` on the messages is needed: postgrest-dart orders
+  /// descending by default, which would preview the *latest* question.
+  Future<List<ChatThread>> getHistory({int limit = 50}) async {
     final rows = await db
         .from('chat_threads')
-        .select()
+        .select('id, title, created_at, first:chat_messages!inner(text)')
+        .eq('first.role', ChatRole.user.db)
+        .order('created_at', referencedTable: 'first', ascending: true)
+        .limit(1, referencedTable: 'first')
         .order('created_at', ascending: false)
         .limit(limit);
     return rows.map(ChatThread.fromMap).toList();
-  }
-
-  /// Most recent thread, or a fresh one — the chat screen opens straight into
-  /// a conversation rather than a thread list.
-  Future<ChatThread> getOrCreateThread({String? goalId}) async {
-    final existing = await db
-        .from('chat_threads')
-        .select()
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    if (existing != null) return ChatThread.fromMap(existing);
-    return createThread(goalId: goalId);
   }
 
   Future<ChatThread> createThread({String? title, String? goalId}) async {

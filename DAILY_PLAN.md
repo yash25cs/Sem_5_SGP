@@ -616,3 +616,27 @@ rolled-back transaction, then applied; `generate-roadmap` redeployed.
   skipped — new tests prove three-at-a-time, pause and resume, no doubling on a
   second paste, waiting out a busy AI, Retry, and the playlist row and splash
   at 320 dp.
+
+## Day 24 – Chat history, and a new chat on every launch
+
+**Status:** 4 October 2026. No migration and no function change.
+
+- **A new chat on every launch,** as other AI chat apps do. The chat used to
+  reopen the latest thread forever. Switching tabs or backgrounding the app
+  keeps the conversation; only a fresh launch starts over.
+- **No empty chats.** The thread row is written with the first question, not
+  when the screen opens — New chat used to leave an empty thread every tap.
+- **History panel.** The AI's avatar at the top left (now with a small history
+  badge) slides the student's chats in from the left: New chat at the top,
+  then Today / Yesterday / Previous 7 days / Earlier, each chat named by its
+  first question, the open one highlighted. Tap to open and carry on; delete
+  asks first. One query reads the list with each chat's first question and
+  leaves out empty threads — checked live with a throwaway account.
+- The 39 videos that failed in the first 92-video run were from before
+  Day 23's busy-AI fix; on the new build the playlist row's **Retry 39**
+  re-reads them.
+- `flutter analyze` clean; `flutter test` 146 passed, 4 live skipped
+  (`test/chat_history_test.dart`: launch opens empty and writes nothing, the
+  first question makes the chat, New chat keeps the old one in the list,
+  opening and continuing a past chat, deleting the open one, day grouping,
+  and the panel at 320 dp). Panel checked by eye in light and dark.
