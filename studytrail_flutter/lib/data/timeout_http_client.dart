@@ -17,10 +17,18 @@ import 'package:http/http.dart' as http;
 /// The body gets its own idle deadline as well: `send` only completes when the
 /// response *headers* arrive, so without it a stalled download would still hang
 /// with the headers already in hand.
+///
+/// It is also the one place every request passes through, so it pins Edge
+/// Function calls to [functionsRegion] — the header `functions.invoke` would
+/// send if `Supabase.initialize` let the region be set.
 class TimeoutHttpClient extends http.BaseClient {
-  TimeoutHttpClient({http.Client? inner}) : _inner = inner ?? http.Client();
+  TimeoutHttpClient({http.Client? inner, this.functionsRegion = ''})
+      : _inner = inner ?? http.Client();
 
   final http.Client _inner;
+
+  /// Region for `/functions/v1/` calls; empty leaves Supabase to choose.
+  final String functionsRegion;
 
   /// Queries, auth, and anything else that is a small round trip. Nothing here
   /// should take seconds, so waiting longer only prolongs a spinner.
@@ -41,6 +49,11 @@ class TimeoutHttpClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (functionsRegion.isNotEmpty &&
+        request.url.path.contains('/functions/v1/') &&
+        !request.headers.containsKey('x-region')) {
+      request.headers['x-region'] = functionsRegion;
+    }
     final budget = budgetFor(request.url);
     final response = await _inner.send(request).timeout(budget);
     return http.StreamedResponse(

@@ -116,7 +116,15 @@ class RoomStore extends AsyncStore {
   void clearFocusReward() => _focusReward = null;
 
   // ── Shared timer ──
-  int _secondsLeft = 25 * 60;
+  /// The countdown, published on its own so a tick redraws only the two
+  /// widgets showing it. Ticking through [notifyListeners] rebuilt the whole
+  /// room — members, chat, controls — every second the timer ran.
+  final ValueNotifier<int> _clock = ValueNotifier<int>(25 * 60);
+  int get _secondsLeft => _clock.value;
+  set _secondsLeft(int value) => _clock.value = value;
+
+  /// Seconds left, for a [ValueListenableBuilder] around the countdown.
+  ValueListenable<int> get clock => _clock;
   int _totalSeconds = 25 * 60;
   bool _timerRunning = false;
   String _timerPhase = 'focus'; // 'focus' | 'break'
@@ -537,9 +545,10 @@ class RoomStore extends AsyncStore {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_secondsLeft > 0) {
+        // [clock] carries the tick to the countdown; nothing else on screen
+        // changes, so the store itself stays quiet until the phase ends.
         _secondsLeft--;
         if (isFocus) _focusSeen++;
-        notifyListeners();
         return;
       }
       // Phase over. Everyone flips locally, and the host re-announces so any
@@ -970,6 +979,7 @@ class RoomStore extends AsyncStore {
   void dispose() {
     _ticker?.cancel();
     _quizPoll?.cancel();
+    _clock.dispose();
     final ch = _channel;
     if (ch != null) _roomRepo.removeRoomChannel(ch).ignore();
     super.dispose();

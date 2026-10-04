@@ -595,23 +595,30 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                       ),
                       const SizedBox(height: 12),
 
-                      // Countdown display
-                      Text(
-                        store.timerDisplay,
-                        style: TextStyle(
-                          color: p.ink,
-                          fontSize: 48,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -1.5,
+                      // Countdown display and progress bar — the only parts
+                      // that change every second, so the only parts that
+                      // listen to the clock.
+                      ValueListenableBuilder<int>(
+                        valueListenable: store.clock,
+                        builder: (context, _, _) => Column(
+                          children: [
+                            Text(
+                              store.timerDisplay,
+                              style: TextStyle(
+                                color: p.ink,
+                                fontSize: 48,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            ProgressTrack(
+                              store.timerProgress,
+                              color: store.isFocus ? p.primary : p.amber,
+                              height: 8,
+                            ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 10),
-
-                      // Progress bar
-                      ProgressTrack(
-                        store.timerProgress,
-                        color: store.isFocus ? p.primary : p.amber,
-                        height: 8,
                       ),
                       const SizedBox(height: 16),
 

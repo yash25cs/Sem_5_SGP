@@ -640,3 +640,40 @@ rolled-back transaction, then applied; `generate-roadmap` redeployed.
   first question makes the chat, New chat keeps the old one in the list,
   opening and continuing a past chat, deleting the open one, day grouping,
   and the panel at 320 dp). Panel checked by eye in light and dark.
+
+## Day 25 – A faster launch and quicker screens
+
+**Status:** 4 October 2026 (not committed). No migration, no function change.
+Measured first: the database is in Sydney (`ap-southeast-2`), and from India
+one query costs ~300 ms on a reused connection — so every wait that follows
+another wait shows.
+
+- **Only Home loads at launch.** The bottom bar built all five tabs at once,
+  firing ~27 requests for screens nobody had opened. Tabs now build — and load
+  — the first time they're opened (`LazyIndexedStack`), then stay as before.
+- **Home is fetched during the splash.** Once the launch check knows you're
+  going to Home, Home's data loads while the logo is still up (capped at 2 s),
+  so Home opens filled in. The launch check's two reads, and Home's subjects
+  and pace, now run together — two waits of ~300 ms each gone.
+- **AI calls pinned next to the database.** Edge Functions ran in Mumbai and
+  crossed to Sydney for every query; pinned to `ap-southeast-2`, a call
+  measured 0.77 s instead of 1.22 s. Done in the app's HTTP client, so every
+  `functions.invoke` gets it.
+- **Rewards, Leaderboard, Achievements:** six reads one after another (1.8 s
+  measured) are now two rounds; the badge list still waits for the badge
+  check.
+- **Before the first frame:** the 10-year timezone data instead of all of
+  history (8x faster to load), notification setup alongside Supabase's, and
+  Plus Jakarta Sans bundled (the five weights the app uses, hash-checked
+  against google_fonts) so the first launch never shows the system font
+  first. The font's OFL licence is on the licences page.
+- **Study room:** the countdown ticks on its own notifier, so the room —
+  members, chat, controls — no longer rebuilds every second.
+- **Leaderboard in dark mode:** the "how it works" steps no longer show light
+  pastel discs; they tint from the icon's own colour.
+- `flutter analyze` clean; `flutter test` 156 passed, 4 live skipped
+  (`test/smoothness_test.dart`: lazy tabs, the prefetch hand-off, subjects and
+  pace together, Rewards in two rounds with a failed read falling back, the
+  region header on function calls only, the quiet room clock, and the bundled
+  font found with downloading switched off — which fails if a weight is
+  removed).

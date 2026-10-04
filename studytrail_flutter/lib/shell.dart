@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'models/models.dart';
 import 'theme/app_theme.dart';
 import 'widgets/common.dart';
+import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/nav.dart';
 import 'widgets/quick_actions_sheet.dart';
 import 'state/reminder_sync.dart';
@@ -39,10 +40,12 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
 
+  void _selectTab(int tab) => setState(() => _tab = tab);
+
   late final List<Widget> _tabs = [
     HomeScreen(
-      onOpenProfile: () => setState(() => _tab = 4),
-      onOpenQuiz: () => setState(() => _tab = 3),
+      onOpenProfile: () => _selectTab(4),
+      onOpenQuiz: () => _selectTab(3),
     ),
     const RoadmapScreen(),
     const ChatScreen(),
@@ -155,7 +158,7 @@ class _HomeShellState extends State<HomeShell> {
                     onBack: () => Navigator.pop(context),
                     onOpenQuiz: () {
                       Navigator.pop(context);
-                      setState(() => _tab = 3);
+                      _selectTab(3);
                     },
                     onPractice: (q) => _open(AnswerPracticeScreen(
                       onBack: () => Navigator.pop(context),
@@ -251,7 +254,8 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           const TopInset(),
           Expanded(
-            child: IndexedStack(index: _tab, children: _tabs),
+            // Each tab is built, and loads its data, when first opened.
+            child: LazyIndexedStack(index: _tab, children: _tabs),
           ),
         ],
       ),
@@ -266,7 +270,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar:
-          BottomNav(current: _tab, onTap: (i) => setState(() => _tab = i)),
+          BottomNav(current: _tab, onTap: _selectTab),
     );
   }
 }

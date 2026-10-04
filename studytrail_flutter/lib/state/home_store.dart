@@ -103,6 +103,22 @@ class HomeStore extends AsyncStore {
   double get todayProgress =>
       _tasksToday.isEmpty ? 0 : doneCount / _tasksToday.length;
 
+  bool _prefetched = false;
+
+  /// [load], started before Home is on screen — during the launch splash —
+  /// so Home opens already filled in.
+  Future<void> prefetch() {
+    _prefetched = true;
+    return load();
+  }
+
+  /// True once after [prefetch]: Home's own first load would only repeat it.
+  bool takePrefetch() {
+    final was = _prefetched;
+    _prefetched = false;
+    return was;
+  }
+
   Future<void> load() => runLoad(() async {
         await _loadAll();
         _syncWidget();
@@ -141,10 +157,20 @@ class HomeStore extends AsyncStore {
     // half-finished switch still resolves to one goal.
     _goal = _allGoals.where((g) => g.isActive).firstOrNull;
 
+    // Both need only the goal id, so they go together: one round trip to the
+    // Sydney database (~300 ms from India) instead of two.
     final goalId = _goal?.id;
-    _subjects =
-        goalId == null ? const [] : await _goals.getSubjects(goalId);
-    _pace = goalId == null ? null : await _loadPace(goalId);
+    if (goalId == null) {
+      _subjects = const [];
+      _pace = null;
+    } else {
+      final more = await Future.wait<Object?>([
+        _goals.getSubjects(goalId),
+        _loadPace(goalId),
+      ]);
+      _subjects = more[0] as List<Subject>;
+      _pace = more[1] as RoadmapPace?;
+    }
   }
 
   /// Pace is an extra on this screen, so a failure hides the banner rather

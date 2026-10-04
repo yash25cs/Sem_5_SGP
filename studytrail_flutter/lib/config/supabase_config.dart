@@ -29,6 +29,16 @@ class SupabaseConfig {
   static const String oauthRedirect =
       'in.charusat.studytrail://login-callback';
 
+  /// Where Edge Functions run. This project's database is in ap-southeast-2
+  /// (Sydney). Left alone, a function runs near the caller — Mumbai for a
+  /// student in India — and every query it makes crosses to Sydney and back.
+  /// Pinned next to the database, a call measured 0.77 s instead of 1.22 s
+  /// (2026-10-04). Override with `--dart-define=SUPABASE_FUNCTIONS_REGION=…`
+  /// for a project elsewhere; an empty value means "nearest the caller".
+  static const String functionsRegion = String.fromEnvironment(
+      'SUPABASE_FUNCTIONS_REGION',
+      defaultValue: 'ap-southeast-2');
+
   /// Private Storage bucket holding uploaded syllabi/notes under `/{uid}/...`.
   static const String materialsBucket = 'materials';
 

@@ -73,6 +73,10 @@ flutter:
 
   assets:
     - assets/images/studytrail_logo.jpg
+    # Plus Jakarta Sans, bundled so text never starts in the system font and
+    # swaps once a download finishes — or stays in it offline on a first run.
+    # google_fonts finds these by file name before it reaches for the network.
+    - assets/google_fonts/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

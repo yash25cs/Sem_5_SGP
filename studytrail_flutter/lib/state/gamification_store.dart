@@ -71,42 +71,35 @@ class GamificationStore extends AsyncStore {
         _wallet = await _game.redeemReward(key);
       });
 
+  /// Two rounds instead of six. Each read used to wait for the one before it,
+  /// and at ~300 ms a round trip to the Sydney database that was 1.8 s
+  /// before Rewards, Leaderboard or Achievements showed anything. Only the
+  /// badge list has to wait — for [GamificationRepository.evaluateBadges], which
+  /// can unlock new ones. Each read still falls back on its own failure.
   Future<void> load() => runLoad(() async {
-        try {
-          _newlyUnlocked = await _game.evaluateBadges();
-        } catch (_) {
-          _newlyUnlocked = const [];
-        }
-
-        try {
-          _profile = await _profiles.getMyProfile();
-        } catch (_) {}
-
-        try {
-          _streak = await _game.getStreak();
-        } catch (_) {
-          _streak = const Streak();
-        }
-
-        try {
-          _badges = await _game.getBadges();
-        } catch (_) {
-          _badges = GamificationRepository.defaultBadges;
-        }
-        if (_badges.isEmpty) {
-          _badges = GamificationRepository.defaultBadges;
-        }
-
-        try {
-          _recent = await _game.getRecentActivity(days: 14);
-        } catch (_) {
-          _recent = const [];
-        }
-
-        try {
-          _leaderboard = await _game.getLeaderboard();
-        } catch (_) {
-          _leaderboard = const [];
-        }
+        final unlocked = _orElse(_game.evaluateBadges(), const <String>[]);
+        final results = await Future.wait<Object?>([
+          unlocked,
+          // Badges after the evaluation, so a badge it just unlocked shows.
+          unlocked.then(
+              (_) => _orElse(_game.getBadges(), const <AchievementBadge>[])),
+          _orElse<Profile?>(_profiles.getMyProfile(), _profile),
+          _orElse(_game.getStreak(), const Streak()),
+          _orElse(_game.getRecentActivity(days: 14), const <ActivityDay>[]),
+          _orElse(_game.getLeaderboard(), const <LeaderboardEntry>[]),
+        ]);
+        _newlyUnlocked = results[0] as List<String>;
+        final badges = results[1] as List<AchievementBadge>;
+        _badges =
+            badges.isEmpty ? GamificationRepository.defaultBadges : badges;
+        _profile = results[2] as Profile?;
+        _streak = results[3] as Streak;
+        _recent = results[4] as List<ActivityDay>;
+        _leaderboard = results[5] as List<LeaderboardEntry>;
       });
+
+  /// [future], or [fallback] if it fails — one failed read shouldn't blank
+  /// the others.
+  static Future<T> _orElse<T>(Future<T> future, T fallback) =>
+      future.catchError((Object _) => fallback);
 }

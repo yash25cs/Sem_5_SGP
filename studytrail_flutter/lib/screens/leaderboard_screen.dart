@@ -722,6 +722,12 @@ class _InfoRoadmapStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
+    // The pastel backgrounds are light-theme colours; on the dark theme they
+    // were bright discs with dark icons. There, tint the disc with the icon's
+    // own colour and lift the icon so it reads on it.
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? iconColor.withValues(alpha: 0.2) : iconBg;
+    final fg = isDark ? Color.lerp(iconColor, Colors.white, 0.45)! : iconColor;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -729,11 +735,11 @@ class _InfoRoadmapStep extends StatelessWidget {
           width: 50,
           height: 50,
           decoration: BoxDecoration(
-            color: iconBg,
+            color: bg,
             shape: BoxShape.circle,
-            border: Border.all(color: iconColor.withValues(alpha: 0.3), width: 2),
+            border: Border.all(color: fg.withValues(alpha: 0.3), width: 2),
           ),
-          child: Icon(icon, color: iconColor, size: 26),
+          child: Icon(icon, color: fg, size: 26),
         ),
         const SizedBox(width: 16),
         Expanded(

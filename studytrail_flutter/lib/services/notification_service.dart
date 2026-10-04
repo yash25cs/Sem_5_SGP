@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
+// The last ten years of rules, not all of history: reminders only ever look a
+// week ahead, and the full database took 8x as long to load before the first
+// frame (56 ms against 7 ms on a desktop, measured 2026-10-04).
+import 'package:timezone/data/latest_10y.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 /// Local, on-device reminders. Nothing here talks to a server: what to

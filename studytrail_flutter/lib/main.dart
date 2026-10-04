@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,6 +10,7 @@ import 'config/supabase_config.dart';
 import 'data/local_prefs.dart';
 import 'data/repositories/goal_repository.dart';
 import 'data/supabase_client.dart';
+import 'models/models.dart';
 import 'data/timeout_http_client.dart';
 import 'state/stores.dart';
 import 'theme/app_theme.dart';
@@ -27,17 +30,27 @@ import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService().init();
 
-  if (SupabaseConfig.isConfigured) {
-    await Supabase.initialize(
-      url: SupabaseConfig.url,
-      publishableKey: SupabaseConfig.apiKey,
-      // Every query, upload, and function call goes through this, so none of
-      // them can hang forever on a network that never answers.
-      httpClient: TimeoutHttpClient(),
-    );
-  }
+  // The bundled font's licence, shown on Flutter's licences page.
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('assets/google_fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(const ['Plus Jakarta Sans'], license);
+  });
+
+  // Both finish before the first frame, so they run side by side rather than
+  // one after the other.
+  await Future.wait<Object?>([
+    NotificationService().init(),
+    if (SupabaseConfig.isConfigured)
+      Supabase.initialize(
+        url: SupabaseConfig.url,
+        publishableKey: SupabaseConfig.apiKey,
+        // Every query, upload, and function call goes through this, so none of
+        // them can hang forever on a network that never answers.
+        httpClient:
+            TimeoutHttpClient(functionsRegion: SupabaseConfig.functionsRegion),
+      ),
+  ]);
 
   runApp(const StudyTrailApp());
 }
@@ -197,12 +210,14 @@ class _RootFlowState extends State<RootFlow> {
         .setUtcOffset(DateTime.now().timeZoneOffset)
         .catchError((_) {});
     try {
-      final profile = await const ProfileRepository()
-          .getMyProfile()
-          .timeout(_entryProbeTimeout);
-      final hasGoal = await const GoalRepository()
-          .hasAnyGoal()
-          .timeout(_entryProbeTimeout);
+      // Independent, so together: one round trip to the Sydney database
+      // (~300 ms from India) instead of two before the first screen.
+      final results = await Future.wait<Object?>([
+        const ProfileRepository().getMyProfile().timeout(_entryProbeTimeout),
+        const GoalRepository().hasAnyGoal().timeout(_entryProbeTimeout),
+      ]);
+      final profile = results[0] as Profile?;
+      final hasGoal = results[1] as bool;
 
       final hasAcademic = profile != null &&
           (profile.college ?? '').trim().isNotEmpty &&
@@ -219,6 +234,15 @@ class _RootFlowState extends State<RootFlow> {
     } catch (e) {
       failure = friendlyError(e);
       offline = isNetworkError(e);
+    }
+
+    // Landing on the app: fetch Home while the splash is still up, so Home
+    // opens filled in instead of as a skeleton. Capped, so a slow network
+    // still gets past the splash; Home shows whatever has arrived.
+    if (failure == null && next == _Stage.app && mounted) {
+      final home = context.read<HomeStore>().prefetch();
+      context.read<WeakSpotsStore>().load();
+      await home.timeout(const Duration(seconds: 2), onTimeout: () {});
     }
 
     await _splashShown;

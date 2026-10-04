@@ -608,6 +608,20 @@ non-trivial choice.
 - **Trade-off:** chats are named by their first question rather than an AI
   summary, and listed by when they started, not when they were last used.
 
+### D-040 — Load only what's on screen, and pin functions next to the database
+
+- **Decision:** tabs build when first opened; Home is fetched during the
+  launch splash; independent reads run together; Edge Functions run in the
+  database's region (`ap-southeast-2`); the font is bundled.
+- **Why:** measured from India, a query to the Sydney database costs ~300 ms
+  and a function call 1.22 s (0.77 s pinned). The app paid that up to six
+  times in a row on some screens, and fired ~27 requests at launch for tabs
+  nobody had opened.
+- **Trade-off:** a tab's first visit now loads then rather than at launch. The
+  region is a constant (overridable with `SUPABASE_FUNCTIONS_REGION`) and
+  must follow the database if the project ever moves. Moving the database to
+  Mumbai would roughly halve every query again, but needs a new project.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

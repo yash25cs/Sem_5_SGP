@@ -41,8 +41,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // Deferred: the store notifies listeners, which can't happen during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<HomeStore>().load();
-      context.read<WeakSpotsStore>().load();
+      // The launch splash already fetched both (RootFlow); asking again would
+      // just repeat it.
+      final home = context.read<HomeStore>();
+      if (!home.takePrefetch()) home.load();
+      final weak = context.read<WeakSpotsStore>();
+      if (!weak.loaded && !weak.loading) weak.load();
     });
   }
 
@@ -293,6 +297,10 @@ class _HomeScreenState extends State<HomeScreen> {
           store.doneCount == store.tasks.length &&
           store.tasks.isNotEmpty) {
         _hasShownStreakModal = true;
+        // The sheet's week dots come from here. The Profile tab used to load it
+        // at launch; tabs now load when first opened, and this also picks up
+        // the day just completed.
+        context.read<GamificationStore>().load();
         _confetti.play();
         HapticFeedback.heavyImpact();
         Future.delayed(const Duration(milliseconds: 500), () {
