@@ -796,12 +796,13 @@ class OnboardingStore extends AsyncStore {
       });
 
   /// Creates the goal (and its subjects) that the rest of the app hangs off.
-  /// The AI roadmap generation that follows lands in Phase C.
+  /// [subjectExamDates] is parallel to [subjects]: one paper date each.
   Future<bool> createGoal({
     required String name,
     DateTime? examDate,
     Pace pace = Pace.steady,
     List<String> subjects = const [],
+    List<DateTime?> subjectExamDates = const [],
   }) =>
       runMutation(() async {
         _goal = await _goals.createGoal(
@@ -809,6 +810,7 @@ class OnboardingStore extends AsyncStore {
           examDate: examDate,
           pace: pace,
           subjectNames: subjects,
+          subjectExamDates: subjectExamDates,
         );
       });
 }

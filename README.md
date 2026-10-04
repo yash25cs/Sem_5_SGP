@@ -59,7 +59,8 @@ Security scoped to the signed-in user (`OWNERSHIP.md`):
 
 - **Account** — email, password (hashed by Supabase Auth, never seen by the app),
   the full name typed at signup, and the academic profile asked for right after
-  it: college, program/branch with semester, and enrollment ID.
+  it: program (with semester, or class for school students), an optional
+  branch, and the school or college.
 - **Study material** — the PDFs and notes uploaded, in a private Storage bucket,
   plus the text extracted from them and its embeddings (`material_chunks`).
 - **Study activity** — goals, subjects, roadmap, daily tasks, quiz attempts and

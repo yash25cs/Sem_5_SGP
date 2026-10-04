@@ -9,8 +9,10 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
-/// Names an exam, its date, pace and subjects, then creates the `goals` row
-/// (plus a `subjects` row per chip) that the rest of the app hangs off.
+/// Names an exam season, its pace and its subjects — each with the date of its
+/// own paper — then creates the `goals` row (plus a `subjects` row per
+/// subject) that the rest of the app hangs off. The goal's date is the last
+/// paper, so the roadmap finishes before every exam (0018, 0025).
 ///
 /// Serves two entry points: onboarding step 3, and "New goal" from Home or
 /// Settings — a student keeps one goal per exam. [stepLabel] and [title] are
@@ -42,21 +44,19 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
   final _name = TextEditingController();
 
   Pace _pace = Pace.steady;
-  DateTime? _examDate;
 
-  /// Pre-filled with the usual CSPIT semester subjects; all removable.
-  final _subjects = <String>['DBMS', 'OS', 'Networks'];
+  /// Starts empty: every student's subjects are different, so none are
+  /// guessed. Kept in exam order, so the list reads as their timetable.
+  final _subjects = <_NewSubject>[];
+
+  /// Set when a save is tried with no subjects; the next add clears it.
+  bool _needsSubject = false;
 
   static const _paceHours = {
     Pace.relaxed: '1 hr/day',
     Pace.steady: '2 hrs/day',
     Pace.intense: '4 hrs/day',
   };
-
-  static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
 
   static const _chipTones = [
     ChipTone.primary,
@@ -71,10 +71,16 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
     super.dispose();
   }
 
-  /// Rough roadmap length shown in the hint card — days to the exam, or a
-  /// pace-based default until a date is chosen.
+  /// The last paper: where the roadmap has to end. Null until a subject is in.
+  DateTime? get _lastExam => _subjects.isEmpty ? null : _subjects.last.examDate;
+
+  void _sortSubjects() =>
+      _subjects.sort((a, b) => a.examDate.compareTo(b.examDate));
+
+  /// Rough roadmap length shown in the hint card — days to the last exam, or
+  /// a pace-based default until a subject is added.
   int get _estimatedDays {
-    final exam = _examDate;
+    final exam = _lastExam;
     if (exam == null) {
       return switch (_pace) {
         Pace.relaxed => 45,
@@ -89,19 +95,17 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
     return days < 1 ? 1 : days;
   }
 
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _examDate ?? now.add(const Duration(days: 30)),
-      firstDate: now,
-      lastDate: now.add(const Duration(days: 365 * 3)),
-      helpText: 'Exam date',
-    );
-    if (picked != null) setState(() => _examDate = picked);
+  Future<void> _changeDate(_NewSubject subject) async {
+    final picked = await _pickExamDate(context, subject.name, subject.examDate);
+    if (picked == null || !mounted) return;
+    setState(() {
+      final i = _subjects.indexOf(subject);
+      if (i >= 0) _subjects[i] = (name: subject.name, examDate: picked);
+      _sortSubjects();
+    });
   }
 
-  /// Opens the add-subject sheet and appends what came back.
+  /// Opens the add-subject sheet and adds what came back.
   ///
   /// The sheet's text controller belongs to [_AddSubjectSheet], not to this
   /// method: `showModalBottomSheet` returns the moment the route pops, while the
@@ -112,31 +116,38 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
   Future<void> _addSubject() async {
     final p = context.p;
 
-    final name = await showModalBottomSheet<String>(
+    final added = await showModalBottomSheet<_NewSubject>(
       context: context,
       isScrollControlled: true,
       backgroundColor: p.card,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
-      builder: (_) => const _AddSubjectSheet(),
+      builder: (_) => _AddSubjectSheet(
+          taken: {for (final s in _subjects) s.name.toLowerCase()}),
     );
 
-    if (name == null || name.isEmpty || !mounted) return;
-    if (_subjects.any((s) => s.toLowerCase() == name.toLowerCase())) return;
-    setState(() => _subjects.add(name));
+    if (added == null || !mounted) return;
+    setState(() {
+      _subjects.add(added);
+      _sortSubjects();
+      _needsSubject = false;
+    });
   }
 
   Future<void> _save() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final valid = _formKey.currentState?.validate() ?? false;
+    if (_subjects.isEmpty) setState(() => _needsSubject = true);
+    if (!valid || _subjects.isEmpty) return;
     FocusScope.of(context).unfocus();
 
     final store = context.read<OnboardingStore>();
     final ok = await store.createGoal(
       name: _name.text.trim(),
-      examDate: _examDate,
+      examDate: _lastExam,
       pace: _pace,
-      subjects: _subjects,
+      subjects: [for (final s in _subjects) s.name],
+      subjectExamDates: [for (final s in _subjects) s.examDate],
     );
     if (!mounted) return;
 
@@ -153,7 +164,7 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
   Widget build(BuildContext context) {
     final p = context.p;
     final store = context.watch<OnboardingStore>();
-    final exam = _examDate;
+    final lastExam = _lastExam;
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -185,7 +196,7 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.6)),
                   const SizedBox(height: 8),
-                  Text('We’ll pace your roadmap to hit this date.',
+                  Text('Add each subject with its exam date. We’ll pace your roadmap around them.',
                       style: TextStyle(color: p.ink2, fontSize: 14, height: 1.5)),
                   const SizedBox(height: 22),
 
@@ -206,43 +217,32 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                         ? 'Give your goal a name'
                         : null,
                     decoration: _fieldDecoration(context,
-                        hint: 'e.g. DBMS Semester Final', icon: Symbols.flag),
+                        hint: 'e.g. Semester exams', icon: Symbols.flag),
                   ),
                   const SizedBox(height: 18),
 
-                  _Label('Exam date'),
-                  InkWell(
-                    onTap: _pickDate,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 15),
-                      decoration: BoxDecoration(
-                        color: p.card,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: p.line, width: 1.2),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Symbols.event, color: p.ink3, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                                exam == null
-                                    ? 'Pick a date'
-                                    : '${_months[exam.month - 1]} ${exam.day}, ${exam.year}',
-                                style: TextStyle(
-                                    color: exam == null ? p.ink3 : p.ink,
-                                    fontSize: 14.5,
-                                    fontWeight: exam == null
-                                        ? FontWeight.w400
-                                        : FontWeight.w700)),
-                          ),
-                          Icon(Symbols.expand_more, color: p.ink3, size: 22),
-                        ],
-                      ),
+                  _Label('Subjects & exam dates'),
+                  for (final (i, subject) in _subjects.indexed) ...[
+                    _SubjectRow(
+                      subject: subject,
+                      tone: _chipTones[i % _chipTones.length],
+                      onChangeDate: () => _changeDate(subject),
+                      onRemove: () =>
+                          setState(() => _subjects.remove(subject)),
                     ),
-                  ),
+                    const SizedBox(height: 10),
+                  ],
+                  _AddSubjectButton(
+                      first: _subjects.isEmpty, onTap: _addSubject),
+                  if (_needsSubject && _subjects.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, left: 4),
+                      child: Text('Add at least one subject with its exam date',
+                          style: TextStyle(
+                              color: p.error,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600)),
+                    ),
                   const SizedBox(height: 18),
 
                   _Label('Daily study pace'),
@@ -262,26 +262,6 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 18),
-
-                  _Label('Focus subjects'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final (i, subject) in _subjects.indexed)
-                        _SubjectChip(
-                          label: subject,
-                          tone: _chipTones[i % _chipTones.length],
-                          onRemove: () =>
-                              setState(() => _subjects.remove(subject)),
-                        ),
-                      SoftChip('+ Add',
-                          icon: Symbols.add,
-                          tone: ChipTone.neutral,
-                          onTap: _addSubject),
-                    ],
-                  ),
                   const SizedBox(height: 20),
 
                   AppCard(
@@ -293,7 +273,9 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                              'StudyTrail will generate a ~$_estimatedDays-day roadmap with daily tasks and weekly checkpoints.',
+                              lastExam == null
+                                  ? 'StudyTrail will generate a ~$_estimatedDays-day roadmap with daily tasks and weekly checkpoints.'
+                                  : 'StudyTrail will generate a ~$_estimatedDays-day roadmap with daily tasks and weekly checkpoints, finishing before your last exam on ${_dateLabel(lastExam)}.',
                               style: TextStyle(
                                   color: p.onPrimarySoft,
                                   fontSize: 12.5,
@@ -341,13 +323,44 @@ InputDecoration _fieldDecoration(BuildContext context,
   );
 }
 
-/// Body of the add-subject sheet: one field, one button, pops the trimmed name.
+/// A subject as the form holds it, before the goal exists.
+typedef _NewSubject = ({String name, DateTime examDate});
+
+const _monthNames = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+String _dateLabel(DateTime d) => '${_monthNames[d.month - 1]} ${d.day}, ${d.year}';
+
+/// Today onwards: an exam already sat isn't something to plan for.
+Future<DateTime?> _pickExamDate(
+    BuildContext context, String subject, DateTime? current) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  return showDatePicker(
+    context: context,
+    initialDate: current != null && !current.isBefore(today)
+        ? current
+        : today.add(const Duration(days: 30)),
+    firstDate: today,
+    lastDate: today.add(const Duration(days: 365 * 3)),
+    helpText: subject.isEmpty ? 'Exam date' : '$subject exam date',
+  );
+}
+
+/// Body of the add-subject sheet: the subject's name and the date of its
+/// exam, both required. Pops a [_NewSubject].
 ///
 /// A widget rather than an inline `builder` so the [TextEditingController] is
 /// owned by the element that uses it and disposed only once that element is
 /// gone. See [_SetTargetScreenState._addSubject] for why that matters.
 class _AddSubjectSheet extends StatefulWidget {
-  const _AddSubjectSheet();
+  const _AddSubjectSheet({required this.taken});
+
+  /// Lower-cased names already on the form. A repeat is refused here, with a
+  /// reason, rather than silently dropped after the sheet closes.
+  final Set<String> taken;
 
   @override
   State<_AddSubjectSheet> createState() => _AddSubjectSheetState();
@@ -355,6 +368,8 @@ class _AddSubjectSheet extends StatefulWidget {
 
 class _AddSubjectSheetState extends State<_AddSubjectSheet> {
   final _controller = TextEditingController();
+  DateTime? _examDate;
+  String? _error;
 
   @override
   void dispose() {
@@ -362,11 +377,39 @@ class _AddSubjectSheetState extends State<_AddSubjectSheet> {
     super.dispose();
   }
 
-  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+  Future<void> _pickDate() async {
+    FocusScope.of(context).unfocus();
+    final picked =
+        await _pickExamDate(context, _controller.text.trim(), _examDate);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _examDate = picked;
+      _error = null;
+    });
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    final date = _examDate;
+    String? error;
+    if (name.isEmpty) {
+      error = 'Enter the subject name';
+    } else if (widget.taken.contains(name.toLowerCase())) {
+      error = '$name is already added';
+    } else if (date == null) {
+      error = 'Pick the exam date';
+    }
+    if (error != null || date == null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.of(context).pop((name: name, examDate: date));
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
+    final date = _examDate;
     OutlineInputBorder border(Color color, double width) => OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: color, width: width),
@@ -388,17 +431,24 @@ class _AddSubjectSheetState extends State<_AddSubjectSheet> {
               Text('Add a subject',
                   style: TextStyle(
                       color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
+              _Label('Subject'),
               TextField(
                 controller: _controller,
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
-                textInputAction: TextInputAction.done,
+                textInputAction: TextInputAction.next,
                 style: TextStyle(color: p.ink, fontSize: 14.5),
-                onSubmitted: (_) => _submit(),
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+                // Name first, then straight on to its date.
+                onSubmitted: (_) => date == null ? _pickDate() : _submit(),
                 decoration: InputDecoration(
-                  hintText: 'e.g. Data Structures',
+                  hintText: 'Subject name',
                   hintStyle: TextStyle(color: p.ink3, fontSize: 14),
+                  prefixIcon:
+                      Icon(Symbols.menu_book, color: p.ink3, size: 20),
                   filled: true,
                   fillColor: p.card2,
                   contentPadding:
@@ -408,8 +458,110 @@ class _AddSubjectSheetState extends State<_AddSubjectSheet> {
                   focusedBorder: border(p.primary, 1.6),
                 ),
               ),
+              const SizedBox(height: 14),
+              _Label('Exam date'),
+              InkWell(
+                onTap: _pickDate,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: p.card2,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: p.line),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Symbols.event, color: p.ink3, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                            date == null ? 'Pick a date' : _dateLabel(date),
+                            style: TextStyle(
+                                color: date == null ? p.ink3 : p.ink,
+                                fontSize: 14.5,
+                                fontWeight: date == null
+                                    ? FontWeight.w400
+                                    : FontWeight.w700)),
+                      ),
+                      Icon(Symbols.expand_more, color: p.ink3, size: 22),
+                    ],
+                  ),
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10, left: 4),
+                  child: Text(_error!,
+                      style: TextStyle(
+                          color: p.error,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600)),
+                ),
               const SizedBox(height: 18),
-              PillButton('Add', icon: Symbols.add, onTap: _submit),
+              PillButton('Add subject', icon: Symbols.add, onTap: _submit),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The full-width add button under the subject list — the form's main
+/// action until a subject is in, so it is sized like one.
+class _AddSubjectButton extends StatelessWidget {
+  const _AddSubjectButton({required this.first, required this.onTap});
+
+  /// No subjects yet: worded as the first step.
+  final bool first;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return Material(
+      color: p.primarySoft,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+                color: p.primary.withValues(alpha: 0.45), width: 1.4),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration:
+                    BoxDecoration(color: p.primary, shape: BoxShape.circle),
+                child: Icon(Symbols.add, color: p.onPrimary, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(first ? 'Add your first subject' : 'Add another subject',
+                        style: TextStyle(
+                            color: p.onPrimarySoft,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text('Subject name and its exam date',
+                        style: TextStyle(
+                            color: p.onPrimarySoft.withValues(alpha: 0.75),
+                            fontSize: 12.5)),
+                  ],
+                ),
+              ),
+              Icon(Symbols.chevron_right, color: p.onPrimarySoft, size: 22),
             ],
           ),
         ),
@@ -432,12 +584,16 @@ class _Label extends StatelessWidget {
       );
 }
 
-/// A focus-subject chip with an inline remove button.
-class _SubjectChip extends StatelessWidget {
-  const _SubjectChip(
-      {required this.label, required this.tone, required this.onRemove});
-  final String label;
+/// One added subject: its name and exam date. Tap to change the date.
+class _SubjectRow extends StatelessWidget {
+  const _SubjectRow(
+      {required this.subject,
+      required this.tone,
+      required this.onChangeDate,
+      required this.onRemove});
+  final _NewSubject subject;
   final ChipTone tone;
+  final VoidCallback onChangeDate;
   final VoidCallback onRemove;
 
   @override
@@ -451,27 +607,63 @@ class _SubjectChip extends StatelessWidget {
       ChipTone.error => (p.errorSoft, p.onError),
       ChipTone.neutral => (p.card2, p.ink2),
     };
+    final exam = subject.examDate;
+    final now = DateTime.now();
+    final days = DateTime(exam.year, exam.month, exam.day)
+        .difference(DateTime(now.year, now.month, now.day))
+        .inDays;
+    final when = switch (days) {
+      <= 0 => 'today',
+      1 => 'tomorrow',
+      _ => 'in $days days',
+    };
 
-    return Container(
-      padding: const EdgeInsets.only(left: 14, right: 6, top: 6, bottom: 6),
-      decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  color: fg, fontSize: 13, fontWeight: FontWeight.w700)),
-          const SizedBox(width: 4),
-          InkWell(
-            onTap: onRemove,
-            borderRadius: BorderRadius.circular(999),
-            child: Padding(
-              padding: const EdgeInsets.all(3),
-              child: Icon(Symbols.close, size: 15, color: fg),
-            ),
+    return Material(
+      color: p.card,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onChangeDate,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: p.line, width: 1.2),
           ),
-        ],
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+                child: Icon(Symbols.menu_book, color: fg, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(subject.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: p.ink,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text('Exam ${_dateLabel(subject.examDate)} · $when',
+                        style: TextStyle(color: p.ink2, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onRemove,
+                tooltip: 'Remove ${subject.name}',
+                icon: Icon(Symbols.close, color: p.ink3, size: 20),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

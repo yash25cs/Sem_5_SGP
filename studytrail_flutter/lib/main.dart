@@ -219,10 +219,10 @@ class _RootFlowState extends State<RootFlow> {
       final profile = results[0] as Profile?;
       final hasGoal = results[1] as bool;
 
+      // No enrollment ID: the form stopped asking for one (D-041).
       final hasAcademic = profile != null &&
           (profile.college ?? '').trim().isNotEmpty &&
-          (profile.branch ?? '').trim().isNotEmpty &&
-          (profile.enrollmentId ?? '').trim().isNotEmpty;
+          (profile.branch ?? '').trim().isNotEmpty;
 
       if (!hasAcademic) {
         next = _Stage.academic;

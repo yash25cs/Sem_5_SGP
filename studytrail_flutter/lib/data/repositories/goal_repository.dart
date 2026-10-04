@@ -58,6 +58,9 @@ class GoalRepository {
   /// (REVIEW.md P1). `user_id` comes from the JWT inside the function, so it
   /// isn't sent.
   ///
+  /// [subjectExamDates] runs parallel to [subjectNames]: entry `i` is the date
+  /// of subject `i`'s paper, and a missing or null entry leaves it undated.
+  ///
   /// Falls back to the three separate writes when the project doesn't have the
   /// function yet — see [_createGoalWithoutRpc].
   Future<Goal> createGoal({
@@ -65,20 +68,27 @@ class GoalRepository {
     DateTime? examDate,
     Pace pace = Pace.steady,
     List<String> subjectNames = const [],
+    List<DateTime?> subjectExamDates = const [],
   }) async {
     final goalName = name.trim();
-    final subjects = [
-      for (final n in subjectNames)
-        if (n.trim().isNotEmpty) n.trim(),
-    ];
+    // Built together so dropping a blank name can't shift the dates over.
+    final subjects = <String>[];
+    final dates = <String?>[];
+    for (final (i, n) in subjectNames.indexed) {
+      if (n.trim().isEmpty) continue;
+      subjects.add(n.trim());
+      dates.add(_day(i < subjectExamDates.length ? subjectExamDates[i] : null));
+    }
 
     try {
       final row = await db.rpc('create_goal', params: {
         'p_name': goalName,
-        // date column → date-only, not a full timestamp.
-        'p_exam_date': examDate?.toIso8601String().split('T').first,
+        'p_exam_date': _day(examDate),
         'p_pace': pace.db,
         'p_subjects': subjects,
+        // 0025. Before it, naming this argument finds no function (PGRST202)
+        // and the fallback below writes the same rows.
+        'p_subject_dates': dates,
       });
       return Goal.fromMap(
         row is List
@@ -87,17 +97,22 @@ class GoalRepository {
       );
     } on PostgrestException catch (error) {
       // PGRST202 = "Could not find the function public.create_goal … in the
-      // schema cache", i.e. migration 0009 hasn't been applied. Anything else is
-      // a real failure and stays a failure.
+      // schema cache", i.e. migration 0009 or 0025 hasn't been applied.
+      // Anything else is a real failure and stays a failure.
       if (error.code != 'PGRST202') rethrow;
       return _createGoalWithoutRpc(
         name: goalName,
         examDate: examDate,
         pace: pace,
         subjectNames: subjects,
+        subjectExamDates: dates,
       );
     }
   }
+
+  /// A `date` column takes the day only, not a full timestamp.
+  static String? _day(DateTime? date) =>
+      date?.toIso8601String().split('T').first;
 
   /// Creates the goal with plain inserts, for a project still running a schema
   /// from before `create_goal` existed.
@@ -112,6 +127,7 @@ class GoalRepository {
     required DateTime? examDate,
     required Pace pace,
     required List<String> subjectNames,
+    required List<String?> subjectExamDates,
   }) async {
     final userId = requireUserId;
 
@@ -120,7 +136,7 @@ class GoalRepository {
         .insert({
           'user_id': userId,
           'name': name,
-          'exam_date': examDate?.toIso8601String().split('T').first,
+          'exam_date': _day(examDate),
           'pace': pace.db,
         })
         .select()
@@ -138,9 +154,15 @@ class GoalRepository {
     // (goal_id, name) to lean on, so "DBMS" and "dbms" would both land.
     final seen = <String>{};
     final subjectRows = [
-      for (final n in subjectNames)
+      for (final (i, n) in subjectNames.indexed)
         if (seen.add(n.toLowerCase()))
-          {'user_id': userId, 'goal_id': goal.id, 'name': n},
+          {
+            'user_id': userId,
+            'goal_id': goal.id,
+            'name': n,
+            // 0018's column; a project without it has no per-subject dates.
+            if (subjectExamDates[i] != null) 'exam_date': subjectExamDates[i],
+          },
     ];
     if (subjectRows.isNotEmpty) {
       await db.from('subjects').insert(subjectRows);

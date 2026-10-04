@@ -677,3 +677,34 @@ another wait shows.
   region header on function calls only, the quiet room clock, and the bundled
   font found with downloading switched off — which fails if a weight is
   removed).
+
+## Day 26 – Simpler onboarding forms
+
+**Status:** 5 October 2026 (not committed). Migration `0025` applied; no
+function change.
+
+- **No starter subjects.** The goal form used to open with DBMS, OS and
+  Networks filled in. It now starts empty, and the old "+ Add" chip is a
+  full-width **Add your first subject** button.
+- **An exam date with every subject.** The add sheet asks for the name and
+  the paper's date together and won't add one without the other; a repeated
+  name is refused there with the reason. Subjects list in exam order with
+  "in N days", tap one to change its date. The single exam-date field is gone
+  — the goal runs to the last paper. `create_goal` takes the dates in the
+  same transaction (0025); an app build from before still works against it.
+- **Academic details:** no enrollment ID. The program is a dropdown grouped
+  into School, Science & Technology, Commerce & Management and Arts &
+  Humanities, plus Other (type the name). School asks for the class (1–12)
+  and the school name, with no branch; CA, CS and CMA ask for the level; the
+  rest ask for the semester, with an optional branch. Settings and the
+  profile card no longer show the enrollment ID.
+- **Plain placeholders** on sign-in, sign-up and academic details: "Enter
+  your email", "Enter your full name" and so on, instead of a real name,
+  email and college.
+- `flutter analyze` clean; `flutter test` 163 passed, 4 live skipped
+  (`test/onboarding_forms_test.dart`: empty start and the no-subject error,
+  the sheet's name/date/duplicate checks, exam order and the dates reaching
+  the store, no enrollment field, School → class, a typed program opening as
+  Other, and the saved text round-tripping). 0025 dry-run in a rolled-back
+  transaction, then applied, then called live through PostgREST with a
+  self-deleting account.

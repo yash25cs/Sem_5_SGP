@@ -174,8 +174,9 @@ list on a physical device before calling a build good.
 
 1. Welcome → **Next** → **Create account**. The name, email, and password fields
    each show their own validation message when wrong.
-2. Signup lands on the academic profile form (college, program/branch,
-   semester, enrollment ID); saving it moves on to the upload screen.
+2. Signup lands on the academic profile form (program from a list, optional
+   branch, school or college, semester — or class, when the program is
+   School); saving it moves on to the upload screen.
    **Authentication → Users** in the dashboard shows the account, and
    `profiles` + `streaks` each have a row.
 3. Upload a PDF. The tile goes **Processing** and reaches **Embedded** within
@@ -314,8 +315,8 @@ the **+** button.
 - **Onboarding order.** Auth comes first (welcome → signup → academic
   profile → upload → set target), because uploads and goals both need a
   `user_id`. A returning account that already has a goal skips straight to the
-  home shell — unless its college, branch or enrollment ID is missing, in which
-  case it is asked for those first.
+  home shell — unless its program or college is missing, in which case it is
+  asked for those first.
 - **Google sign-in** additionally needs the provider enabled in the dashboard
   and `in.charusat.studytrail://login-callback` added under
   **Authentication → URL Configuration**. The Android intent-filter is already

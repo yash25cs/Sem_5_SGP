@@ -1,6 +1,7 @@
 /// Single import for every model + enum.
 library;
 
+export 'academic_program.dart';
 export 'answer_practice.dart';
 export 'chat.dart';
 export 'doubt.dart';

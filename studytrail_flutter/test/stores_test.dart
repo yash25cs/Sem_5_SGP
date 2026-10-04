@@ -90,12 +90,15 @@ void main() {
             examDate: DateTime(2026, 11, 15),
             pace: Pace.intense,
             subjects: const ['Kinematics', 'Optics'],
+            subjectExamDates: [DateTime(2026, 11, 10), DateTime(2026, 11, 15)],
           ),
           isTrue);
 
       expect(store.createdGoal?.name, 'Physics final');
       expect(store.error, isNull);
       expect(goals.lastSubjects, ['Kinematics', 'Optics']);
+      expect(goals.lastSubjectDates,
+          [DateTime(2026, 11, 10), DateTime(2026, 11, 15)]);
       expect(goals.lastPace, Pace.intense);
     });
 
@@ -358,6 +361,7 @@ class _FakeGoals extends GoalRepository {
 
   final bool failing;
   List<String>? lastSubjects;
+  List<DateTime?>? lastSubjectDates;
   Pace? lastPace;
 
   @override
@@ -373,9 +377,11 @@ class _FakeGoals extends GoalRepository {
     DateTime? examDate,
     Pace pace = Pace.steady,
     List<String> subjectNames = const [],
+    List<DateTime?> subjectExamDates = const [],
   }) async {
     if (failing) throw Exception('create_goal timed out');
     lastSubjects = subjectNames;
+    lastSubjectDates = subjectExamDates;
     lastPace = pace;
     return Goal(id: 'goal-1', name: name, examDate: examDate);
   }

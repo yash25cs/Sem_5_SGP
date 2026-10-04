@@ -321,13 +321,11 @@ class _IdentityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.p;
 
-    // "D25CS118 · CE, CSPIT" — but any of those three can be unset.
-    final course =
-        [profile.branch, profile.college].where((s) => (s ?? '').isNotEmpty);
-    final subtitle = [
-      if ((profile.enrollmentId ?? '').isNotEmpty) profile.enrollmentId!,
-      if (course.isNotEmpty) course.join(', '),
-    ].join(' · ');
+    // "B.Com · Semester 3, <college>" — either half can be unset. No
+    // enrollment ID: the academic form stopped asking for one (D-041).
+    final subtitle = [profile.branch, profile.college]
+        .where((s) => (s ?? '').isNotEmpty)
+        .join(', ');
 
     final remaining = profile.xpToNext - (profile.xp % profile.xpToNext);
 

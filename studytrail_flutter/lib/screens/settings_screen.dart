@@ -685,22 +685,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
                 _GroupLabel('Academic Profile'),
                 _Group(children: [
-                  _Row(Symbols.school, 'College / University', p.primary,
+                  _Row(Symbols.school, 'School / College', p.primary,
                       value: (profile?.college ?? '').isNotEmpty
                           ? profile!.college!
-                          : 'Set college',
+                          : 'Set school or college',
                       trailing: _chev(p),
                       onTap: _editProfile),
-                  _Row(Symbols.architecture, 'Program & Branch', p.primary2,
+                  _Row(Symbols.architecture, 'Program', p.primary2,
                       value: (profile?.branch ?? '').isNotEmpty
                           ? profile!.branch!
                           : 'Set program',
-                      trailing: _chev(p),
-                      onTap: _editProfile),
-                  _Row(Symbols.badge, 'Student ID / Roll No', p.coral,
-                      value: (profile?.enrollmentId ?? '').isNotEmpty
-                          ? profile!.enrollmentId!
-                          : 'Set ID / Roll no',
                       trailing: _chev(p),
                       onTap: _editProfile),
                 ]),

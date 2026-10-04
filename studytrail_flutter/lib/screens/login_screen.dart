@@ -109,7 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     const FieldLabel('Email'),
                     InputField(
-                      hint: 'yash@charusat.edu.in',
+                      hint: 'Enter your email',
                       icon: Symbols.mail,
                       controller: _email,
                       validator: Validators.email,
@@ -121,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 16),
                     const FieldLabel('Password'),
                     InputField(
-                      hint: '••••••••',
+                      hint: 'Enter your password',
                       icon: Symbols.lock,
                       obscure: true,
                       controller: _password,

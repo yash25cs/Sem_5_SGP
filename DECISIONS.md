@@ -622,6 +622,25 @@ non-trivial choice.
   must follow the database if the project ever moves. Moving the database to
   Mumbai would roughly halve every query again, but needs a new project.
 
+### D-041 — Onboarding asks only what the plan uses
+
+- **Decision:** the goal form starts with no subjects and takes an exam date
+  with every subject added; the goal's date is the last of them. The academic
+  form picks the program from a grouped list (science, commerce, arts, or
+  School, which asks for a class instead of a semester and has no branch) and
+  no longer asks for an enrollment ID. `create_goal` gained a dates array
+  parallel to the subject names (0025).
+- **Why:** the three pre-filled subjects were one college's semester and every
+  other student had to delete them; a single exam date hid the fact that a
+  semester is several papers on different days, which the roadmap already
+  plans around (0018). The enrollment ID was never used by any feature, and a
+  free-text program let "BTech", "B.Tech CE" and "CE" mean the same thing.
+- **Trade-off:** the program is still saved as one `branch` text
+  ("B.Com · Semester 3", "School · Class 10") so no column or migration was
+  needed for it, and a profile typed before the list opens as "Other" with its
+  text. A program missing from the list goes under Other. Existing enrollment
+  IDs stay in the database but are no longer shown.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

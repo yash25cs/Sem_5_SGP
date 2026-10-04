@@ -114,7 +114,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
                     const FieldLabel('Full name'),
                     InputField(
-                      hint: 'Yash Patel',
+                      hint: 'Enter your full name',
                       icon: Symbols.person,
                       controller: _name,
                       validator: (v) => Validators.required(v, 'Full name'),
@@ -126,7 +126,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     const SizedBox(height: 16),
                     const FieldLabel('Email'),
                     InputField(
-                      hint: 'yash@charusat.edu.in',
+                      hint: 'Enter your email',
                       icon: Symbols.mail,
                       controller: _email,
                       validator: Validators.email,

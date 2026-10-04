@@ -3,17 +3,19 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../data/repositories/profile_repository.dart';
+import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/nav.dart';
 import 'login_screen.dart' show FieldLabel, InputField, Validators;
 
-/// Screen where students input or edit their college, program/branch, roll number,
-/// and academic details.
+/// Screen where students input or edit their program, school or college, and
+/// semester or class.
 ///
 /// Used both immediately after sign-up (onboarding step) and from Settings/Profile
-/// for editing later.
+/// for editing later. The program is picked from [AcademicProgram.groups];
+/// choosing School swaps the semester for a class and drops the branch.
 class AcademicProfileScreen extends StatefulWidget {
   const AcademicProfileScreen({
     super.key,
@@ -35,20 +37,14 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
   final _name = TextEditingController();
   final _college = TextEditingController();
   final _branch = TextEditingController();
-  final _enrollment = TextEditingController();
-  String _selectedSemester = 'Semester 5';
+  final _otherProgram = TextEditingController();
+  AcademicProgram? _program;
+  String? _term;
   bool _saving = false;
 
-  static const _semesters = [
-    'Semester 1',
-    'Semester 2',
-    'Semester 3',
-    'Semester 4',
-    'Semester 5',
-    'Semester 6',
-    'Semester 7',
-    'Semester 8',
-  ];
+  /// Set by the first save attempt, so the two dropdowns only show
+  /// "required" once the student has tried to continue.
+  bool _showPickErrors = false;
 
   @override
   void initState() {
@@ -64,16 +60,14 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
       setState(() {
         if (_name.text.isEmpty) _name.text = p.fullName;
         if (_college.text.isEmpty) _college.text = p.college ?? '';
-        if (_enrollment.text.isEmpty) _enrollment.text = p.enrollmentId ?? '';
 
-        final storedBranch = p.branch ?? '';
-        if (storedBranch.contains('·')) {
-          final parts = storedBranch.split('·');
-          _branch.text = parts.first.trim();
-          final sem = parts.last.trim();
-          if (_semesters.contains(sem)) _selectedSemester = sem;
-        } else {
-          _branch.text = storedBranch;
+        // Only into an untouched form: the load can land after a pick.
+        final place = AcademicPlace.parse(p.branch);
+        if (place != null && _program == null) {
+          _program = place.program;
+          _otherProgram.text = place.customProgram;
+          _branch.text = place.specialisation;
+          _term = place.term;
         }
       });
     }
@@ -84,9 +78,16 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
     _name.dispose();
     _college.dispose();
     _branch.dispose();
-    _enrollment.dispose();
+    _otherProgram.dispose();
     super.dispose();
   }
+
+  void _pickProgram(AcademicProgram program) => setState(() {
+        _program = program;
+        // "Semester 7" means nothing to a Class 9 student, nor "Final" to a
+        // B.Com one.
+        if (!program.options.contains(_term)) _term = null;
+      });
 
   void _toast(String message) {
     if (!mounted) return;
@@ -99,26 +100,30 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
 
   Future<void> _submit() async {
     if (_saving) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final valid = _formKey.currentState?.validate() ?? false;
+    setState(() => _showPickErrors = true);
+    final program = _program;
+    if (!valid || program == null || _term == null) return;
     FocusScope.of(context).unfocus();
 
     setState(() => _saving = true);
 
     final fullName = _name.text.trim();
     final college = _college.text.trim();
-    final enrollment = _enrollment.text.trim();
-    // Combine branch + semester for rich academic representation
-    final branchWithSem = _branch.text.trim().isNotEmpty
-        ? '${_branch.text.trim()} · $_selectedSemester'
-        : _selectedSemester;
+    // Program, branch and semester (or class) in the one `branch` column.
+    final branch = AcademicPlace(
+      program: program,
+      customProgram: _otherProgram.text,
+      specialisation: _branch.text,
+      term: _term,
+    ).format();
 
     try {
       final repo = const ProfileRepository();
       await repo.updateProfile(
         fullName: fullName,
         college: college,
-        branch: branchWithSem,
-        enrollmentId: enrollment,
+        branch: branch,
       );
 
       if (!mounted) return;
@@ -143,6 +148,10 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
+    final program = _program;
+    final isSchool = program?.isSchool ?? false;
+    // "semester", "class" or "level", for the hint and the error.
+    final termWord = (program?.termLabel ?? 'Semester').toLowerCase();
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -217,7 +226,7 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
                   const SizedBox(height: 6),
                   Text(
                     widget.isEditing
-                        ? 'Keep your college, program, and roll number up to date.'
+                        ? 'Keep your program, school or college, and semester up to date.'
                         : 'Tell us where and what you are studying so StudyTrail can personalize your study roadmap.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: p.ink2, fontSize: 13.5, height: 1.4),
@@ -227,7 +236,7 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
                   // ── Full Name ──
                   const FieldLabel('Full Name'),
                   InputField(
-                    hint: 'e.g. Yash Patel',
+                    hint: 'Enter your full name',
                     icon: Symbols.person,
                     controller: _name,
                     validator: (v) => Validators.required(v, 'Full name'),
@@ -236,91 +245,93 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // ── College Name ──
-                  const FieldLabel('College / University Name'),
-                  InputField(
-                    hint: 'e.g. CSPIT, Charusat University',
-                    icon: Symbols.account_balance,
-                    controller: _college,
-                    validator: (v) =>
-                        Validators.required(v, 'College name'),
-                    textInputAction: TextInputAction.next,
-                    enabled: !_saving,
-                  ),
-                  const SizedBox(height: 16),
-
-                  // ── Program / Degree & Branch ──
-                  const FieldLabel('Program & Branch / Major'),
-                  InputField(
-                    hint: 'e.g. B.Tech Computer Engineering',
+                  // ── Program ──
+                  const FieldLabel('Program'),
+                  _SelectField(
                     icon: Symbols.architecture,
-                    controller: _branch,
-                    validator: (v) =>
-                        Validators.required(v, 'Program & Branch'),
-                    textInputAction: TextInputAction.next,
-                    enabled: !_saving,
+                    hint: 'Select your program',
+                    value: program?.name,
+                    items: [
+                      for (final (group, programs) in AcademicProgram.groups) ...[
+                        (text: group, header: true),
+                        for (final option in programs)
+                          (text: option.name, header: false),
+                      ],
+                    ],
+                    error: _showPickErrors && program == null
+                        ? 'Select your program'
+                        : null,
+                    onChanged: _saving
+                        ? null
+                        : (name) {
+                            final picked = AcademicProgram.byName(name);
+                            if (picked != null) _pickProgram(picked);
+                          },
                   ),
                   const SizedBox(height: 16),
 
-                  // ── ID / Roll No / Enrollment ID ──
-                  const FieldLabel('Student ID / Roll No / Enrollment ID'),
+                  if (program != null && program.isOther) ...[
+                    const FieldLabel('Program Name'),
+                    InputField(
+                      hint: 'Enter your program',
+                      icon: Symbols.edit,
+                      controller: _otherProgram,
+                      validator: (v) => Validators.required(v, 'Program name'),
+                      textInputAction: TextInputAction.next,
+                      enabled: !_saving,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // ── Branch / Major (not for school) ──
+                  if (program != null && !isSchool) ...[
+                    const FieldLabel('Branch / Major (optional)'),
+                    InputField(
+                      hint: 'Enter your branch or major',
+                      icon: Symbols.category,
+                      controller: _branch,
+                      textInputAction: TextInputAction.next,
+                      enabled: !_saving,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // ── School / College Name ──
+                  FieldLabel(
+                      isSchool ? 'School Name' : 'College / University Name'),
                   InputField(
-                    hint: 'e.g. 22CS045 or D25CS118',
-                    icon: Symbols.badge,
-                    controller: _enrollment,
-                    validator: (v) =>
-                        Validators.required(v, 'Student ID / Roll No'),
+                    hint: isSchool
+                        ? 'Enter your school name'
+                        : 'Enter your college name',
+                    icon: isSchool ? Symbols.school : Symbols.account_balance,
+                    controller: _college,
+                    validator: (v) => Validators.required(
+                        v, isSchool ? 'School name' : 'College name'),
                     textInputAction: TextInputAction.done,
                     enabled: !_saving,
                   ),
                   const SizedBox(height: 16),
 
-                  // ── Current Semester / Year ──
-                  const FieldLabel('Current Semester'),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: p.card,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: p.line, width: 1.2),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedSemester,
-                        isExpanded: true,
-                        dropdownColor: p.card,
-                        icon: Icon(Symbols.expand_more, color: p.ink3),
-                        items: [
-                          for (final sem in _semesters)
-                            DropdownMenuItem(
-                              value: sem,
-                              child: Row(
-                                children: [
-                                  Icon(Symbols.calendar_today,
-                                      color: p.primary, size: 18),
-                                  const SizedBox(width: 10),
-                                  Text(
-                                    sem,
-                                    style: TextStyle(
-                                      color: p.ink,
-                                      fontSize: 14.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                        onChanged: _saving
-                            ? null
-                            : (val) {
-                                if (val != null) {
-                                  setState(() => _selectedSemester = val);
-                                }
-                              },
-                      ),
-                    ),
+                  // ── Class for school, semester (or level) otherwise ──
+                  FieldLabel(isSchool
+                      ? 'Class'
+                      : 'Current ${program?.termLabel ?? 'Semester'}'),
+                  _SelectField(
+                    icon: Symbols.calendar_today,
+                    hint: program == null
+                        ? 'Select your program first'
+                        : 'Select your $termWord',
+                    value: _term,
+                    items: [
+                      for (final option in program?.options ?? const <String>[])
+                        (text: option, header: false),
+                    ],
+                    error: _showPickErrors && program != null && _term == null
+                        ? 'Select your $termWord'
+                        : null,
+                    onChanged: _saving
+                        ? null
+                        : (term) => setState(() => _term = term),
                   ),
                   const SizedBox(height: 30),
 
@@ -341,6 +352,121 @@ class _AcademicProfileScreenState extends State<AcademicProfileScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// A dropdown dressed like [InputField]. The form's validators can't see it,
+/// so the screen decides when it is in error and passes [error] in.
+class _SelectField extends StatelessWidget {
+  const _SelectField({
+    required this.icon,
+    required this.hint,
+    required this.value,
+    required this.items,
+    this.error,
+    this.onChanged,
+  });
+
+  final IconData icon;
+  final String hint;
+  final String? value;
+
+  /// The choices; a `header` is a group heading that can't be picked.
+  final List<({String text, bool header})> items;
+  final String? error;
+
+  /// Null disables the field.
+  final ValueChanged<String>? onChanged;
+
+  /// Headings need a value too, and it must not collide with a choice's.
+  static String _headerValue(String text) => '#$text';
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final error = this.error;
+    final onChanged = this.onChanged;
+
+    Widget line(String text, {required bool chosen}) => Row(
+          children: [
+            Icon(icon, color: chosen ? p.primary : p.ink3, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: chosen
+                      ? TextStyle(
+                          color: p.ink,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600)
+                      : TextStyle(color: p.ink3, fontSize: 14.5)),
+            ),
+          ],
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.only(left: 16, right: 10),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: error == null ? p.line : p.error, width: 1.2),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              menuMaxHeight: 420,
+              borderRadius: BorderRadius.circular(16),
+              dropdownColor: p.card,
+              icon: Icon(Symbols.expand_more, color: p.ink3),
+              hint: line(hint, chosen: false),
+              disabledHint: line(value ?? hint, chosen: value != null),
+              selectedItemBuilder: (_) => [
+                for (final item in items) line(item.text, chosen: true),
+              ],
+              items: [
+                for (final item in items)
+                  item.header
+                      ? DropdownMenuItem(
+                          value: _headerValue(item.text),
+                          enabled: false,
+                          child: Text(item.text.toUpperCase(),
+                              style: TextStyle(
+                                  color: p.primary,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6)),
+                        )
+                      : DropdownMenuItem(
+                          value: item.text,
+                          child: Text(item.text,
+                              style: TextStyle(
+                                  color: p.ink,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+              ],
+              onChanged: onChanged == null
+                  ? null
+                  : (picked) {
+                      if (picked != null) onChanged(picked);
+                    },
+            ),
+          ),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 16),
+            child: Text(error,
+                style: TextStyle(
+                    color: p.error, fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+      ],
     );
   }
 }
