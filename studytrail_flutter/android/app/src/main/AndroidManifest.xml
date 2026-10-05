@@ -54,18 +54,53 @@
             </intent-filter>
         </receiver>
 
-        <!-- The home-screen widget (StudyTrailWidget.kt). Updated by the system
-             only; the app pushes data through the home_widget plugin. -->
+        <!-- The home-screen widgets: Today (StudyTrailWidget.kt), Exam
+             countdown and Streak. Updated by the system only; the app pushes
+             data through the home_widget plugin (HomeWidgetSync). -->
         <receiver
             android:name=".StudyTrailWidget"
             android:exported="false"
-            android:label="StudyTrail">
+            android:label="@string/widget_today_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/studytrail_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".ExamCountdownWidget"
+            android:exported="false"
+            android:label="@string/widget_countdown_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/studytrail_countdown_info" />
+        </receiver>
+        <receiver
+            android:name=".StreakWidget"
+            android:exported="false"
+            android:label="@string/widget_streak_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/studytrail_streak_info" />
+        </receiver>
+        <!-- Redraws the widgets just after midnight, so the countdowns roll
+             over without the app being opened (HomeWidget.scheduleWidgetUpdates).
+             Inexact: no exact-alarm permission, see the note at the top. -->
+        <receiver
+            android:name="es.antonborri.home_widget.HomeWidgetScheduledUpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
         </receiver>
 
         <!-- Don't delete the meta-data below.

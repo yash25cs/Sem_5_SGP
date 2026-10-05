@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exam countdown, 2×2. Same data and refresh as the Today widget. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_countdown_description"
+    android:initialLayout="@layout/studytrail_countdown"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="100dp"
+    android:minResizeHeight="90dp"
+    android:previewLayout="@layout/studytrail_countdown"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="43200000"
+    android:widgetCategory="home_screen" />

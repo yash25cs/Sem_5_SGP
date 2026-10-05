@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One task in the Today widget's flipper; StudyTrailWidget adds one per
+     upcoming task. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_task_line"
+    style="@style/StudyTrailWidgetTaskLine" />

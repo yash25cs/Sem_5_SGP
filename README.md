@@ -96,8 +96,8 @@ Most of that is visible only to its owner. Four things are shared on purpose:
 
 A few things stay on the phone and are never uploaded: timer presets, dark
 mode, whether reminders are on, whether the welcome tour has been seen, a copy
-of the student's flashcards for offline review, and what the home-screen widget
-shows (next exam, today's tasks, streak — cleared on sign-out).
+of the student's flashcards for offline review, and what the home-screen widgets
+show (exam dates, today's tasks, streak — cleared on sign-out).
 
 Two third parties are involved, both server-side:
 

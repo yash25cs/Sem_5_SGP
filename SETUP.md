@@ -307,9 +307,14 @@ the **+** button.
     answers, and A marks it solved.
 48. **Calendar** — Settings → *Add to my calendar*: the share sheet offers
     `studytrail.ics`; importing it shows the exams with reminders.
-49. **Home-screen widget** — long-press the launcher → Widgets → StudyTrail:
-    days to the next exam and today's tasks; ticking a task in the app updates
-    it.
+49. **Home-screen widgets** — Settings → *Home-screen widgets* → **Add** (or
+    long-press the launcher → Widgets → StudyTrail). Three: **Today** (4×2:
+    countdown, task ring, next tasks sliding past, Focus / Cards / Ask AI),
+    **Exam countdown** (2×2) and **Streak** (2×1). Ticking a task in the app
+    updates them; each button opens its screen; on Android 12+ a tap grows
+    the widget into the app. The streak flame has a circling light until a
+    task is done today. Shrink Today to 4×1 and the buttons, then the task
+    line, drop away.
 
 
 - **Onboarding order.** Auth comes first (welcome → signup → academic

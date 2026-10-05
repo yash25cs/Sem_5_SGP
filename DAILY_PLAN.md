@@ -708,3 +708,38 @@ function change.
   Other, and the saved text round-tripping). 0025 dry-run in a rolled-back
   transaction, then applied, then called live through PostgREST with a
   self-deleting account.
+
+## Day 27 – Home-screen widgets
+
+**Status:** 5 October 2026 (not committed). No migration, no function change.
+
+- **Today widget, redesigned** (4×2): brand gradient with the launcher's
+  own corner radius, a streak chip, days to the next paper, a ring for
+  today's tasks ("2/5"), the next three tasks taking turns — each slides up
+  and out as the next slides in — and **Focus**, **Cards** and **Ask AI**
+  buttons. Shorter than 4×2 it drops the buttons, then the task line.
+- **Two small widgets.** **Exam countdown** (2×2, violet): days to the next
+  paper, its date, how many are left; after each exam day it moves on to the
+  next subject by itself. **Streak** (2×1, coral to amber): the flame and the
+  count; taller, "Done today · best N". Until a task is done today a light
+  circles the flame, and a tap starts a focus session; afterwards a tap
+  opens Achievements. A streak missed for a whole day shows 0, even if the
+  app hasn't been opened since.
+- **Taps:** every button ripples; on Android 12+ the widget grows into the
+  app. Each part opens its own screen — Home, Roadmap, Chat, Pomodoro,
+  Flashcards, Achievements — closing whatever was open on top first.
+- **Settings → Home-screen widgets:** live previews with the student's own
+  numbers (the task line and the streak light animate as on the phone) and
+  an **Add** button that asks the launcher to place each one; on launchers
+  that can't, it says how to add one by hand.
+- **Right at midnight:** the widgets redraw just after each of the next
+  seven midnights, so the countdowns roll over without the app being opened.
+  Sign-out clears them and cancels that.
+- Icons are Material Symbols Rounded, the app's own icon set, as vector
+  drawables.
+- `flutter analyze` clean; `flutter test` 170 passed, 4 live skipped
+  (`test/home_widgets_test.dart`: every widget link and the ones that
+  aren't, the exam lines the countdown reads, the seven midnights across a
+  month end, and the Settings sheet at 320 dp with its task line moving
+  on). The debug APK builds — aapt checks every layout and drawable, and the
+  Kotlin compiles. Not yet seen on a phone: no device or emulator here.

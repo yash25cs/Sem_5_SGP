@@ -1,64 +1,217 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Home-screen widget: days to the next exam, and today's tasks. Filled in by
-     StudyTrailWidget from what the app last saved (lib/services/home_widget_sync.dart). -->
+<!-- Today widget: days to the next exam, a ring for today's tasks, the next
+     tasks taking turns, and three quick actions. Filled in by StudyTrailWidget
+     from what the app last saved (lib/services/home_widget_sync.dart).
+
+     The texts here are sample values for the launcher's widget picker, which
+     draws this layout as the preview (android:previewLayout); the widget
+     replaces every one of them before it is first shown.
+
+     The root's id is @android:id/background so that Android 12+ grows the
+     widget into the app's window when it is tapped. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_root"
+    android:id="@android:id/background"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/studytrail_widget_bg"
+    android:clipToOutline="true"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:paddingStart="16dp"
+    android:paddingTop="14dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="14dp">
 
+    <!-- Header: brand, and the streak chip. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:background="@drawable/widget_circle_bg"
+            android:contentDescription="@null"
+            android:padding="4dp"
+            android:src="@drawable/ic_widget_sparkle" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:layout_weight="1"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.02"
             android:text="StudyTrail"
-            android:textColor="#CCFFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:textColor="#D9FFFFFF"
+            android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/widget_streak"
+        <LinearLayout
+            android:id="@+id/widget_streak_chip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:background="@drawable/widget_chip_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="7dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="9dp"
+            android:paddingBottom="3dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_widget_flame" />
+
+            <TextView
+                android:id="@+id/widget_streak"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="3dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="5"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/widget_days"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:textColor="#FFFFFFFF"
-        android:textSize="26sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/widget_exam"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:textColor="#E6FFFFFF"
-        android:textSize="13sp" />
-
-    <TextView
-        android:id="@+id/widget_tasks"
+    <!-- Countdown on the left, today's ring on the right. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:maxLines="2"
-        android:ellipsize="end"
-        android:textColor="#FFFFFFFF"
-        android:textSize="13sp" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_days"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-black"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="12 days"
+                android:textColor="#FFFFFFFF"
+                android:textSize="26sp" />
+
+            <TextView
+                android:id="@+id/widget_exam"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="to Physics · Fri, 20 Nov"
+                android:textColor="#E6FFFFFF"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_marginStart="10dp">
+
+            <ProgressBar
+                android:id="@+id/widget_ring"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:max="100"
+                android:progress="40"
+                android:progressDrawable="@drawable/widget_progress_ring" />
+
+            <TextView
+                android:id="@+id/widget_ring_text"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:text="2/5"
+                android:textColor="#FFFFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- The next few tasks, taking turns: each slides up and out as the
+         next slides in. StudyTrailWidget fills it with one line per task. -->
+    <ViewFlipper
+        android:id="@+id/widget_next"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:autoStart="true"
+        android:flipInterval="3500"
+        android:inAnimation="@anim/widget_task_in"
+        android:outAnimation="@anim/widget_task_out">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Next · Revise Unit 2 notes"
+            android:textColor="#FFFFFFFF"
+            android:textSize="13sp" />
+    </ViewFlipper>
+
+    <!-- Quick actions. Hidden when the widget is too short for them. -->
+    <LinearLayout
+        android:id="@+id/widget_actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/widget_action_focus"
+            style="@style/StudyTrailWidgetAction">
+
+            <ImageView
+                style="@style/StudyTrailWidgetActionIcon"
+                android:src="@drawable/ic_widget_timer" />
+
+            <TextView
+                style="@style/StudyTrailWidgetActionText"
+                android:text="Focus" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_action_cards"
+            style="@style/StudyTrailWidgetAction"
+            android:layout_marginStart="8dp">
+
+            <ImageView
+                style="@style/StudyTrailWidgetActionIcon"
+                android:src="@drawable/ic_widget_cards" />
+
+            <TextView
+                style="@style/StudyTrailWidgetActionText"
+                android:text="Cards" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_action_chat"
+            style="@style/StudyTrailWidgetAction"
+            android:layout_marginStart="8dp">
+
+            <ImageView
+                style="@style/StudyTrailWidgetActionIcon"
+                android:src="@drawable/ic_widget_chat" />
+
+            <TextView
+                style="@style/StudyTrailWidgetActionText"
+                android:text="Ask AI" />
+        </LinearLayout>
+    </LinearLayout>
 </LinearLayout>

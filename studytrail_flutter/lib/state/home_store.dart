@@ -124,18 +124,24 @@ class HomeStore extends AsyncStore {
         _syncWidget();
       });
 
-  /// Hands the home-screen widget the next exam and today's tasks.
+  /// Hands the home-screen widgets every exam date, the streak, and today's
+  /// tasks. All the subject dates, not just the next: the countdown moves on
+  /// to the following paper by itself after each exam day.
   void _syncWidget() {
-    final subject = nextExam;
     final goal = _goal;
-    final next = _tasksToday.where((t) => !t.done).firstOrNull;
     HomeWidgetSync.push(
-      examName: subject?.name ?? goal?.name,
-      examDate: subject?.examDate ?? goal?.examDate,
+      goalName: goal?.name,
+      goalDate: goal?.examDate,
+      subjectExams: [for (final s in _subjects) (s.name, s.examDate)],
       streak: _streak.currentStreak,
+      bestStreak: _streak.bestStreak,
+      lastStudied: _streak.lastActiveDate,
       tasksDone: doneCount,
       tasksTotal: _tasksToday.length,
-      nextTask: next?.title,
+      nextTasks: [
+        for (final t in _tasksToday)
+          if (!t.done) t.title,
+      ],
     ).ignore();
   }
 
@@ -252,6 +258,8 @@ class HomeStore extends AsyncStore {
       try {
         _streak = await _game.getStreak();
         notifyListeners();
+        // The streak widget stops its "study today" glow.
+        _syncWidget();
       } catch (_) {
         // Header chip stays on the previous count until the next load.
       }

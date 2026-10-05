@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Today widget: the app's primary indigo (AppPalette.light.primary)
-     into primary2.
+<!-- Exam countdown: violet, the doubt board's colour in the app.
      The ripple is the tap feedback: the whole widget flashes white where it
      was pressed before the app opens. -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
@@ -9,8 +8,8 @@
         <shape android:shape="rectangle">
             <gradient
                 android:angle="315"
-                android:endColor="#FF3F51B5"
-                android:startColor="#FF24389C"
+                android:endColor="#FF8B5CF6"
+                android:startColor="#FF5B21B6"
                 android:type="linear" />
             <corners android:radius="@dimen/widget_radius" />
         </shape>

@@ -641,6 +641,27 @@ non-trivial choice.
   text. A program missing from the list goes under Other. Existing enrollment
   IDs stay in the database but are no longer shown.
 
+### D-042 — Three home-screen widgets that work out the day themselves
+
+- **Decision:** the single widget became three — Today (4×2), Exam countdown
+  (2×2) and Streak (2×1) — fed the same facts by `HomeWidgetSync`: every
+  subject's exam date, the streak with the day last studied, today's tasks.
+  Each part of a widget opens its own screen through a
+  `studytrail://widget/<screen>` link, and Settings can add them.
+- **Why:** the app isn't open at midnight, and a widget that only shows what
+  it was told goes stale: a countdown stuck on a finished paper, a streak
+  that was broken yesterday. Saving dates rather than sentences lets the
+  widget compute the day when it draws, and a scheduled redraw just after
+  midnight makes it draw then. Launchers can't run custom animation in a
+  widget, so the motion uses what they do run: a ViewFlipper for the task
+  line, an indeterminate ProgressBar for the streak light, ripples for
+  taps, and Android 12's widget-to-app launch transition.
+- **Trade-off:** Android only — an iPhone widget needs a WidgetKit
+  extension and a Mac. Widgets can't tick tasks themselves: that would mean
+  signing in to Supabase from a background process, so a tap opens the app
+  instead. Without the exact-alarm permission the midnight redraw can land
+  a few minutes late; the twice-a-day update is the fallback.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

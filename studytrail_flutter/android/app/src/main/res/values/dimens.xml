@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget corners. Android 12+ overrides this with the launcher's own
+         radius (values-v31), so the widgets match the ones around them. -->
+    <dimen name="widget_radius">24dp</dimen>
+</resources>

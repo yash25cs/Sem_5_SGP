@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Today's tasks as a ring: a faint full track, and a white arc that the
+     ProgressBar sweeps from 12 o'clock as tasks are ticked. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape
+            android:innerRadiusRatio="2.7"
+            android:shape="ring"
+            android:thicknessRatio="9"
+            android:useLevel="false">
+            <solid android:color="#33FFFFFF" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <rotate
+            android:fromDegrees="270"
+            android:pivotX="50%"
+            android:pivotY="50%"
+            android:toDegrees="270">
+            <shape
+                android:innerRadiusRatio="2.7"
+                android:shape="ring"
+                android:thicknessRatio="9"
+                android:useLevel="true">
+                <solid android:color="#FFFFFFFF" />
+            </shape>
+        </rotate>
+    </item>
+</layer-list>

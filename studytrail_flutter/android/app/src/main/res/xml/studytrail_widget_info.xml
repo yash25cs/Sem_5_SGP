@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 4×2 by default. The app pushes fresh data whenever Home loads or a task is
-     ticked; the twice-a-day update only rolls "days to exam" over at midnight
-     when the app isn't opened. -->
+<!-- Today widget, 4×2 by default. The app pushes fresh data whenever Home
+     loads or a task is ticked, and schedules a redraw just after each
+     midnight (HomeWidgetSync) so "days to exam" rolls over when the app isn't
+     opened; the twice-a-day update is the fallback. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_today_description"
     android:initialLayout="@layout/studytrail_widget"
-    android:previewLayout="@layout/studytrail_widget"
     android:minWidth="250dp"
     android:minHeight="110dp"
     android:minResizeWidth="180dp"
     android:minResizeHeight="90dp"
+    android:previewLayout="@layout/studytrail_widget"
+    android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
     android:targetCellHeight="2"
-    android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="43200000"
     android:widgetCategory="home_screen" />

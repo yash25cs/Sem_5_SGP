@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../data/local_prefs.dart';
 import '../services/calendar_export.dart';
+import '../services/home_widget_sync.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_colors.dart';
@@ -11,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/home_widgets_sheet.dart';
 import '../state/reminder_sync.dart';
 import '../widgets/nav.dart';
 import 'academic_profile_screen.dart';
@@ -682,6 +684,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           .first,
                       trailing: _chev(p),
                       onTap: _pickLanguage),
+                  if (HomeWidgetSync.available)
+                    _Row(Symbols.widgets, 'Home-screen widgets', p.primary2,
+                        value: 'Add',
+                        trailing: _chev(p),
+                        onTap: () => HomeWidgetsSheet.show(context)),
                 ]),
                 _GroupLabel('Academic Profile'),
                 _Group(children: [

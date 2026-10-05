@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +28,7 @@ import 'screens/answer_practice_screen.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/rewards_screen.dart';
 import 'screens/weekly_report_screen.dart';
+import 'services/home_widget_sync.dart';
 import 'services/notification_service.dart';
 
 /// The main app shell — five bottom-nav tabs in an [IndexedStack] and a center
@@ -54,6 +57,7 @@ class _HomeShellState extends State<HomeShell> {
   ];
 
   late final AppLifecycleListener _lifecycle;
+  StreamSubscription<WidgetTarget>? _widgetTaps;
 
   @override
   void initState() {
@@ -75,6 +79,13 @@ class _HomeShellState extends State<HomeShell> {
     // A tapped weekly-report notification, now or the one that launched us.
     NotificationService().opened.addListener(_onNotificationOpened);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationOpened());
+    // A home-screen widget tapped while the app runs, or the one that
+    // launched it.
+    _widgetTaps = HomeWidgetSync.taps.listen(_openFromWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final target = await HomeWidgetSync.takeLaunchTarget();
+      if (target != null) _openFromWidget(target);
+    });
   }
 
   /// A playlist the phone didn't finish reading carries on (D-038) — at launch
@@ -88,8 +99,31 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void dispose() {
     NotificationService().opened.removeListener(_onNotificationOpened);
+    _widgetTaps?.cancel();
     _lifecycle.dispose();
     super.dispose();
+  }
+
+  /// Takes a widget tap to its screen: Focus, Cards, Ask AI and the streak
+  /// open theirs; the countdown opens the Roadmap. Whatever was open on top
+  /// is closed first, so a tap always lands where it says.
+  void _openFromWidget(WidgetTarget target) {
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    switch (target) {
+      case WidgetTarget.home:
+        _selectTab(0);
+      case WidgetTarget.roadmap:
+        _selectTab(1);
+      case WidgetTarget.chat:
+        _selectTab(2);
+      case WidgetTarget.focus:
+        _open(PomodoroScreen(onBack: () => Navigator.pop(context)));
+      case WidgetTarget.flashcards:
+        _open(FlashcardsScreen(onBack: () => Navigator.pop(context)));
+      case WidgetTarget.achievements:
+        _open(AchievementsScreen(onBack: () => Navigator.pop(context)));
+    }
   }
 
   void _onNotificationOpened() {

@@ -3,20 +3,19 @@ package `in`.charusat.studytrail
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Bundle
+import android.view.View
 import android.widget.RemoteViews
-import es.antonborri.home_widget.HomeWidgetLaunchIntent
+import es.antonborri.home_widget.HomeWidgetPlugin
 import es.antonborri.home_widget.HomeWidgetProvider
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 
 /**
- * The home-screen widget: days to the next exam and today's tasks.
+ * The Today widget (4×2): days to the next exam, a ring for today's tasks, the
+ * next few tasks taking turns, and Focus / Cards / Ask AI buttons.
  *
- * The app saves raw facts (the exam's date, today's date with its task counts),
- * not finished sentences, so "days left" and "today" stay right when the
- * widget refreshes on its own at midnight without the app being opened.
- * Keys are written by lib/services/home_widget_sync.dart.
+ * Shorter than its full size it drops the buttons, then the task line. Every
+ * part is a way into the app: the body opens Home, each button its screen.
+ * Data comes from [WidgetData].
  */
 class StudyTrailWidget : HomeWidgetProvider() {
 
@@ -26,68 +25,94 @@ class StudyTrailWidget : HomeWidgetProvider() {
       appWidgetIds: IntArray,
       widgetData: SharedPreferences,
   ) {
-    val today = startOfDay(Calendar.getInstance())
-    val examName = widgetData.getString("exam_name", null)
-    val examDays = widgetData.getString("exam_date", null)?.let { parse(it) }
-        ?.let { daysBetween(today, it) }
-    val streak = widgetData.getInt("streak", 0)
-    val tasksForToday = widgetData.getString("tasks_date", null)
-        ?.let { parse(it) }
-        ?.let { daysBetween(today, it) == 0L } ?: false
-    val done = widgetData.getInt("tasks_done", 0)
-    val total = widgetData.getInt("tasks_total", 0)
-    val next = widgetData.getString("next_task", null)
-
-    val days = when {
-      examDays == null -> "No exam set"
-      examDays < 0 -> "Exam done"
-      examDays == 0L -> "Exam today"
-      examDays == 1L -> "1 day"
-      else -> "$examDays days"
-    }
-    val exam = when {
-      examName == null -> "Set a target in StudyTrail"
-      examDays != null && examDays > 0 -> "to $examName"
-      else -> examName
-    }
-    val tasks = when {
-      !tasksForToday -> "Open StudyTrail to plan today"
-      total == 0 -> "Nothing planned today"
-      done >= total -> "All $total tasks done today"
-      next != null -> "$done of $total done · next: $next"
-      else -> "$done of $total done today"
-    }
-
+    val data = WidgetData(widgetData)
     for (id in appWidgetIds) {
-      val views = RemoteViews(context.packageName, R.layout.studytrail_widget).apply {
-        setTextViewText(R.id.widget_days, days)
-        setTextViewText(R.id.widget_exam, exam)
-        setTextViewText(R.id.widget_tasks, tasks)
-        setTextViewText(R.id.widget_streak, if (streak > 0) "🔥 $streak" else "")
-        setOnClickPendingIntent(
-            R.id.widget_root,
-            HomeWidgetLaunchIntent.getActivity(context, MainActivity::class.java),
-        )
-      }
+      val views = sizedViews(appWidgetManager, id, listOf(
+          0f to { build(context, data, tasks = false, actions = false) },
+          TASKS_FROM to { build(context, data, tasks = true, actions = false) },
+          ACTIONS_FROM to { build(context, data, tasks = true, actions = true) },
+      ))
       appWidgetManager.updateAppWidget(id, views)
     }
   }
 
-  private fun parse(date: String): Calendar? = try {
-    val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(date)
-    parsed?.let { startOfDay(Calendar.getInstance().apply { time = it }) }
-  } catch (_: Exception) {
-    null
+  /** Below Android 12 the size decides the layout, so a resize redraws. */
+  override fun onAppWidgetOptionsChanged(
+      context: Context,
+      appWidgetManager: AppWidgetManager,
+      appWidgetId: Int,
+      newOptions: Bundle,
+  ) {
+    onUpdate(context, appWidgetManager, intArrayOf(appWidgetId), HomeWidgetPlugin.getData(context))
   }
 
-  private fun startOfDay(c: Calendar): Calendar = c.apply {
-    set(Calendar.HOUR_OF_DAY, 0)
-    set(Calendar.MINUTE, 0)
-    set(Calendar.SECOND, 0)
-    set(Calendar.MILLISECOND, 0)
+  private fun build(
+      context: Context,
+      d: WidgetData,
+      tasks: Boolean,
+      actions: Boolean,
+  ): RemoteViews = RemoteViews(context.packageName, R.layout.studytrail_widget).apply {
+    val exam = d.nextExam
+    setTextViewText(R.id.widget_days, when {
+      !d.signedIn -> "StudyTrail"
+      exam == null && d.hadExams -> "Exams done"
+      exam == null -> "No exam set"
+      exam.days == 0L -> "Exam today"
+      exam.days == 1L -> "1 day"
+      else -> "${exam.days} days"
+    })
+    setTextViewText(R.id.widget_exam, when {
+      !d.signedIn -> "Sign in to StudyTrail"
+      exam == null && d.hadExams -> "Well done — set your next target"
+      exam == null -> "Set a target in StudyTrail"
+      exam.days == 0L -> "${exam.name} · good luck!"
+      exam.days == 1L -> "to ${exam.name} · tomorrow"
+      else -> "to ${exam.name} · ${WidgetData.label(exam.date)}"
+    })
+
+    setViewVisibility(
+        R.id.widget_streak_chip,
+        if (d.signedIn && d.streak > 0) View.VISIBLE else View.GONE,
+    )
+    setTextViewText(R.id.widget_streak, d.streak.toString())
+
+    val counted = d.signedIn && d.tasksForToday && d.tasksTotal > 0
+    setProgressBar(
+        R.id.widget_ring,
+        if (counted) d.tasksTotal else 1,
+        if (counted) d.tasksDone.coerceAtMost(d.tasksTotal) else 0,
+        false,
+    )
+    setTextViewText(R.id.widget_ring_text, if (counted) "${d.tasksDone}/${d.tasksTotal}" else "—")
+
+    // One line per upcoming task; the flipper slides between them.
+    removeAllViews(R.id.widget_next)
+    for (line in taskLines(d)) {
+      addView(R.id.widget_next, RemoteViews(context.packageName, R.layout.studytrail_widget_task_line).apply {
+        setTextViewText(R.id.widget_task_line, line)
+      })
+    }
+    setViewVisibility(R.id.widget_next, if (tasks) View.VISIBLE else View.GONE)
+    setViewVisibility(R.id.widget_actions, if (actions) View.VISIBLE else View.GONE)
+
+    setOnClickPendingIntent(android.R.id.background, WidgetLinks.open(context, "home"))
+    setOnClickPendingIntent(R.id.widget_action_focus, WidgetLinks.open(context, "focus"))
+    setOnClickPendingIntent(R.id.widget_action_cards, WidgetLinks.open(context, "flashcards"))
+    setOnClickPendingIntent(R.id.widget_action_chat, WidgetLinks.open(context, "chat"))
   }
 
-  /** Whole days from [from] to [to]; rounding absorbs a daylight-saving hour. */
-  private fun daysBetween(from: Calendar, to: Calendar): Long =
-      Math.round((to.timeInMillis - from.timeInMillis) / 86_400_000.0)
+  private fun taskLines(d: WidgetData): List<String> = when {
+    !d.signedIn -> listOf("Sign in to see today's plan")
+    !d.tasksForToday -> listOf("Open StudyTrail to plan today")
+    d.tasksTotal == 0 -> listOf("Nothing planned yet — tap to plan today")
+    d.tasksDone >= d.tasksTotal -> listOf("All ${d.tasksTotal} tasks done today 🎉")
+    d.nextTasks.isEmpty() -> listOf("${d.tasksDone} of ${d.tasksTotal} done today")
+    else -> d.nextTasks.mapIndexed { i, task -> if (i == 0) "Next · $task" else "Then · $task" }
+  }
+
+  private companion object {
+    /** Heights (dp) the task line, then the buttons, need to fit. */
+    const val TASKS_FROM = 135f
+    const val ACTIONS_FROM = 178f
+  }
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Names and descriptions shown in the launcher's widget picker. -->
+    <string name="widget_today_label">StudyTrail · Today</string>
+    <string name="widget_today_description">Days to your next exam, today’s tasks and quick actions</string>
+    <string name="widget_countdown_label">Exam countdown</string>
+    <string name="widget_countdown_description">Days left to your next paper</string>
+    <string name="widget_streak_label">Study streak</string>
+    <string name="widget_streak_description">Your streak, and whether today is done</string>
+</resources>

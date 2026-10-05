@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Streak, 2×1; taller, it adds whether today is done. Same data and refresh
+     as the Today widget. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_streak_description"
+    android:initialLayout="@layout/studytrail_streak"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:minResizeWidth="100dp"
+    android:minResizeHeight="40dp"
+    android:previewLayout="@layout/studytrail_streak"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="43200000"
+    android:widgetCategory="home_screen" />
