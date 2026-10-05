@@ -64,7 +64,7 @@ void main() {
       addTearDown(store.dispose);
 
       await store.load();
-      expect(await store.newQuestion(), isTrue);
+      expect(await store.newQuestions(), isTrue);
       expect(store.question!.marks, 5);
 
       expect(await store.submit('  Atomicity means all or nothing.  '), isTrue);
@@ -112,8 +112,11 @@ class _FakeAnswers extends AnswerRepository {
       ];
 
   @override
-  Future<PracticeQuestion> newQuestion({String? unitLabel}) async =>
-      const PracticeQuestion(text: 'Explain ACID.', marks: 5, unitLabel: 'Unit 2');
+  Future<List<PracticeQuestion>> newQuestions(
+          {int count = 1, String? unitLabel}) async =>
+      const [
+        PracticeQuestion(text: 'Explain ACID.', marks: 5, unitLabel: 'Unit 2')
+      ];
 
   @override
   Future<AnswerAttempt> grade(PracticeQuestion question, String answer) async {

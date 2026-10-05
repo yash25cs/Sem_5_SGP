@@ -51,6 +51,10 @@ const MAX_ROADMAP_DAYS = 180;
 /// contents.
 const MAX_UNIT_LABELS = 120;
 
+/// Units listed per subject from its syllabus. A semester syllabus is
+/// usually 5–8 units; past this it's the reader splitting one unit up.
+const MAX_SYLLABUS_UNITS = 15;
+
 /// Rows scanned to collect those headings. Chunks repeat their unit label, so
 /// this is a bound on work, not on coverage.
 const LABEL_SCAN_ROWS = 600;
@@ -104,7 +108,10 @@ for revision and mock tests.
 - Plan only from the subjects and unit headings given. Invent no topics.
 - When subjects have their own exam dates, each subject must be fully covered \
 and revised before its own exam: schedule it earlier, give the week of its \
-exam to revising it, and stop scheduling it after that week.`;
+exam to revising it, and stop scheduling it after that week.
+- When a subject lists its syllabus units, those are what its exam covers: \
+plan that subject from exactly those units, in that order, and name them in \
+its tasks.`;
 
 interface Milestone {
   weekLabel: string;
@@ -137,7 +144,7 @@ serve(async (req) => {
 
   const { data: subjectRows, error: subjectError } = await supa
     .from('subjects')
-    .select('name, exam_date')
+    .select('id, name, exam_date')
     .eq('goal_id', goalId)
     .order('exam_date', { ascending: true, nullsFirst: false })
     .order('name', { ascending: true });
@@ -155,14 +162,22 @@ serve(async (req) => {
     new Date().getUTCMonth(),
     new Date().getUTCDate(),
   );
+  // A subject with its own syllabus (0027) brings its units along:
+  // "DBMS (exam …) — syllabus units: ER model; Normalisation; SQL".
+  const syllabi = await syllabusUnits(supa);
   const subjects = (subjectRows ?? [])
     .map((row) => {
       const name = String(row.name ?? '').trim();
-      if (name.length === 0 || typeof row.exam_date !== 'string') return name;
+      if (name.length === 0) return name;
+      const units = syllabi.get(String(row.id)) ?? [];
+      const syllabus = units.length > 0
+        ? ` — syllabus units: ${units.join('; ')}`
+        : '';
+      if (typeof row.exam_date !== 'string') return name + syllabus;
       const days = (Date.parse(row.exam_date) - today) / 86_400_000;
       const week = Math.max(1, Math.ceil(days / 7));
       return `${name} (exam ${row.exam_date}, in week ${week}; `
-        + `nothing on it after week ${week})`;
+        + `nothing on it after week ${week})${syllabus}`;
     })
     .filter((name) => name.length > 0);
 
@@ -404,6 +419,34 @@ function buildPrompt(
 
   parts.push(`Write exactly ${weeks} weekly milestones.`);
   return parts.join('\n\n');
+}
+
+/// Each subject's syllabus units, in document order, keyed by subject id —
+/// the headings of the chunks a subject's syllabus became (0027). Through the
+/// caller's client, so RLS keeps it to their own. Empty on failure: the plan
+/// still has the subject names and the library's headings.
+async function syllabusUnits(supa: SupabaseClient): Promise<Map<string, string[]>> {
+  const { data, error } = await supa
+    .from('material_chunks')
+    .select('subject_id, unit_label')
+    .not('subject_id', 'is', null)
+    .not('unit_label', 'is', null)
+    .order('material_id', { ascending: true })
+    .order('chunk_index', { ascending: true })
+    .limit(LABEL_SCAN_ROWS);
+  if (error) console.error('Could not read syllabus units', error);
+
+  const bySubject = new Map<string, string[]>();
+  for (const row of data ?? []) {
+    const label = String(row.unit_label ?? '').trim().slice(0, 80);
+    if (label.length === 0) continue;
+    const key = String(row.subject_id);
+    const units = bySubject.get(key) ?? [];
+    if (units.length >= MAX_SYLLABUS_UNITS) continue;
+    if (!units.some((u) => u.toLowerCase() === label.toLowerCase())) units.push(label);
+    bySubject.set(key, units);
+  }
+  return bySubject;
 }
 
 /// Keeps the milestones worth storing.

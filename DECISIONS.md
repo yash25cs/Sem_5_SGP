@@ -700,6 +700,27 @@ non-trivial choice.
   repetitions, which an "Again" resets, so it measures cards learned rather
   than reviews made.
 
+### D-045 — A syllabus belongs to a subject, and its units steer the plan
+
+- **Decision:** each subject on Home can have a syllabus — a PDF, or text
+  typed or pasted in — stored as an ordinary material with a new
+  `materials.subject_id` (0027). `embed-material` gives its chunks the same
+  subject, and `generate-roadmap` lists each subject's syllabus units next
+  to it with a rule to plan that subject from exactly those units. Answer
+  practice writes 1–5 questions in one call.
+- **Why:** the roadmap could only see one pooled list of headings from every
+  file, with no idea which subject a unit belonged to; a syllabus is the one
+  document that says what a subject's exam covers. `material_chunks` had a
+  `subject_id` since 0001 that nothing ever filled. Writing a set of
+  questions in one call lets the model keep them different and spread over
+  units — five separate calls repeated themselves and took five times as
+  long.
+- **Trade-off:** a syllabus is a library item, so it counts towards the
+  20-item limit; replacing one keeps the count. It is read straight away
+  and one that can't be read is removed again, keeping any earlier one. The
+  roadmap only uses it the next time it is written, so the student has to
+  replace their roadmap — the success message says so.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

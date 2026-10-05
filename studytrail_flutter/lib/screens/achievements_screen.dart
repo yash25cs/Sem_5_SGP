@@ -276,9 +276,15 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
     final style = BadgeStyle.of(context, badge);
     final unlocked = badge.unlocked;
 
+    // Scroll-controlled and scrollable: with the progress section the sheet
+    // outgrew the default 9/16-of-the-screen cap ("BOTTOM OVERFLOWED BY
+    // 0.525 PIXELS" on a phone), and a large font would make that worse.
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9),
       builder: (ctx) => Container(
         decoration: BoxDecoration(
           color: p.card,
@@ -291,6 +297,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
           24,
           24 + MediaQuery.of(context).padding.bottom,
         ),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -455,6 +462,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

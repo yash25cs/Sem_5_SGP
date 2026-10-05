@@ -111,7 +111,10 @@ group-quiz pings, presence, and inserts on `room_messages`.
    `quiz_attempts` history, so replacing them would erase it.
 4. The Roadmap tab's top-right action calls `generate-roadmap`, which reads the
    goal, its subjects, and the distinct unit labels across the student's
-   materials, then **replaces** that goal's `milestones` and `milestone_tasks`
+   materials — and, for a subject with its own syllabus (Home → *Add
+   syllabus*, a PDF or typed text; `materials.subject_id`, 0027), that
+   subject's units, which it must plan the subject from (D-045) — then
+   **replaces** that goal's `milestones` and `milestone_tasks`
    and updates `goals.roadmap_days` / `current_day`. Because it replaces, the
    screen asks for confirmation when a roadmap already exists.
 5. Malformed model output is dropped per item rather than failing the batch
@@ -238,9 +241,11 @@ group-quiz pings, presence, and inserts on `room_messages`.
    row is created, and `analyze-paper` writes `paper_questions` tagged with the
    student's own units. `get_exam_topics` ranks units by how often they're asked;
    `generate-quiz {mock: true}` writes a 15-question mock weighted the same way.
-4. **Answer practice.** `grade-answer` writes a question from the weakest unit
-   (or takes a past-paper question), then grades the typed answer against that
-   unit's notes into `answer_attempts`. No XP (D-028).
+4. **Answer practice.** The student picks how many questions (1–5);
+   `grade-answer` writes that many different ones in one call, spread over
+   the weakest units (or takes a past-paper question), and the screen goes
+   through them one at a time — grading each typed or photographed answer
+   against that unit's notes into `answer_attempts`. No XP (D-028).
 5. **Chat extras.** `chat` returns three follow-ups from the same call;
    `generate-flashcards {messageId}` saves cards from one answer into "Saved from
    chat".
@@ -409,3 +414,4 @@ in `DECISIONS.md`.
 | 2026-10-05 | Day 27: three home-screen widgets (D-042) — Today redesigned (task ring, sliding task line, Focus / Cards / Ask AI), Exam countdown (2×2) and Streak (2×1); taps open their screen, Android 12+ launch animation, midnight redraws, Settings sheet that previews and adds them. | `studytrail_flutter/android/app/src/main/{AndroidManifest.xml,kotlin/in/charusat/studytrail/*Widget*.kt,res/**}`, `lib/services/home_widget_sync.dart`, `lib/state/home_store.dart`, `lib/shell.dart`, `lib/screens/settings_screen.dart`, `lib/widgets/home_widgets_sheet.dart` (new), `test/home_widgets_test.dart` (new) | Debug APK builds (aapt checks every layout and drawable; the Kotlin compiles) and the merged manifest lists all three receivers plus the midnight one. Settings sheet checked in a browser at phone width, light and dark. `flutter analyze` clean, `flutter test` 170 passed (4 live skipped). Not yet run on a phone. |
 | 2026-10-05 | Day 28: quizzes and decks open in place (D-043) — Start/Retake or Review/Re-attempt, and Delete with a confirmation; a finished quiz shows its last marks and date-time; a deck with nothing due re-attempts as a practice run. | `studytrail_flutter/lib/{models/quiz,data/repositories/quiz_repository,state/quiz_store,state/flashcard_store,screens/quiz_screen,screens/flashcards_screen}.dart`, `lib/widgets/expandable_item_card.dart` (new), `test/quiz_deck_actions_test.dart` (new) | Live with a self-deleting account and two seeded quizzes: the list query returns only the latest finished attempt per quiz (not an older one, not an unfinished one) and nothing for a quiz never finished; a student can delete their own quiz and deck, and the attempts / cards go with them (10/10). Both lists checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 180 passed (4 live skipped). |
 | 2026-10-05 | Day 29: equal bottom-bar tabs; badge progress (rings, counts, Next up) from one server function that also decides the unlocks; eight more badges; three more rewards — Focus Boost, 50:50 lifeline, Aurora profile card (D-044). | `supabase/migrations/0026_achievements_rewards.sql` (new), `studytrail_flutter/lib/{widgets/nav,models/gamification,data/repositories/{gamification,quiz,profile}_repository,state/{gamification,quiz,profile}_store,theme/badge_style,screens/{achievements,rewards,quiz,profile}_screen}.dart`, `test/achievements_rewards_test.dart` (new) | 0026 dry-run in a rolled-back transaction (two focus sessions of 25 and 30 min on one boost earned 110 XP and used one boost of two; the lifeline refused with none held and left 0 after use; progress for all 18 badges), then applied; `anon` can't call the new RPCs. Live with a self-deleting account (9/9): progress for all 18, a new account at zero, a focus session counted in Focused Mind and XP Collector, the wallet lists five rewards. Screens checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 188 passed (4 live skipped). |
+| 2026-10-06 | Day 30: the badge sheet's bottom overflow fixed; answer practice in sets of 1–5 questions; a syllabus for each subject from Home, as a PDF or text, which the roadmap plans that subject from (D-045). | `supabase/migrations/0027_subject_syllabus.sql` (new), `supabase/functions/{grade-answer,generate-roadmap,embed-material}/index.ts`, `supabase/functions/_shared/material.ts`, `studytrail_flutter/lib/{models/study_material,data/repositories/{material,answer}_repository,state/{home,answer_practice}_store,screens/{home,answer_practice,achievements}_screen}.dart`, `lib/widgets/syllabus_sheet.dart` (new), `test/syllabus_answers_test.dart` (new), `test/papers_answers_test.dart` | 0027 dry-run (own subject accepted, someone else's refused with 42501), then applied. Three functions deployed. Live with self-deleting accounts (11/11): a typed Physics syllabus read into three units, every chunk carrying the subject; three different questions asked for and returned, one per unit, the old single-question fields still filled; no count still gives one; the generated roadmap names the syllabus units. One run's roadmap call hit a transient gateway 520 and passed on the next. Home and Answer practice checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 197 passed (4 live skipped). |

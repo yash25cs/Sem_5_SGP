@@ -36,6 +36,9 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
   final List<File> _pages = [];
   static const _maxPages = 3;
 
+  /// How many questions the next set has; the student picks 1–5.
+  int _count = 3;
+
   @override
   void initState() {
     super.initState();
@@ -60,9 +63,22 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
     super.dispose();
   }
 
-  Future<void> _newQuestion() async {
+  void _clearAnswer() {
     _answer.clear();
-    await context.read<AnswerPracticeStore>().newQuestion();
+    setState(_pages.clear);
+  }
+
+  Future<void> _newSet() async {
+    _clearAnswer();
+    await context.read<AnswerPracticeStore>().newQuestions(count: _count);
+  }
+
+  /// The next question in the set, or — after the last — back to choosing
+  /// how many to do next.
+  void _next() {
+    _clearAnswer();
+    final store = context.read<AnswerPracticeStore>();
+    if (!store.next()) store.clearSet();
   }
 
   Future<void> _submit() async {
@@ -160,17 +176,20 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                   const SizedBox(height: 12),
                 ],
                 if (question == null)
-                  EmptyState(
-                    icon: Symbols.edit_note,
-                    title: 'Practise a written answer',
-                    message: 'Get a 5 or 10-mark question from your weakest '
-                        'unit, write your answer, and see what an examiner '
-                        'would give it — and what was missing.',
-                    actionLabel: store.busy ? 'Writing a question…' : 'Give me a question',
-                    onAction: store.busy ? null : _newQuestion,
+                  _SetPicker(
+                    count: _count,
+                    busy: store.busy,
+                    onCount: (n) => setState(() => _count = n),
+                    onStart: _newSet,
                   )
                 else ...[
-                  _QuestionCard(question: question, marks: _marks),
+                  _QuestionCard(
+                    question: question,
+                    marks: _marks,
+                    position: store.setSize > 1
+                        ? 'Question ${store.position} of ${store.setSize}'
+                        : null,
+                  ),
                   const SizedBox(height: 16),
                   if (result == null) ...[
                     Wrap(
@@ -217,8 +236,10 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                     const SizedBox(height: 8),
                     Center(
                       child: TextButton(
-                        onPressed: store.busy ? null : _newQuestion,
-                        child: const Text('Different question'),
+                        onPressed: store.busy ? null : _next,
+                        child: Text(store.hasNext
+                            ? 'Skip to the next question'
+                            : 'Choose new questions'),
                       ),
                     ),
                   ] else if (result == null) ...[
@@ -261,8 +282,10 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                     const SizedBox(height: 8),
                     Center(
                       child: TextButton(
-                        onPressed: store.busy ? null : _newQuestion,
-                        child: const Text('Different question'),
+                        onPressed: store.busy ? null : _next,
+                        child: Text(store.hasNext
+                            ? 'Skip to the next question'
+                            : 'Choose new questions'),
                       ),
                     ),
                   ] else ...[
@@ -278,9 +301,13 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: PillButton('New question',
-                              icon: Symbols.refresh,
-                              onTap: store.busy ? null : _newQuestion),
+                          child: store.hasNext
+                              ? PillButton('Next question',
+                                  trailingIcon: Symbols.arrow_forward,
+                                  onTap: store.busy ? null : _next)
+                              : PillButton('New questions',
+                                  icon: Symbols.refresh,
+                                  onTap: store.busy ? null : _next),
                         ),
                       ],
                     ),
@@ -303,11 +330,115 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
   }
 }
 
+/// Before a set: how many questions (1–5), and the button that writes them.
+class _SetPicker extends StatelessWidget {
+  const _SetPicker({
+    required this.count,
+    required this.busy,
+    required this.onCount,
+    required this.onStart,
+  });
+
+  final int count;
+  final bool busy;
+  final ValueChanged<int> onCount;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconTile(Symbols.edit_note, bg: p.primarySoft, fg: p.primary, size: 48),
+          const SizedBox(height: 12),
+          Text('Practise written answers',
+              style: TextStyle(
+                  color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          Text(
+              'Get 5 or 10-mark questions from your weakest units, write your '
+              'answers, and see what an examiner would give each one — and '
+              'what was missing.',
+              style: TextStyle(color: p.ink2, fontSize: 13, height: 1.45)),
+          const SizedBox(height: 18),
+          Text('How many questions?',
+              style: TextStyle(
+                  color: p.ink, fontSize: 13.5, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (var n = 1; n <= AnswerPracticeStore.maxQuestions; n++) ...[
+                if (n > 1) const SizedBox(width: 8),
+                Expanded(
+                  child: _CountChoice(
+                    n,
+                    selected: n == count,
+                    onTap: busy ? null : () => onCount(n),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 18),
+          PillButton(
+            busy
+                ? (count == 1 ? 'Writing a question…' : 'Writing your questions…')
+                : count == 1
+                    ? 'Give me a question'
+                    : 'Give me $count questions',
+            icon: busy ? null : Symbols.auto_awesome,
+            onTap: busy ? null : onStart,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CountChoice extends StatelessWidget {
+  const _CountChoice(this.n, {required this.selected, this.onTap});
+  final int n;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return Material(
+      color: selected ? p.primary : p.card2,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          height: 46,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: selected ? p.primary : p.line),
+          ),
+          child: Text('$n',
+              style: TextStyle(
+                  color: selected ? p.onPrimary : p.ink,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800)),
+        ),
+      ),
+    );
+  }
+}
+
 class _QuestionCard extends StatelessWidget {
-  const _QuestionCard({required this.question, required this.marks});
+  const _QuestionCard(
+      {required this.question, required this.marks, this.position});
 
   final PracticeQuestion question;
   final String Function(double) marks;
+
+  /// "Question 2 of 3", in a set of more than one.
+  final String? position;
 
   @override
   Widget build(BuildContext context) {
@@ -320,6 +451,11 @@ class _QuestionCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 6,
             children: [
+              if (position != null)
+                SoftChip(position!,
+                    icon: Symbols.format_list_numbered,
+                    tone: ChipTone.amber,
+                    small: true),
               SoftChip('${marks(question.marks)} marks',
                   tone: ChipTone.primary, small: true),
               if (question.unitLabel != null)

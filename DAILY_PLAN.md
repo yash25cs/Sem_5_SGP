@@ -803,3 +803,30 @@ function change.
   — the lifeline spending one and never hiding the right answer, and the
   Aurora flag). 0026 dry-run then applied; checked live with a
   self-deleting account (9/9) and in a browser at 375 dp.
+
+## Day 30 – Syllabus per subject, answer sets, and a sheet fix
+
+**Status:** 6 October 2026 (not committed). Migration `0027` applied;
+`grade-answer`, `generate-roadmap` and `embed-material` redeployed.
+
+- **Badge sheet fix:** "BOTTOM OVERFLOWED BY 0.525 PIXELS" on a phone — the
+  progress section made the badge sheet taller than a bottom sheet's default
+  maximum. It now takes up to 90% of the screen and scrolls when that's not
+  enough. A test opens it on a 640 dp tall phone.
+- **Answer practice in sets:** before starting, the student picks how many
+  questions, 1 to 5. They're written in one go, different from each other
+  and spread over the weakest units, then answered one at a time —
+  "Question 2 of 3", **Next question**, **Skip to the next question**, and
+  **Choose new questions** after the last.
+- **A syllabus for each subject:** under each subject on Home, **Add
+  syllabus** opens a sheet with **Upload a PDF** or **Type or paste it**. It
+  is read straight away ("Reading syllabus…"), then shows "Syllabus added";
+  one that can't be read is removed and says so. Tapping it again replaces
+  or removes it. The roadmap now plans each subject from its own syllabus
+  units — replace the roadmap from the Roadmap tab after adding one.
+- `flutter analyze` clean; `flutter test` 197 passed, 4 live skipped
+  (`test/syllabus_answers_test.dart`: adding, replacing — the old one goes
+  only after the new one is read — a failed read keeping the old one,
+  removing, the sheet's typed-text path, sets of 1–5 with the 5 cap, the
+  picker screen, and the badge sheet on a small phone). Checked live end to
+  end with self-deleting accounts (11/11) and in a browser at 375 dp.

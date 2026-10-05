@@ -13,9 +13,12 @@ import {
 
 /// Long-answer practice.
 ///
-/// `{ action: 'question', unitLabel? }` writes one exam-style question from the
-/// student's notes for that unit — or their weakest unit, or their most-used
-/// one — and saves nothing.
+/// `{ action: 'question', unitLabel?, count? }` writes `count` (1–5, default 1)
+/// different exam-style questions from the student's notes — for that unit,
+/// or spread over their weakest units, or over the units their notes cover —
+/// and saves nothing. The reply lists them in `questions`, and also carries
+/// the first one as `question`/`marks`/`unitLabel`, the shape app builds
+/// from before `count` read.
 ///
 /// `{ action: 'grade', answer, questionId }` grades an answer to a past-paper
 /// question; `{ action: 'grade', answer, question, marks, unitLabel? }` grades
@@ -41,22 +44,37 @@ const PHOTO_TYPES: Record<string, string> = {
   '.heif': 'image/heif',
 };
 
+const MAX_QUESTIONS = 5;
+
 const QUESTION_SCHEMA = {
   type: 'object',
   properties: {
-    question: { type: 'string' },
-    marks: { type: 'integer' },
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          marks: { type: 'integer' },
+          unit: { type: 'string' },
+        },
+        required: ['question', 'marks', 'unit'],
+      },
+    },
   },
-  required: ['question', 'marks'],
+  required: ['questions'],
 };
 
-const QUESTION_INSTRUCTION = `You set one university exam question from a \
+const QUESTION_INSTRUCTION = `You set university exam questions from a \
 student's own notes.
 
-- Write a descriptive question worth 5 or 10 marks — explain, compare, derive, \
-or describe with an example. Not a one-word recall question and not multiple \
-choice.
-- It must be answerable from the excerpts alone.
+- Write exactly the number of questions asked for, each a descriptive question \
+worth 5 or 10 marks — explain, compare, derive, or describe with an example. Not \
+a one-word recall question and not multiple choice.
+- Every question asks about something different; no two may overlap.
+- Spread them across the units listed, as evenly as their excerpts allow. unit \
+is the name of the unit a question comes from, exactly as listed.
+- Each must be answerable from the excerpts alone.
 - marks is 5 or 10, matching how much a full answer needs to cover.`;
 
 const GRADE_SCHEMA = {
@@ -113,7 +131,7 @@ serve(async (req) => {
   const body = await readJson(req);
 
   if (body.action === 'question') {
-    return await writeQuestion(supa, body.unitLabel);
+    return await writeQuestions(supa, body.unitLabel, body.count);
   }
   if (body.action !== 'grade') {
     throw new HttpError(400, 'That request was malformed.');
@@ -293,31 +311,41 @@ async function referenceNotes(supa: any, question: string, unitLabel: string | n
 }
 
 // deno-lint-ignore no-explicit-any
-async function writeQuestion(supa: any, requested: unknown): Promise<Response> {
-  let unit = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
+async function writeQuestions(supa: any, requested: unknown, wanted: unknown): Promise<Response> {
+  const count = Math.min(MAX_QUESTIONS, Math.max(1, Math.trunc(Number(wanted)) || 1));
+  const asked = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
 
-  if (!unit) {
-    const { data: weak } = await supa.rpc('get_weak_topics', { p_limit: 1 });
-    unit = weak?.[0]?.unit_label ?? null;
+  // The units to ask about: the one named; else the weakest few; topped up,
+  // for a fresh account with no weak spots yet, from the units the notes cover.
+  const units: string[] = asked ? [asked] : [];
+  if (!asked) {
+    const { data: weak } = await supa.rpc('get_weak_topics', { p_limit: count });
+    for (const row of weak ?? []) {
+      const label = text(row?.unit_label);
+      if (label && !units.includes(label)) units.push(label);
+    }
   }
-  if (!unit) {
-    // No weak spots yet: any unit the notes cover, favouring the larger ones.
+  if (!asked && units.length < count) {
     const { data } = await supa
       .from('material_chunks')
       .select('unit_label')
       .not('unit_label', 'is', null)
       .limit(500);
-    const labels = (data ?? []).map((r: { unit_label: string }) => r.unit_label);
-    unit = labels.length > 0 ? labels[Math.floor(Math.random() * labels.length)] : null;
+    const labels: string[] = [
+      ...new Set<string>((data ?? []).map((r: { unit_label: string }) => text(r.unit_label))),
+    ].filter((label) => label.length > 0 && !units.includes(label));
+    while (units.length < count && labels.length > 0) {
+      units.push(labels.splice(Math.floor(Math.random() * labels.length), 1)[0]);
+    }
   }
-  if (!unit) {
+  if (units.length === 0) {
     throw new HttpError(404, 'Upload your notes first, and I can set you a question from them.');
   }
 
   const { data } = await supa
     .from('material_chunks')
     .select('id, unit_label, content')
-    .eq('unit_label', unit)
+    .in('unit_label', units)
     .order('chunk_index', { ascending: true });
   const chunks = sampleChunks(toChunks(data), NOTES_CHARS);
   if (chunks.length === 0) {
@@ -328,17 +356,34 @@ async function writeQuestion(supa: any, requested: unknown): Promise<Response> {
     systemInstruction: QUESTION_INSTRUCTION,
     temperature: 0.6,
     schema: QUESTION_SCHEMA,
-    input: `Unit: ${unit}\n\n${numberedSource(chunks)}`,
-    maxOutputTokens: 600,
-    budgetMs: 30_000,
+    input: `Questions to write: ${count}\n`
+      + `Units: ${units.join('; ')}\n\n${numberedSource(chunks)}`,
+    maxOutputTokens: 300 + 300 * count,
+    budgetMs: 30_000 + 5_000 * (count - 1),
   });
   const parsed = parseJsonObject(raw);
-  const question = text(parsed?.question).slice(0, 1000);
-  if (question.length < 10) {
+  // deno-lint-ignore no-explicit-any
+  const items: any[] = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions: { question: string; marks: number; unitLabel: string }[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const question = text(item?.question).slice(0, 1000);
+    const key = question.toLowerCase();
+    if (question.length < 10 || seen.has(key)) continue;
+    seen.add(key);
+    const unit = text(item?.unit).toLowerCase();
+    questions.push({
+      question,
+      marks: Number(item?.marks) === 10 ? 10 : 5,
+      // The model's unit when it is one we gave it; else the first.
+      unitLabel: units.find((u) => u.toLowerCase() === unit) ?? units[0],
+    });
+    if (questions.length === count) break;
+  }
+  if (questions.length === 0) {
     throw new HttpError(502, "The AI couldn't write a question. Try again.");
   }
-  const marks = Number(parsed?.marks) === 10 ? 10 : 5;
-  return json({ question, marks, unitLabel: unit });
+  return json({ ...questions[0], questions });
 }
 
 // deno-lint-ignore no-explicit-any

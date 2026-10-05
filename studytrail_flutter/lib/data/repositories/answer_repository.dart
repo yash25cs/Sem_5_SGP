@@ -10,14 +10,28 @@ import '../supabase_client.dart';
 class AnswerRepository {
   const AnswerRepository();
 
-  /// A new question from the student's notes: for [unitLabel], else their
-  /// weakest unit, else any unit they have notes for.
-  Future<PracticeQuestion> newQuestion({String? unitLabel}) async {
+  /// [count] (1–5) different questions from the student's notes, written in
+  /// one call: for [unitLabel], else spread over their weakest units, else
+  /// over the units their notes cover.
+  Future<List<PracticeQuestion>> newQuestions({
+    int count = 1,
+    String? unitLabel,
+  }) async {
     final res = await db.functions.invoke('grade-answer', body: {
       'action': 'question',
+      'count': count,
       'unitLabel': ?unitLabel,
     });
-    return PracticeQuestion.fromMap(Map<String, dynamic>.from(res.data as Map));
+    final data = Map<String, dynamic>.from(res.data as Map);
+    final list = data['questions'];
+    if (list is List && list.isNotEmpty) {
+      return [
+        for (final q in list)
+          PracticeQuestion.fromMap(Map<String, dynamic>.from(q as Map)),
+      ];
+    }
+    // A function deployed before `count`: one question, at the top level.
+    return [PracticeQuestion.fromMap(data)];
   }
 
   Future<AnswerAttempt> grade(PracticeQuestion question, String answer) async {

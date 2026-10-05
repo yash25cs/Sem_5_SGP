@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../data/repositories.dart';
 import '../models/models.dart';
 import '../services/home_widget_sync.dart';
@@ -28,11 +30,13 @@ class HomeStore extends AsyncStore {
     TaskRepository? tasks,
     GamificationRepository? game,
     RoadmapRepository? roadmap,
+    MaterialRepository? materials,
   })  : _profiles = profiles ?? const ProfileRepository(),
         _goals = goals ?? const GoalRepository(),
         _tasks = tasks ?? const TaskRepository(),
         _game = game ?? const GamificationRepository(),
-        _roadmap = roadmap ?? const RoadmapRepository();
+        _roadmap = roadmap ?? const RoadmapRepository(),
+        _materials = materials ?? const MaterialRepository();
 
   /// How many roadmap tasks one day's plan pulls in at a time. Roughly a
   /// milestone's worth — the generator writes about four tasks a week.
@@ -43,6 +47,7 @@ class HomeStore extends AsyncStore {
   final TaskRepository _tasks;
   final GamificationRepository _game;
   final RoadmapRepository _roadmap;
+  final MaterialRepository _materials;
 
   Profile? _profile;
   Goal? _goal;
@@ -53,6 +58,8 @@ class HomeStore extends AsyncStore {
   int _plannedCount = 0;
   String? _plannedFrom;
   RoadmapPace? _pace;
+  Map<String, StudyMaterial> _syllabi = const {};
+  String? _readingSyllabusFor;
 
   /// Pace against the active goal's roadmap; null before it loads or when the
   /// project predates `0015_catch_up.sql`.
@@ -169,14 +176,94 @@ class HomeStore extends AsyncStore {
     if (goalId == null) {
       _subjects = const [];
       _pace = null;
+      _syllabi = const {};
     } else {
       final more = await Future.wait<Object?>([
         _goals.getSubjects(goalId),
         _loadPace(goalId),
+        // An extra like pace: a failed read just shows "Add syllabus".
+        _materials
+            .getSyllabi()
+            .catchError((Object _) => _syllabi),
       ]);
       _subjects = more[0] as List<Subject>;
       _pace = more[1] as RoadmapPace?;
+      _syllabi = more[2] as Map<String, StudyMaterial>;
     }
+  }
+
+  /// [subject]'s syllabus, if it has one (`0027`).
+  StudyMaterial? syllabusOf(Subject subject) => _syllabi[subject.id];
+
+  /// The subject whose syllabus is being uploaded and read right now.
+  String? get readingSyllabusFor => _readingSyllabusFor;
+
+  /// Adds — or replaces — [subject]'s syllabus from a PDF, and has it read.
+  Future<bool> addSyllabusFile(Subject subject, File file, String fileName) =>
+      _addSyllabus(
+          subject,
+          () => _materials.uploadFile(
+                file: file,
+                fileName: fileName,
+                goalId: _goal?.id,
+                subjectId: subject.id,
+              ));
+
+  /// Adds — or replaces — [subject]'s syllabus from typed or pasted text.
+  Future<bool> addSyllabusText(Subject subject, String text) => _addSyllabus(
+      subject,
+      () => _materials.addSyllabusText(
+            subjectId: subject.id,
+            title: '${subject.name} syllabus',
+            text: text.trim(),
+            goalId: _goal?.id,
+          ));
+
+  /// Uploads, then waits for `embed-material` to read it: a syllabus is only
+  /// any use once its units are in. One that can't be read is taken back out
+  /// and any earlier syllabus stays; the earlier one is removed only once the
+  /// new one has been read.
+  Future<bool> _addSyllabus(
+      Subject subject, Future<StudyMaterial> Function() create) async {
+    final previous = _syllabi[subject.id];
+    _readingSyllabusFor = subject.id;
+    final ok = await runMutation(() async {
+      final added = await create();
+      try {
+        await _materials.requestIngest(added.id);
+      } catch (_) {
+        try {
+          await _materials.deleteMaterial(added);
+        } catch (_) {
+          // The read failure is the error worth showing.
+        }
+        rethrow;
+      }
+      if (previous != null) {
+        try {
+          await _materials.deleteMaterial(previous);
+        } catch (_) {
+          // Left in the library; the newer one is what counts.
+        }
+      }
+      _syllabi = await _materials.getSyllabi();
+    });
+    _readingSyllabusFor = null;
+    notifyListeners();
+    return ok;
+  }
+
+  /// Removes [subject]'s syllabus, file and all.
+  Future<bool> removeSyllabus(Subject subject) async {
+    final current = _syllabi[subject.id];
+    if (current == null) return true;
+    return runMutation(() async {
+      await _materials.deleteMaterial(current);
+      _syllabi = {
+        for (final e in _syllabi.entries)
+          if (e.key != subject.id) e.key: e.value,
+      };
+    });
   }
 
   /// Pace is an extra on this screen, so a failure hides the banner rather

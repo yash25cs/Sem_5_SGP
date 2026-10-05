@@ -9,9 +9,9 @@ import { HttpError } from './supa.ts';
 /// *for*: the chunks are read by `material_id` in document order rather than
 /// through `match_material_chunks`. That is cheaper (no query embedding), it is
 /// deterministic, and it sees the whole document instead of the six best
-/// fragments. It also sidesteps a live gap — `embed-material` writes
-/// `subject_id: null` on every chunk, so subject-scoped retrieval matches
-/// nothing today.
+/// fragments. It also sidesteps a gap — only a subject's syllabus (0027) gives
+/// its chunks a `subject_id`, so subject-scoped retrieval would miss every
+/// other file.
 
 export interface Chunk {
   id: string;

@@ -38,6 +38,7 @@ class MaterialRepository {
     required String fileName,
     String? goalId,
     MaterialType sourceType = MaterialType.syllabusPdf,
+    String? subjectId,
   }) async {
     final uid = requireUserId;
     final stamp = DateTime.now().millisecondsSinceEpoch;
@@ -56,6 +57,7 @@ class MaterialRepository {
             'storage_path': path,
             'status': IngestStatus.uploaded.db,
             'goal_id': ?goalId,
+            'subject_id': ?subjectId,
           })
           .select()
           .single();
@@ -122,6 +124,66 @@ class MaterialRepository {
       }
       rethrow;
     }
+  }
+
+  /// Saves a syllabus typed or pasted in as a text file on [subjectId], ready
+  /// for `embed-material` — which reads a `.txt` as text, splitting it at its
+  /// unit headings. Same compensating cleanup as [uploadFile].
+  Future<StudyMaterial> addSyllabusText({
+    required String subjectId,
+    required String title,
+    required String text,
+    String? goalId,
+  }) async {
+    final uid = requireUserId;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final path = '$uid/${stamp}_syllabus.txt';
+
+    await db.storage.from(SupabaseConfig.materialsBucket).uploadBinary(
+          path,
+          Uint8List.fromList(utf8.encode(text)),
+          fileOptions:
+              const FileOptions(contentType: 'text/plain; charset=utf-8'),
+        );
+
+    try {
+      final row = await db
+          .from('materials')
+          .insert({
+            'user_id': uid,
+            'source_type': MaterialType.syllabusPdf.db,
+            'title': title,
+            'storage_path': path,
+            'status': IngestStatus.uploaded.db,
+            'subject_id': subjectId,
+            'goal_id': ?goalId,
+          })
+          .select()
+          .single();
+      return StudyMaterial.fromMap(row);
+    } catch (_) {
+      try {
+        await db.storage.from(SupabaseConfig.materialsBucket).remove([path]);
+      } catch (_) {
+        // Swallowed deliberately — the insert error is the one worth seeing.
+      }
+      rethrow;
+    }
+  }
+
+  /// Each subject's syllabus, by subject id — the newest one where a subject
+  /// somehow has two.
+  Future<Map<String, StudyMaterial>> getSyllabi() async {
+    final rows = await db
+        .from('materials')
+        .select()
+        .not('subject_id', 'is', null)
+        .order('created_at', ascending: false);
+    final bySubject = <String, StudyMaterial>{};
+    for (final m in rows.map(StudyMaterial.fromMap)) {
+      bySubject.putIfAbsent(m.subjectId!, () => m);
+    }
+    return bySubject;
   }
 
   /// The student's YouTube playlists, newest first.

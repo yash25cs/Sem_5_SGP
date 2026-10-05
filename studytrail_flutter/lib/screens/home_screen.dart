@@ -12,6 +12,7 @@ import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
+import '../widgets/syllabus_sheet.dart';
 import 'flashcards_screen.dart';
 import 'profile_screen.dart';
 import 'set_target_screen.dart';
@@ -509,6 +510,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       onSetExam: store.busy
                           ? null
                           : () => _pickExamDate(store.subjects[i]),
+                      syllabus: store.syllabusOf(store.subjects[i]),
+                      readingSyllabus:
+                          store.readingSyllabusFor == store.subjects[i].id,
+                      onSyllabus: store.busy
+                          ? null
+                          : () =>
+                              showSyllabusSheet(context, store.subjects[i]),
                     ),
                   ],
                 ],
@@ -985,13 +993,70 @@ class _NextExamStrip extends StatelessWidget {
   }
 }
 
+/// A small tappable line under a subject: its exam date, its syllabus.
+class _RowLink extends StatelessWidget {
+  const _RowLink({
+    required this.icon,
+    required this.label,
+    required this.color,
+    this.onTap,
+    this.busy = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  /// Shows a spinner instead of the icon.
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (busy)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 1.6, color: color),
+              )
+            else
+              Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(label,
+                style: TextStyle(
+                    color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      );
+}
+
 class _SubjectRow extends StatelessWidget {
-  const _SubjectRow(this.subject, {this.onSetExam});
+  const _SubjectRow(
+    this.subject, {
+    this.onSetExam,
+    this.syllabus,
+    this.readingSyllabus = false,
+    this.onSyllabus,
+  });
 
   final Subject subject;
 
   /// Opens the date picker for this subject's exam.
   final VoidCallback? onSetExam;
+
+  /// This subject's syllabus, if it has one.
+  final StudyMaterial? syllabus;
+
+  /// Its syllabus is being uploaded and read right now.
+  final bool readingSyllabus;
+
+  /// Opens the syllabus sheet: add, replace or remove.
+  final VoidCallback? onSyllabus;
 
   @override
   Widget build(BuildContext context) {
@@ -1037,26 +1102,50 @@ class _SubjectRow extends StatelessWidget {
               const SizedBox(height: 7),
               ProgressTrack(value, color: style.color, height: 7),
               const SizedBox(height: 6),
-              GestureDetector(
-                onTap: onSetExam,
-                child: Row(
-                  children: [
-                    Icon(Symbols.event, size: 14, color: p.ink3),
-                    const SizedBox(width: 4),
-                    Text(
-                      switch (subject.daysUntilExam()) {
-                        null => 'Set exam date',
-                        < 0 => 'Exam done',
-                        0 => 'Exam today',
-                        final d => 'Exam in $d day${d == 1 ? '' : 's'}',
-                      },
-                      style: TextStyle(
-                          color: subject.examDate == null ? p.primary : p.ink3,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600),
+              Wrap(
+                spacing: 14,
+                runSpacing: 4,
+                children: [
+                  _RowLink(
+                    icon: Symbols.event,
+                    label: switch (subject.daysUntilExam()) {
+                      null => 'Set exam date',
+                      < 0 => 'Exam done',
+                      0 => 'Exam today',
+                      final d => 'Exam in $d day${d == 1 ? '' : 's'}',
+                    },
+                    color: subject.examDate == null ? p.primary : p.ink3,
+                    onTap: onSetExam,
+                  ),
+                  if (readingSyllabus)
+                    _RowLink(
+                      icon: Symbols.hourglass_top,
+                      label: 'Reading syllabus…',
+                      color: p.ink3,
+                      busy: true,
+                    )
+                  else if (syllabus == null)
+                    _RowLink(
+                      icon: Symbols.upload_file,
+                      label: 'Add syllabus',
+                      color: p.primary,
+                      onTap: onSyllabus,
+                    )
+                  else if (syllabus!.isReady)
+                    _RowLink(
+                      icon: Symbols.description,
+                      label: 'Syllabus added',
+                      color: p.green,
+                      onTap: onSyllabus,
+                    )
+                  else
+                    _RowLink(
+                      icon: Symbols.error,
+                      label: "Syllabus couldn't be read",
+                      color: p.error,
+                      onTap: onSyllabus,
                     ),
-                  ],
-                ),
+                ],
               ),
             ],
           ),

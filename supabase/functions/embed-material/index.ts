@@ -98,7 +98,7 @@ serve(async (req) => {
   // exactly like "no such material", and both are honestly a 404 from here.
   const { data: material, error: readError } = await supa
     .from('materials')
-    .select('id, source_type, storage_path, title, status')
+    .select('id, source_type, storage_path, title, status, subject_id')
     .eq('id', materialId)
     .maybeSingle();
 
@@ -213,9 +213,10 @@ serve(async (req) => {
       kept.map((section, index) => ({
         user_id: userId,
         material_id: materialId,
-        // Nothing associates a material with a subject yet, and
-        // `match_material_chunks`' filter_subject is optional.
-        subject_id: null,
+        // A subject's syllabus (0027) passes its subject on, so the roadmap
+        // can plan that subject from its own units; everything else is
+        // subject-less, as before.
+        subject_id: material.subject_id ?? null,
         unit_label: section.unitLabel,
         chunk_index: index,
         content: section.text,
