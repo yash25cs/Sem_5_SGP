@@ -71,6 +71,15 @@ class _QuizScreenState extends State<QuizScreen> {
     setState(() => _showResults = false);
   }
 
+  Future<void> _useLifeline() async {
+    final store = context.read<QuizStore>();
+    final ok = await store.useLifeline();
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(store.error ?? 'Could not use a 50:50 right now.')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.p;
@@ -137,6 +146,11 @@ class _QuizScreenState extends State<QuizScreen> {
                         question: question,
                         picked: store.picked,
                         score: store.runningScore,
+                        hidden: store.hiddenOptions,
+                        lifelines: store.lifelines,
+                        onLifeline: store.canUseLifeline && !store.busy
+                            ? _useLifeline
+                            : null,
                       ),
           ),
           if (store.quiz != null && question != null && !_showResults)
@@ -356,11 +370,22 @@ class _QuestionView extends StatelessWidget {
     required this.question,
     required this.picked,
     required this.score,
+    this.hidden = const {},
+    this.lifelines = 0,
+    this.onLifeline,
   });
 
   final QuizQuestion question;
   final int? picked;
   final int score;
+
+  /// Options a 50:50 removed.
+  final Set<int> hidden;
+
+  /// 50:50 lifelines held; the chip shows only when there are some, or one
+  /// was just used here.
+  final int lifelines;
+  final VoidCallback? onLifeline;
 
   @override
   Widget build(BuildContext context) {
@@ -377,6 +402,16 @@ class _QuestionView extends StatelessWidget {
           const SizedBox(width: 8),
           SoftChip('$score correct',
               icon: Symbols.check_circle, tone: ChipTone.green, small: true),
+          const Spacer(),
+          if (lifelines > 0 || hidden.isNotEmpty)
+            Opacity(
+              opacity: onLifeline == null ? 0.45 : 1,
+              child: SoftChip('50:50 · $lifelines',
+                  icon: Symbols.exposure_neg_2,
+                  tone: ChipTone.primary,
+                  small: true,
+                  onTap: onLifeline),
+            ),
         ]),
         const SizedBox(height: 20),
         Text(question.question,
@@ -388,14 +423,20 @@ class _QuestionView extends StatelessWidget {
                 letterSpacing: -0.4)),
         const SizedBox(height: 22),
         for (final (i, option) in question.options.indexed) ...[
-          _Option(
-            label: option,
-            index: i,
-            picked: picked,
-            correct: question.correctIndex,
-            onTap: answered
-                ? null
-                : () => context.read<QuizStore>().pick(i),
+          // A removed option fades and stops taking taps, but keeps its
+          // place, so A–D don't shuffle under the student's thumb.
+          AnimatedOpacity(
+            opacity: hidden.contains(i) ? 0.25 : 1,
+            duration: const Duration(milliseconds: 300),
+            child: _Option(
+              label: option,
+              index: i,
+              picked: picked,
+              correct: question.correctIndex,
+              onTap: answered || hidden.contains(i)
+                  ? null
+                  : () => context.read<QuizStore>().pick(i),
+            ),
           ),
           const SizedBox(height: 12),
         ],

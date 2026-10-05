@@ -32,6 +32,26 @@ class GamificationStore extends AsyncStore {
 
   int get unlockedCount => unlockedBadges.length;
 
+  /// Locked badges closest to unlocking first, for "Next up". Only ones with
+  /// progress to show.
+  List<AchievementBadge> get nextUp => [
+        for (final b in _badges)
+          if (!b.unlocked && b.goal != null) b,
+      ]..sort((a, b) => b.fraction.compareTo(a.fraction));
+
+  /// Earned first (newest first), then the rest by how close they are — the
+  /// grid order.
+  List<AchievementBadge> get badgesInOrder {
+    final earned = unlockedBadges
+      ..sort((a, b) => (b.unlockedAt ?? DateTime(0))
+          .compareTo(a.unlockedAt ?? DateTime(0)));
+    final locked = [
+      for (final b in _badges)
+        if (!b.unlocked) b,
+    ]..sort((a, b) => b.fraction.compareTo(a.fraction));
+    return [...earned, ...locked];
+  }
+
   /// True/false per day for the current week, Monday-first — the row of dots
   /// under the streak counter.
   List<bool> get weekDots {
@@ -87,11 +107,22 @@ class GamificationStore extends AsyncStore {
           _orElse(_game.getStreak(), const Streak()),
           _orElse(_game.getRecentActivity(days: 14), const <ActivityDay>[]),
           _orElse(_game.getLeaderboard(), const <LeaderboardEntry>[]),
+          // Progress needs no waiting on the evaluation: it is computed from
+          // the same rows, not from what was unlocked.
+          _orElse(_game.getBadgeProgress(),
+              const <String, (int, int, String?)>{}),
         ]);
         _newlyUnlocked = results[0] as List<String>;
         final badges = results[1] as List<AchievementBadge>;
-        _badges =
-            badges.isEmpty ? GamificationRepository.defaultBadges : badges;
+        final progress = results[6] as Map<String, (int, int, String?)>;
+        _badges = [
+          for (final b in
+              badges.isEmpty ? GamificationRepository.defaultBadges : badges)
+            if (progress[b.key] case (final done, final goal, final unit))
+              b.withProgress(done, goal, unit)
+            else
+              b,
+        ];
         _profile = results[2] as Profile?;
         _streak = results[3] as Streak;
         _recent = results[4] as List<ActivityDay>;

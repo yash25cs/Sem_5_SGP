@@ -31,15 +31,21 @@ class BottomNav extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(6, 8, 6, 10),
       child: SafeArea(
         top: false,
+        // An equal fifth each. Sized to their labels, "Roadmap" took a wider
+        // slot than "Chat" and the highlight changed width tab to tab.
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             for (var i = 0; i < _items.length; i++)
-              _NavItem(
-                icon: _items[i].$1,
-                label: _items[i].$2,
-                active: i == current,
-                onTap: () => onTap?.call(i),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: _NavItem(
+                    icon: _items[i].$1,
+                    label: _items[i].$2,
+                    active: i == current,
+                    onTap: () => onTap?.call(i),
+                  ),
+                ),
               ),
           ],
         ),
@@ -65,7 +71,8 @@ class _NavItem extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         decoration: BoxDecoration(
           color: active ? p.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
@@ -75,9 +82,14 @@ class _NavItem extends StatelessWidget {
           children: [
             Icon(icon, size: 24, color: fg, fill: active ? 1 : 0, weight: active ? 600 : 500),
             const SizedBox(height: 3),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 10.5, fontWeight: FontWeight.w700, color: fg)),
+            // Shrinks rather than overflows at a large system font size.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(label,
+                  maxLines: 1,
+                  style: TextStyle(
+                      fontSize: 10.5, fontWeight: FontWeight.w700, color: fg)),
+            ),
           ],
         ),
       ),

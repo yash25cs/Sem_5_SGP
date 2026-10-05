@@ -189,22 +189,40 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                       message:
                           'Badges appear as you study, review cards, and finish quizzes.',
                     )
-                  else
-                    GridView.count(
-                      crossAxisCount: 3,
+                  else ...[
+                    _BadgeSummary(
+                        earned: store.unlockedCount,
+                        total: store.badges.length),
+                    if (store.nextUp.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _NextUp(
+                        badges: store.nextUp.take(3).toList(),
+                        onTap: (badge) => _showBadgeDetail(context, badge),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    GridView(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.82,
+                      // A fixed height, not an aspect ratio: on a 320 dp
+                      // phone a ratio made the tiles too short for the
+                      // ring, a two-line name and the count.
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        mainAxisExtent: 136,
+                      ),
                       children: [
-                        for (final badge in store.badges)
+                        for (final badge in store.badgesInOrder)
                           _BadgeTile(
                             badge: badge,
                             onTap: () => _showBadgeDetail(context, badge),
                           ),
                       ],
                     ),
+                  ],
                   const SizedBox(height: 22),
 
                   CardHeader(
@@ -309,8 +327,8 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                     : null,
               ),
               child: Icon(
-                unlocked ? style.icon : Symbols.lock,
-                color: unlocked ? Colors.white : p.line2,
+                style.icon,
+                color: unlocked ? Colors.white : p.ink3.withValues(alpha: 0.6),
                 size: 38,
                 fill: 1,
               ),
@@ -362,6 +380,27 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                 ],
               ),
             ),
+            if (!unlocked && badge.goal != null) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Your progress',
+                        style: TextStyle(
+                            color: p.ink,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800)),
+                  ),
+                  Text(badge.progressLabel ?? 'Not yet',
+                      style: TextStyle(
+                          color: style.color,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ProgressTrack(badge.fraction, color: style.color, height: 10),
+            ],
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -386,7 +425,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                           ? (badge.unlockedAt != null
                               ? 'Earned! (Unlocked on ${badge.unlockedAt!.day}/${badge.unlockedAt!.month}/${badge.unlockedAt!.year})'
                               : 'Earned! You have completed this achievement.')
-                          : 'Not earned yet. Complete the requirement to unlock!',
+                          : (toGo(badge) ?? 'Not earned yet. Complete the requirement to unlock!'),
                       style: TextStyle(
                         color: unlocked ? p.green : p.ink,
                         fontSize: 13,
@@ -422,6 +461,152 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   }
 }
 
+/// "2 days to go", "27% to go", or null when there's no count to give.
+@visibleForTesting
+String? toGo(AchievementBadge badge) {
+  final goal = badge.goal, done = badge.progress, unit = badge.unit;
+  if (badge.unlocked || goal == null || done == null || unit == null) {
+    return null;
+  }
+  final left = goal - done;
+  if (left <= 0) return 'Almost there — it unlocks on your next study action.';
+  if (unit == '%') return '$left% to go.';
+  // "1 days" → "1 day"; "XP" stays as it is.
+  final name = left == 1 && unit.endsWith('s') ? unit.substring(0, unit.length - 1) : unit;
+  final n = left.toString().replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+  return '$n $name to go.';
+}
+
+/// How many badges are earned, as a count and a bar.
+class _BadgeSummary extends StatelessWidget {
+  const _BadgeSummary({required this.earned, required this.total});
+  final int earned, total;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return AppCard(
+      child: Row(
+        children: [
+          IconTile(Symbols.workspace_premium,
+              bg: p.amberSoft, fg: p.onAmber, size: 48),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                        text: '$earned',
+                        style: TextStyle(
+                            color: p.ink,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900)),
+                    TextSpan(
+                        text: ' of $total badges earned',
+                        style: TextStyle(
+                            color: p.ink2,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+                const SizedBox(height: 8),
+                ProgressTrack(total == 0 ? 0 : earned / total,
+                    color: p.amber, height: 8),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The locked badges closest to unlocking, each with its bar and what's
+/// left.
+class _NextUp extends StatelessWidget {
+  const _NextUp({required this.badges, required this.onTap});
+  final List<AchievementBadge> badges;
+  final ValueChanged<AchievementBadge> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Symbols.trending_up, color: p.primary, size: 20),
+              const SizedBox(width: 8),
+              Text('Next up',
+                  style: TextStyle(
+                      color: p.ink, fontSize: 15, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final badge in badges)
+            InkWell(
+              onTap: () => onTap(badge),
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Builder(builder: (context) {
+                  final style = BadgeStyle.of(context, badge);
+                  return Row(
+                    children: [
+                      IconTile(style.icon,
+                          bg: style.color.withValues(alpha: 0.14),
+                          fg: style.color,
+                          size: 38,
+                          radius: 12),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(badge.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: p.ink,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w800)),
+                                ),
+                                if (badge.progressLabel != null)
+                                  Text(badge.progressLabel!,
+                                      style: TextStyle(
+                                          color: p.ink3,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            ProgressTrack(badge.fraction,
+                                color: style.color, height: 6),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One badge in the grid. Locked, a ring around it fills as the student
+/// gets closer, with the count underneath.
 class _BadgeTile extends StatelessWidget {
   const _BadgeTile({required this.badge, this.onTap});
 
@@ -434,6 +619,14 @@ class _BadgeTile extends StatelessWidget {
     final style = BadgeStyle.of(context, badge);
     final unlocked = badge.unlocked;
     final color = style.color;
+    final goal = badge.goal, done = badge.progress;
+    final count = goal == null || done == null
+        ? null
+        : badge.unit == null
+            ? 'Not yet'
+            : badge.unit == '%'
+                ? '$done%'
+                : '$done/$goal';
 
     return Tooltip(
       message: badge.description ?? badge.name,
@@ -441,7 +634,7 @@ class _BadgeTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             color: p.card,
             borderRadius: BorderRadius.circular(18),
@@ -450,48 +643,94 @@ class _BadgeTile extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: unlocked
-                    ? LinearGradient(
-                        colors: [color.withValues(alpha: 0.9), color],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight)
-                    : null,
-                color: unlocked ? null : p.card2,
-                boxShadow: unlocked
-                    ? [
-                        BoxShadow(
-                            color: color.withValues(alpha: 0.35),
-                            blurRadius: 14,
-                            offset: const Offset(0, 6))
-                      ]
-                    : null,
+              SizedBox(
+                width: 58,
+                height: 58,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (!unlocked && goal != null)
+                      SizedBox.expand(
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0, end: badge.fraction),
+                          duration: const Duration(milliseconds: 800),
+                          curve: Curves.easeOutCubic,
+                          builder: (_, value, _) => CircularProgressIndicator(
+                            value: value,
+                            strokeWidth: 3.5,
+                            strokeCap: StrokeCap.round,
+                            color: color,
+                            backgroundColor: p.line,
+                          ),
+                        ),
+                      ),
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: unlocked
+                            ? LinearGradient(
+                                colors: [color.withValues(alpha: 0.9), color],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight)
+                            : null,
+                        color: unlocked ? null : p.card2,
+                        boxShadow: unlocked
+                            ? [
+                                BoxShadow(
+                                    color: color.withValues(alpha: 0.35),
+                                    blurRadius: 14,
+                                    offset: const Offset(0, 6))
+                              ]
+                            : null,
+                      ),
+                      // Locked, its own icon greyed: what it will be, not a
+                      // padlock.
+                      child: Icon(style.icon,
+                          color: unlocked ? Colors.white : p.ink3.withValues(alpha: 0.6),
+                          size: 26,
+                          fill: 1),
+                    ),
+                  ],
+                ),
               ),
-              child: Icon(unlocked ? style.icon : Symbols.lock,
-                  color: unlocked ? Colors.white : p.line2,
-                  size: 26,
-                  fill: 1),
-            ),
-            const SizedBox(height: 8),
-            Text(badge.name,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: unlocked ? p.ink2 : p.ink3,
-                    fontSize: 11,
-                    height: 1.15,
-                    fontWeight: FontWeight.w700)),
-          ],
+              const SizedBox(height: 6),
+              Text(badge.name,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: unlocked ? p.ink2 : p.ink3,
+                      fontSize: 11,
+                      height: 1.15,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 3),
+              if (unlocked)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Symbols.check_circle, color: p.green, size: 12, fill: 1),
+                    const SizedBox(width: 3),
+                    Text('Earned',
+                        style: TextStyle(
+                            color: p.green,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800)),
+                  ],
+                )
+              else if (count != null)
+                Text(count,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800)),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 class _LeaderRow extends StatelessWidget {

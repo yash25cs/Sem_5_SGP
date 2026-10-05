@@ -7,7 +7,7 @@ existing Flutter UI.
 ```
 supabase/
   config.toml          # local/dev project config
-  migrations/          # ordered SQL — apply 0001 → 0025
+  migrations/          # ordered SQL — apply 0001 → 0026
   all_migrations.sql   # GENERATED: all twenty-four concatenated, for the SQL editor
   functions/           # Edge Functions: embed-material, chat, generate-*, summarize-material, analyze-paper, grade-answer, room-quiz, doubt-ai, delete-account, _shared/
 ```
@@ -40,6 +40,7 @@ supabase/
 | `0023_doubts.sql` | The class doubt board: `doubts`, `doubt_answers`, `doubt_votes`, `doubt_reports`, all RPC-only (`get_class_doubts`, `get_doubt`, `post_doubt`, `answer_doubt`, `vote_doubt_answer`, `mark_doubt_solved`, `delete_*`, `report_doubt_content`); blocks hide a classmate's posts |
 | `0024_playlists.sql` | A YouTube playlist is one library item: `material_playlists` (title, its video list, a skip list — only the skip list is updatable) and `materials.playlist_id` (cascade). A trigger refuses a video hung off someone else's playlist |
 | `0025_goal_subject_dates.sql` | `create_goal` takes each subject's exam date (`p_subject_dates`, parallel to `p_subjects`), still one transaction; the old four-argument version is dropped |
+| `0026_achievements_rewards.sql` | `app_private.badge_progress()` (progress, goal and unit for every badge) drives both `evaluate_badges` and the new `get_badge_progress()`; eight more badges; three more rewards — Focus Boost (doubles focus XP for a day, in `record_focus_session`), 50:50 lifeline (`use_quiz_lifeline()`), Aurora profile card |
 | `0012_rewards_store.sql` | `reward_catalog` + `reward_redemptions`, `get_reward_wallet()` / `redeem_reward()` (balance = XP earned − XP spent), streak freezes consumed inside `log_activity`, `get_class_leaderboard()` ranked by total XP with `golden_border` |
 
 All files are idempotent — safe to re-run.

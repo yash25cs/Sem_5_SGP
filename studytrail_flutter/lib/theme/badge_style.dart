@@ -33,6 +33,10 @@ class BadgeStyle {
     'diamond': Symbols.diamond,
     'task_alt': Symbols.task_alt,
     'timer': Symbols.timer,
+    'bolt': Symbols.bolt,
+    'whatshot': Symbols.whatshot,
+    'library_books': Symbols.library_books,
+    'volunteer_activism': Symbols.volunteer_activism,
   };
 
   static BadgeStyle of(BuildContext context, AchievementBadge badge) {

@@ -156,6 +156,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               profile: profile,
               title: _levelTitle(profile.level),
               xpLabel: '${_thousands(profile.xp)} XP',
+              aurora: store.auroraCard,
               onTap: _openAcademicProfile,
             ),
           const SizedBox(height: 18),
@@ -309,13 +310,26 @@ class _IdentityCard extends StatelessWidget {
     required this.profile,
     required this.title,
     required this.xpLabel,
+    this.aurora = false,
     this.onTap,
   });
 
   final Profile profile;
   final String title;
   final String xpLabel;
+
+  /// Wears the Aurora Profile Card reward (`0026`).
+  final bool aurora;
   final VoidCallback? onTap;
+
+  /// Teal through blue and violet to pink: northern lights, dark enough for
+  /// the card's white text.
+  static const _auroraColors = [
+    Color(0xFF0F766E),
+    Color(0xFF1D4ED8),
+    Color(0xFF6D28D9),
+    Color(0xFFBE185D),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -334,7 +348,7 @@ class _IdentityCard extends StatelessWidget {
       gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [p.primary, p.primary2]),
+          colors: aurora ? _auroraColors : [p.primary, p.primary2]),
       child: Column(
         children: [
           Row(

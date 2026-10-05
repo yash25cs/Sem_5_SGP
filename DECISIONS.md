@@ -679,6 +679,27 @@ non-trivial choice.
   attempt, as it already did when a quiz was simply tapped twice; capping
   it to the first attempt would be a server change of its own.
 
+### D-044 — Badge progress comes from the same function that unlocks
+
+- **Decision:** `app_private.badge_progress()` returns every badge's
+  progress, goal and unit; `evaluate_badges()` unlocks exactly the badges
+  whose progress has reached the goal, and `get_badge_progress()` hands the
+  same numbers to the Achievements screen. Eight more badges, and three
+  more rewards that each change something: Focus Boost (double focus XP for
+  a day), a 50:50 quiz lifeline, and an Aurora profile card.
+- **Why:** with progress computed in the app, or by a second query, the bar
+  could say 7/7 while the badge stayed locked. One function means they
+  can't disagree, and the old ten badges keep their thresholds — restated as
+  counts. The Rewards store had been cleared of coupons that did nothing
+  (0012); new rewards had to do something real to belong there.
+- **Trade-off:** Focus Boost is XP bought with XP, so it moves level and
+  rank; it is capped at two held and one day each, and the 16-hour daily
+  focus cap still applies. The 50:50 hides answers the phone already holds
+  (0008 reveals answers after each pick), so the server's part is spending
+  the lifeline, not hiding the options. Card Master still counts SM-2
+  repetitions, which an "Again" resets, so it measures cards learned rather
+  than reviews made.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

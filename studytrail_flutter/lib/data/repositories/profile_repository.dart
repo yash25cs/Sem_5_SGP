@@ -57,6 +57,16 @@ class ProfileRepository {
     await db.rpc('set_utc_offset', params: {'p_minutes': offset.inMinutes});
   }
 
+  /// Keys of the rewards the student holds unused — including the permanent
+  /// ones, which are never used up (`aurora_profile`, `golden_border`).
+  Future<Set<String>> getHeldRewards() async {
+    final rows = await db
+        .from('reward_redemptions')
+        .select('reward_key')
+        .isFilter('consumed_at', null);
+    return {for (final r in rows) r['reward_key'] as String};
+  }
+
   Future<List<Map<String, dynamic>>> getClasses() async {
     final rows =
         await db.from('classes').select().order('name', ascending: true);

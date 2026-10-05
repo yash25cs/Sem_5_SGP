@@ -64,6 +64,9 @@ class AchievementBadge {
     this.description,
     this.unlocked = false,
     this.unlockedAt,
+    this.progress,
+    this.goal,
+    this.unit,
   });
 
   final String id;
@@ -74,6 +77,48 @@ class AchievementBadge {
   final String? description;
   final bool unlocked;
   final DateTime? unlockedAt;
+
+  /// How far along the student is, out of [goal] (`get_badge_progress`,
+  /// `0026_achievements_rewards.sql`). Null before that has loaded, or on a
+  /// project without it.
+  final int? progress;
+  final int? goal;
+
+  /// What's being counted ("days", "%", "quizzes"); null for a yes/no badge.
+  final String? unit;
+
+  /// 0–1 towards unlocking; 1 once earned, whatever the count says.
+  double get fraction {
+    if (unlocked) return 1;
+    final g = goal, done = progress;
+    if (g == null || done == null || g <= 0) return 0;
+    return (done / g).clamp(0, 1).toDouble();
+  }
+
+  /// "5 / 7 days", "73% / 100%", or null for a yes/no badge.
+  String? get progressLabel {
+    final g = goal, done = progress;
+    if (g == null || done == null || unit == null) return null;
+    if (unit == '%') return '$done% / $g%';
+    String n(int v) => v.toString().replaceAllMapped(
+        RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+    return '${n(done)} / ${n(g)} $unit';
+  }
+
+  AchievementBadge withProgress(int progress, int goal, String? unit) =>
+      AchievementBadge(
+        id: id,
+        key: key,
+        name: name,
+        iconKey: iconKey,
+        colorKey: colorKey,
+        description: description,
+        unlocked: unlocked,
+        unlockedAt: unlockedAt,
+        progress: progress,
+        goal: goal,
+        unit: unit,
+      );
 
   factory AchievementBadge.fromMap(Map<String, dynamic> m) {
     // `user_badges` arrives as a list because it's a to-many embed; empty

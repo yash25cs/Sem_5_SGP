@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import '../data/repositories.dart';
 import '../models/models.dart';
 import 'async_store.dart';
@@ -5,10 +7,30 @@ import 'async_store.dart';
 /// Backs the Quiz screen: one question at a time, immediate feedback, and a
 /// server-scored result at the end.
 class QuizStore extends AsyncStore {
-  QuizStore({QuizRepository? quizzes})
-      : _quizzes = quizzes ?? const QuizRepository();
+  QuizStore({QuizRepository? quizzes, Random? random})
+      : _quizzes = quizzes ?? const QuizRepository(),
+        _random = random ?? Random();
 
   final QuizRepository _quizzes;
+  final Random _random;
+
+  int _lifelines = 0;
+
+  /// 50:50 lifelines the student holds, read when a quiz starts.
+  int get lifelines => _lifelines;
+
+  /// Options a 50:50 removed, by question id.
+  final Map<String, Set<int>> _hidden = {};
+
+  /// The current question's removed options.
+  Set<int> get hiddenOptions => _hidden[current?.id] ?? const {};
+
+  /// A lifeline can go on this question: one held, not yet answered, and
+  /// none used on it already.
+  bool get canUseLifeline {
+    final q = current;
+    return _lifelines > 0 && q != null && !answered && !_hidden.containsKey(q.id);
+  }
 
   List<Quiz> _available = const [];
   Quiz? _quiz;
@@ -68,19 +90,41 @@ class QuizStore extends AsyncStore {
         _available = await _quizzes.getQuizzes();
       });
 
-  /// Loads a quiz and opens an attempt row.
+  /// Loads a quiz and opens an attempt row. The lifeline count comes along;
+  /// failing to read it just means no 50:50 this time.
   Future<bool> start(String quizId) => runMutation(() async {
+        final lifelines =
+            _quizzes.lifelinesLeft().catchError((Object _) => 0);
         _quiz = await _quizzes.getQuiz(quizId);
         _attempt = await _quizzes.startAttempt(quizId);
+        _lifelines = await lifelines;
         _index = 0;
         _picked = null;
         _picks.clear();
+        _hidden.clear();
       });
+
+  /// Spends a 50:50 on the current question: the server takes the lifeline,
+  /// then two of the wrong options go, chosen at random. False with [error]
+  /// set when it couldn't be used.
+  Future<bool> useLifeline() async {
+    final q = current;
+    if (q == null || !canUseLifeline) return false;
+    return runMutation(() async {
+      _lifelines = await _quizzes.useLifeline();
+      final wrong = [
+        for (var i = 0; i < q.options.length; i++)
+          if (i != q.correctIndex) i,
+      ]..shuffle(_random);
+      _hidden[q.id] = wrong.take(2).toSet();
+    });
+  }
 
   void pick(int optionIndex) {
     if (_picked != null) return; // locked once answered
     final q = current;
     if (q == null) return;
+    if (_hidden[q.id]?.contains(optionIndex) ?? false) return;
     _picked = optionIndex;
     _picks[q.id] = optionIndex;
     notifyListeners();
@@ -127,6 +171,7 @@ class QuizStore extends AsyncStore {
     _index = 0;
     _picked = null;
     _picks.clear();
+    _hidden.clear();
     notifyListeners();
   }
 }

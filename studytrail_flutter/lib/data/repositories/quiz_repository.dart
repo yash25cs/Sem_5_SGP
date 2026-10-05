@@ -68,6 +68,24 @@ class QuizRepository {
     return QuizAttempt.fromMap(map);
   }
 
+  /// 50:50 lifelines bought in Rewards and not yet used (`0026`). RLS limits
+  /// the rows to the caller's own.
+  Future<int> lifelinesLeft() async {
+    final rows = await db
+        .from('reward_redemptions')
+        .select('id')
+        .eq('reward_key', 'fifty_fifty')
+        .isFilter('consumed_at', null);
+    return rows.length;
+  }
+
+  /// Spends one lifeline and returns how many are left; throws with the
+  /// server's message when there are none.
+  Future<int> useLifeline() async {
+    final left = await db.rpc('use_quiz_lifeline');
+    return (left as num).toInt();
+  }
+
   /// Past attempts for the results/history view.
   Future<List<QuizAttempt>> getAttempts({String? quizId, int limit = 20}) async {
     var query = db.from('quiz_attempts').select().not('completed_at', 'is', null);

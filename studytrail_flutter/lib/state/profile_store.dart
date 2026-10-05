@@ -28,6 +28,11 @@ class ProfileStore extends AsyncStore {
   /// Classes the student can join, for the settings picker.
   List<Map<String, dynamic>> get classes => _classes;
 
+  Set<String> _heldRewards = const {};
+
+  /// The Aurora Profile Card reward is owned: the profile card wears it.
+  bool get auroraCard => _heldRewards.contains('aurora_profile');
+
   Future<void> load() => runLoad(() async {
         final results = await Future.wait([
           _profiles.getMyProfile(),
@@ -36,10 +41,15 @@ class ProfileStore extends AsyncStore {
           _goals.getGoals(),
           // Needed to resolve `class_id` into a name for the Settings row.
           _profiles.getClasses(),
+          // Only a look; a failed read keeps the plain card.
+          _profiles
+              .getHeldRewards()
+              .catchError((Object _) => _heldRewards),
         ]);
         _profile = results[0] as Profile?;
         _allGoals = results[1] as List<Goal>;
         _classes = results[2] as List<Map<String, dynamic>>;
+        _heldRewards = results[3] as Set<String>;
       });
 
   Future<bool> updateProfile({

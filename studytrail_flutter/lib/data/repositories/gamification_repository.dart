@@ -33,7 +33,8 @@ class GamificationRepository {
     return rows.map(ActivityDay.fromMap).toList();
   }
 
-  /// The default 10-badge catalog fallback.
+  /// The badge catalog as seeded (`0006_seed.sql`, `0026`), for when the
+  /// `badges` table can't be read.
   static const defaultBadges = <AchievementBadge>[
     AchievementBadge(
       id: 'badge-first_step',
@@ -115,6 +116,70 @@ class GamificationRepository {
       colorKey: 'gold',
       description: 'Reach 100% on a goal.',
     ),
+    AchievementBadge(
+      id: 'badge-warming_up',
+      key: 'warming_up',
+      name: 'Warming Up',
+      iconKey: 'bolt',
+      colorKey: 'orange',
+      description: 'Keep a 3-day streak.',
+    ),
+    AchievementBadge(
+      id: 'badge-unstoppable',
+      key: 'unstoppable',
+      name: 'Unstoppable',
+      iconKey: 'whatshot',
+      colorKey: 'red',
+      description: 'Keep a 30-day streak.',
+    ),
+    AchievementBadge(
+      id: 'badge-task_tackler',
+      key: 'task_tackler',
+      name: 'Task Tackler',
+      iconKey: 'task_alt',
+      colorKey: 'green',
+      description: 'Complete 50 study tasks.',
+    ),
+    AchievementBadge(
+      id: 'badge-quiz_regular',
+      key: 'quiz_regular',
+      name: 'Quiz Regular',
+      iconKey: 'psychology',
+      colorKey: 'violet',
+      description: 'Finish 10 quizzes.',
+    ),
+    AchievementBadge(
+      id: 'badge-deep_diver',
+      key: 'deep_diver',
+      name: 'Deep Diver',
+      iconKey: 'timer',
+      colorKey: 'teal',
+      description: 'Log 10 hours of focus sessions.',
+    ),
+    AchievementBadge(
+      id: 'badge-xp_collector',
+      key: 'xp_collector',
+      name: 'XP Collector',
+      iconKey: 'diamond',
+      colorKey: 'sky',
+      description: 'Earn 1,000 XP.',
+    ),
+    AchievementBadge(
+      id: 'badge-library_builder',
+      key: 'library_builder',
+      name: 'Library Builder',
+      iconKey: 'library_books',
+      colorKey: 'indigo',
+      description: 'Add 5 files, videos or playlists to your library.',
+    ),
+    AchievementBadge(
+      id: 'badge-helping_hand',
+      key: 'helping_hand',
+      name: 'Helping Hand',
+      iconKey: 'volunteer_activism',
+      colorKey: 'rose',
+      description: 'Answer 5 of your classmates’ doubts.',
+    ),
   ];
 
   /// The badge catalog, each with whether the caller has it. For "my badges",
@@ -188,6 +253,21 @@ class GamificationRepository {
   Future<List<String>> evaluateBadges() async {
     final result = await db.rpc('evaluate_badges');
     return (result as List?)?.cast<String>() ?? const [];
+  }
+
+  /// Every badge's progress towards unlocking, by key: computed server-side
+  /// by the same function that decides the unlock (`0026`), so the bar and
+  /// the badge can't disagree.
+  Future<Map<String, (int, int, String?)>> getBadgeProgress() async {
+    final rows = await db.rpc('get_badge_progress');
+    return {
+      for (final r in (rows as List).cast<Map<String, dynamic>>())
+        r['key'] as String: (
+          (r['progress'] as num?)?.toInt() ?? 0,
+          (r['goal'] as num?)?.toInt() ?? 1,
+          r['unit'] as String?,
+        ),
+    };
   }
 
   /// Classmates ordered by XP. `is_me` comes from the RPC; rank is assigned

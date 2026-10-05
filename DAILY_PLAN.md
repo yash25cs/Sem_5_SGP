@@ -770,3 +770,36 @@ function change.
   a practice run sends no grades, deck delete clears the offline copy).
   Checked live with a self-deleting account and seeded quizzes (10/10), and
   by eye in a browser at 375 dp.
+
+## Day 29 – Equal tabs, badge progress, more badges and rewards
+
+**Status:** 5 October 2026 (not committed). Migration `0026` applied; no
+function change.
+
+- **Bottom bar:** Home, Roadmap, Chat, Quiz and Profile each take an equal
+  fifth. They were sized to their labels, so Roadmap's slot was wider than
+  Chat's and the highlight changed width from tab to tab.
+- **Badge progress:** every locked badge has a ring that fills and a count
+  under it ("5/7", "80%"); a summary card ("5 of 18 badges earned"); a
+  **Next up** card with the three closest, each with its bar; and the badge
+  sheet says what's left ("2 days to go."). Earned badges come first, then
+  the rest by how close they are. Locked badges show their own icon, greyed,
+  instead of a padlock.
+- **Eight more badges** (18): Warming Up (3-day streak), Unstoppable
+  (30-day), Task Tackler (50 tasks), Quiz Regular (10 quizzes), Deep Diver
+  (10 hours of focus), XP Collector (1,000 XP), Library Builder (5 library
+  items) and Helping Hand (answer 5 classmates' doubts).
+- **Three more rewards** (5), each doing something: **Focus Boost** (120 XP,
+  hold 2) doubles focus-session XP for a day, from the next session;
+  **50:50 Lifeline** (30 XP, hold 5) — a 50:50 chip on the quiz question
+  fades two wrong answers; **Aurora Profile Card** (400 XP, permanent) gives
+  the Profile card a northern-lights gradient. "How it works" explains each.
+- One server function works out progress and decides unlocks, so the ring
+  and the badge always agree (D-044).
+- `flutter analyze` clean; `flutter test` 188 passed, 4 live skipped
+  (`test/achievements_rewards_test.dart`: equal tab widths, progress
+  wording and clamping, "to go" text, Next up and grid order, the
+  Achievements screen at 320 dp — which caught the badge tiles overflowing
+  — the lifeline spending one and never hiding the right answer, and the
+  Aurora flag). 0026 dry-run then applied; checked live with a
+  self-deleting account (9/9) and in a browser at 375 dp.

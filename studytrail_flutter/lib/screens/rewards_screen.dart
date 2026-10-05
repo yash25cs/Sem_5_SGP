@@ -119,6 +119,11 @@ class _RewardsScreenState extends State<RewardsScreen>
     final ok = await store.redeem(item.key);
     if (!mounted) return;
     if (ok) HapticFeedback.mediumImpact();
+    // The Profile tab stays alive behind this screen; let it put the new
+    // card on straight away.
+    if (ok && item.key == 'aurora_profile') {
+      context.read<ProfileStore>().load();
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -326,6 +331,11 @@ class _RewardStyle {
             Symbols.military_tech,
             Color(0xFFEAB308),
           ),
+        'focus_boost' => const _RewardStyle(Symbols.bolt, Color(0xFFFE6F42)),
+        'fifty_fifty' =>
+          const _RewardStyle(Symbols.exposure_neg_2, Color(0xFF14B8A6)),
+        'aurora_profile' =>
+          const _RewardStyle(Symbols.auto_awesome, Color(0xFF7C3AED)),
         _ => const _RewardStyle(Symbols.redeem, Color(0xFF8B5CF6)),
       };
 }
@@ -568,6 +578,24 @@ class _HowItWorksTab extends StatelessWidget {
         q: 'Where does the Golden Scholar Border show?',
         a: 'Around your name on the class leaderboard, for you and your '
             'classmates to see. It\'s permanent.',
+      ),
+      (
+        q: 'How does a Focus Boost work?',
+        a: 'Your next finished focus session starts it, and every focus '
+            'session for the rest of that day earns double XP. The extra XP '
+            'is earned XP like any other, so it counts towards your level '
+            'and rank.',
+      ),
+      (
+        q: 'How do I use a 50:50 Lifeline?',
+        a: 'In a quiz, tap 50:50 above the question before you answer. Two '
+            'wrong answers disappear and one lifeline is used. One per '
+            'question.',
+      ),
+      (
+        q: 'What does the Aurora Profile Card change?',
+        a: 'Your card at the top of the Profile tab gets a northern-lights '
+            'gradient. It\'s permanent.',
       ),
       (
         q: 'Can I hide from the leaderboard?',
