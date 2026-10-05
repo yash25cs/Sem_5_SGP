@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/expandable_item_card.dart';
 import '../widgets/generate_sheet.dart';
 
 /// Cards tab — a flashcard review session with flip + deck picker.
@@ -22,6 +23,9 @@ class FlashcardsScreen extends StatefulWidget {
 class _FlashcardsScreenState extends State<FlashcardsScreen> {
   /// Name of the deck being reviewed, for the header subtitle.
   String? _sessionDeckName;
+
+  /// The deck whose actions are showing, if any.
+  String? _openDeck;
 
   @override
   void initState() {
@@ -39,8 +43,9 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
   Future<void> _grade(SrGrade grade) async {
     final store = context.read<FlashcardStore>();
     await store.grade(grade);
-    // A finished session changes which units count as weak on Home.
-    if (mounted && store.current == null) {
+    // A finished session changes which units count as weak on Home. A
+    // practice run sends no grades, so it changes nothing there.
+    if (mounted && store.current == null && !store.practice) {
       context.read<WeakSpotsStore>().load();
     }
   }
@@ -56,6 +61,42 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
         const SnackBar(content: Text('Nothing due right now — well done.')),
       );
     }
+  }
+
+  /// Re-attempts a deck with nothing due: every card again, as practice.
+  Future<void> _practice(FlashcardDeck deck) async {
+    final store = context.read<FlashcardStore>();
+    final ok = await store.startPractice(deck.id);
+    if (!mounted) return;
+    setState(() {
+      _sessionDeckName = deck.name;
+      _openDeck = null;
+    });
+    if (ok && store.queue.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This deck has no cards yet.')),
+      );
+    }
+  }
+
+  Future<void> _delete(FlashcardDeck deck) async {
+    final cards = '${deck.total} card${deck.total == 1 ? '' : 's'}';
+    final sure = await confirmDelete(
+      context,
+      title: 'Delete deck?',
+      message: deck.isMistakes
+          ? '“${deck.name}” and its $cards will be deleted. It starts again '
+              'the next time you miss a quiz question.'
+          : '“${deck.name}” and its $cards will be deleted.',
+    );
+    if (!sure || !mounted) return;
+    final store = context.read<FlashcardStore>();
+    final ok = await store.deleteDeck(deck);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+          ok ? 'Deck deleted.' : store.error ?? 'Could not delete that deck.'),
+    ));
   }
 
   /// Writes a new deck from a file the student picks.
@@ -188,6 +229,11 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
                     small: true),
               ],
             ),
+            if (store.practice) ...[
+              const SizedBox(height: 8),
+              Text('Practice run — your review schedule stays as it is.',
+                  style: TextStyle(color: p.ink3, fontSize: 12)),
+            ],
             const SizedBox(height: 10),
             ProgressTrack(store.sessionProgress, color: p.primary, height: 8),
             const SizedBox(height: 22),
@@ -257,6 +303,7 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
           ] else if (store.sessionFinished) ...[
             _SessionSummary(
               reviewed: store.reviewedThisSession,
+              practice: store.practice,
               onDone: () => setState(() => _sessionDeckName = null),
             ),
             const SizedBox(height: 24),
@@ -289,8 +336,19 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
             ])
               _DeckRow(
                 deck: deck,
-                onTap: () =>
-                    _startSession(deckId: deck.id, deckName: deck.name),
+                expanded: _openDeck == deck.id,
+                onToggle: () => setState(
+                    () => _openDeck = _openDeck == deck.id ? null : deck.id),
+                onReview: store.busy || inSession
+                    ? null
+                    : () {
+                        setState(() => _openDeck = null);
+                        _startSession(deckId: deck.id, deckName: deck.name);
+                      },
+                onPractice: store.busy || inSession
+                    ? null
+                    : () => _practice(deck),
+                onDelete: store.busy ? null : () => _delete(deck),
             ),
         ],
       ),
@@ -451,10 +509,12 @@ class _CardFace extends StatelessWidget {
 
 /// Shown between finishing a review and going back to the deck list.
 class _SessionSummary extends StatelessWidget {
-  const _SessionSummary({required this.reviewed, required this.onDone});
+  const _SessionSummary(
+      {required this.reviewed, required this.onDone, this.practice = false});
 
   final int reviewed;
   final VoidCallback onDone;
+  final bool practice;
 
   @override
   Widget build(BuildContext context) {
@@ -464,11 +524,16 @@ class _SessionSummary extends StatelessWidget {
         children: [
           IconTile(Symbols.celebration, bg: p.greenSoft, fg: p.green, size: 54),
           const SizedBox(height: 14),
-          Text('Session complete',
+          Text(practice ? 'Practice complete' : 'Session complete',
               style: TextStyle(
                   color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
-          Text('You reviewed $reviewed card${reviewed == 1 ? '' : 's'}.',
+          Text(
+              practice
+                  ? 'You went through $reviewed card${reviewed == 1 ? '' : 's'}. '
+                      'Their review dates are unchanged.'
+                  : 'You reviewed $reviewed card${reviewed == 1 ? '' : 's'}.',
+              textAlign: TextAlign.center,
               style: TextStyle(color: p.ink3, fontSize: 13)),
           const SizedBox(height: 16),
           PillButton('Back to decks', onTap: onDone),
@@ -508,11 +573,24 @@ class _RateButton extends StatelessWidget {
   }
 }
 
+/// One deck in the list. Tapped, it opens with Review (or Re-attempt, once
+/// nothing in it is due) and Delete.
 class _DeckRow extends StatelessWidget {
-  const _DeckRow({required this.deck, required this.onTap});
+  const _DeckRow({
+    required this.deck,
+    required this.expanded,
+    required this.onToggle,
+    required this.onReview,
+    required this.onPractice,
+    required this.onDelete,
+  });
 
   final FlashcardDeck deck;
-  final VoidCallback onTap;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback? onReview;
+  final VoidCallback? onPractice;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -524,57 +602,55 @@ class _DeckRow extends StatelessWidget {
     final style = deck.isMistakes
         ? (icon: Symbols.replay, color: p.coral)
         : (icon: subject.icon, color: subject.color);
+    // Every card reviewed until its next date: what a "finished" deck is.
+    final caughtUp = deck.total > 0 && deck.due == 0;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: p.card,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: p.shadowSm,
-        ),
-        child: Row(
-          children: [
-            IconTile(style.icon,
-                bg: style.color.withValues(alpha: 0.14),
-                fg: style.color,
-                size: 46),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(deck.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: p.ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 2),
-                  Text(
-                      [
-                        if (deck.isMistakes)
-                          'Questions you got wrong'
-                        else if ((deck.subjectName ?? '').isNotEmpty)
-                          deck.subjectName!,
-                        '${deck.total} card${deck.total == 1 ? '' : 's'}',
-                      ].join(' · '),
-                      style: TextStyle(color: p.ink3, fontSize: 12.5)),
-                ],
-              ),
-            ),
-            if (deck.due > 0)
-              Tag('${deck.due} due',
-                  bg: style.color.withValues(alpha: 0.14), fg: style.color)
-            else
-              Icon(Symbols.check_circle, color: p.green, fill: 1, size: 24),
-          ],
-        ),
-      ),
+    return ExpandableItemCard(
+      expanded: expanded,
+      onToggle: onToggle,
+      leading: IconTile(style.icon,
+          bg: style.color.withValues(alpha: 0.14),
+          fg: style.color,
+          size: 46),
+      title: deck.name,
+      badge: deck.due > 0
+          ? Tag('${deck.due} due',
+              bg: style.color.withValues(alpha: 0.14), fg: style.color)
+          : caughtUp
+              ? Icon(Symbols.check_circle, color: p.green, fill: 1, size: 24)
+              : null,
+      details: [
+        Text(
+            [
+              if (deck.isMistakes)
+                'Questions you got wrong'
+              else if ((deck.subjectName ?? '').isNotEmpty)
+                deck.subjectName!,
+              '${deck.total} card${deck.total == 1 ? '' : 's'}',
+            ].join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: p.ink3, fontSize: 12.5)),
+        if (caughtUp) ...[
+          const SizedBox(height: 3),
+          Text('All caught up — nothing due',
+              style: TextStyle(
+                  color: p.green, fontSize: 12, fontWeight: FontWeight.w700)),
+        ],
+      ],
+      actions: [
+        if (caughtUp)
+          ItemAction('Re-attempt', icon: Symbols.replay, onTap: onPractice)
+        else
+          ItemAction(
+              deck.total == 0
+                  ? 'No cards yet'
+                  : 'Review ${deck.due}',
+              icon: Symbols.play_arrow,
+              onTap: deck.total == 0 ? null : onReview),
+        ItemAction('Delete',
+            icon: Symbols.delete, danger: true, onTap: onDelete),
+      ],
     );
   }
 }

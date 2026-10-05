@@ -743,3 +743,30 @@ function change.
   month end, and the Settings sheet at 320 dp with its task line moving
   on). The debug APK builds — aapt checks every layout and drawable, and the
   Kotlin compiles. Not yet seen on a phone: no device or emulator here.
+
+## Day 28 – Quiz and deck actions
+
+**Status:** 5 October 2026 (not committed). No migration, no function change.
+
+- **Tap to open.** A quiz or a deck opens in place (one at a time) with two
+  buttons; tap it again to close. The arrow turns and the card outlines
+  itself while open.
+- **Quizzes:** **Start quiz**, or **Retake** once it has been finished, and
+  **Delete**. A finished quiz shows its last marks as a badge — green from
+  80%, blue from 50%, coral below — and "Last attempt: Today, 3:42 PM"
+  (Yesterday, then the date). The results screen gained **Retake** too, and
+  the list shows the new marks the moment the quiz ends.
+- **Decks:** **Review N** while cards are due; once nothing is ("All caught
+  up"), **Re-attempt** goes through every card again, shuffled, as a
+  practice run — the review schedule doesn't change and no XP is involved.
+  **Delete** for every deck; the phone's offline copy forgets it too.
+- **Delete asks first**, naming what goes: a quiz's attempts and marks (XP
+  and My mistakes cards stay), or a deck's cards (My mistakes refills itself
+  at the next wrong answer).
+- `flutter analyze` clean; `flutter test` 180 passed, 4 live skipped
+  (`test/quiz_deck_actions_test.dart`: date-time wording, marks and time on
+  a finished quiz, one open at a time, Cancel keeps / Delete removes,
+  Retake starts again, finishing updates the list, Review vs Re-attempt,
+  a practice run sends no grades, deck delete clears the offline copy).
+  Checked live with a self-deleting account and seeded quizzes (10/10), and
+  by eye in a browser at 375 dp.

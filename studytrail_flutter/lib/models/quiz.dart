@@ -7,6 +7,7 @@ class Quiz {
     this.length,
     this.timerSec = 30,
     this.questions = const [],
+    this.lastAttempt,
   });
 
   final String id;
@@ -16,6 +17,13 @@ class Quiz {
   final int timerSec;
   final List<QuizQuestion> questions;
 
+  /// The most recent finished attempt, when the list query embeds it
+  /// (`QuizRepository.getQuizzes`). Null for a quiz never finished.
+  final QuizAttempt? lastAttempt;
+
+  /// Finished at least once — the list offers Retake instead of Start.
+  bool get attempted => lastAttempt?.completedAt != null;
+
   factory Quiz.fromMap(Map<String, dynamic> m) {
     final raw = m['quiz_questions'];
     final List<QuizQuestion> qs = raw is List
@@ -24,6 +32,7 @@ class Quiz {
     if (qs.isNotEmpty) {
       qs.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
     }
+    final attempts = m['quiz_attempts'];
 
     return Quiz(
       id: m['id'] as String,
@@ -32,8 +41,23 @@ class Quiz {
       length: (m['length'] as num?)?.toInt(),
       timerSec: (m['timer_sec'] as num?)?.toInt() ?? 30,
       questions: qs,
+      lastAttempt: attempts is List && attempts.isNotEmpty
+          ? QuizAttempt.fromMap(attempts.first as Map<String, dynamic>)
+          : null,
     );
   }
+
+  /// The same quiz with [attempt] as its latest result — what the list shows
+  /// straight after finishing, without fetching the list again.
+  Quiz withLastAttempt(QuizAttempt attempt) => Quiz(
+        id: id,
+        subjectId: subjectId,
+        title: title,
+        length: length,
+        timerSec: timerSec,
+        questions: questions,
+        lastAttempt: attempt,
+      );
 }
 
 /// A row of `quiz_questions`. Always exactly 4 options (DB check constraint).

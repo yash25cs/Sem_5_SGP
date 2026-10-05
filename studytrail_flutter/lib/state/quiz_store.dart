@@ -97,14 +97,28 @@ class QuizStore extends AsyncStore {
     return false;
   }
 
-  /// Scores the attempt server-side and stores the result.
+  /// Scores the attempt server-side and stores the result — also as the
+  /// quiz's latest attempt in the list, so its card shows the new marks and
+  /// time the moment the student goes back.
   Future<bool> finish() => runMutation(() async {
         final attempt = _attempt;
         if (attempt == null) return;
-        _attempt = await _quizzes.submit(
+        final scored = await _quizzes.submit(
           attemptId: attempt.id,
           picks: Map.of(_picks),
         );
+        _attempt = scored;
+        _available = [
+          for (final q in _available)
+            q.id == scored.quizId ? q.withLastAttempt(scored) : q,
+        ];
+      });
+
+  /// Deletes a quiz and its attempts. The list drops it only once the server
+  /// has, so a failed delete leaves it where it was.
+  Future<bool> deleteQuiz(Quiz quiz) => runMutation(() async {
+        await _quizzes.deleteQuiz(quiz.id);
+        _available = _available.where((q) => q.id != quiz.id).toList();
       });
 
   void reset() {

@@ -7,6 +7,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/expandable_item_card.dart';
 import '../widgets/generate_sheet.dart';
 import '../widgets/nav.dart';
 
@@ -126,6 +127,9 @@ class _QuizScreenState extends State<QuizScreen> {
                 ? _Results(
                     attempt: store.attempt,
                     onDone: _backToList,
+                    onRetake: store.quiz == null || store.busy
+                        ? null
+                        : () => _startQuiz(store.quiz!),
                   )
                 : store.quiz == null || question == null
                     ? _QuizPicker(onStart: _startQuiz)
@@ -154,10 +158,43 @@ class _QuizScreenState extends State<QuizScreen> {
 }
 
 /// Quiz list, shown before an attempt starts.
-class _QuizPicker extends StatelessWidget {
+///
+/// Tapping a quiz opens it in place with Start (Retake once it has been
+/// finished) and Delete; one is open at a time. A finished quiz shows its
+/// last marks and when they were scored.
+class _QuizPicker extends StatefulWidget {
   const _QuizPicker({required this.onStart});
 
   final ValueChanged<Quiz> onStart;
+
+  @override
+  State<_QuizPicker> createState() => _QuizPickerState();
+}
+
+class _QuizPickerState extends State<_QuizPicker> {
+  /// The quiz whose actions are showing, if any.
+  String? _open;
+
+  Future<void> _delete(Quiz quiz) async {
+    final name = quiz.title ?? 'this quiz';
+    final sure = await confirmDelete(
+      context,
+      title: 'Delete quiz?',
+      message: quiz.attempted
+          ? '“$name” and all its attempts and marks will be deleted. '
+              'XP you earned stays, and so do its cards in My mistakes.'
+          : '“$name” will be deleted.',
+    );
+    if (!sure || !mounted) return;
+    final store = context.read<QuizStore>();
+    final ok = await store.deleteQuiz(quiz);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Quiz deleted.'
+          : store.error ?? 'Could not delete that quiz.'),
+    ));
+  }
 
   /// Writes a new quiz from a file the student picks.
   ///
@@ -191,7 +228,6 @@ class _QuizPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.p;
     final store = context.watch<QuizStore>();
 
     return ListView(
@@ -223,46 +259,92 @@ class _QuizPicker extends StatelessWidget {
           )
         else
           for (final quiz in store.available)
-            InkWell(
-              onTap: store.busy ? null : () => onStart(quiz),
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: p.card,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: p.shadowSm,
-                ),
-                child: Row(
-                  children: [
-                    IconTile(Symbols.quiz,
-                        bg: p.primarySoft, fg: p.primary, size: 46),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(quiz.title ?? 'Practice quiz',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  color: p.ink,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 2),
-                          Text(
-                              '${quiz.length ?? quiz.questions.length} questions · ${quiz.timerSec}s each',
-                              style:
-                                  TextStyle(color: p.ink3, fontSize: 12.5)),
-                        ],
-                      ),
-                    ),
-                    Icon(Symbols.play_arrow, color: p.primary, fill: 1),
-                  ],
-                ),
-              ),
+            _QuizTile(
+              quiz: quiz,
+              expanded: _open == quiz.id,
+              onToggle: () =>
+                  setState(() => _open = _open == quiz.id ? null : quiz.id),
+              onStart: store.busy ? null : () => widget.onStart(quiz),
+              onDelete: store.busy ? null : () => _delete(quiz),
             ),
+      ],
+    );
+  }
+}
+
+/// One quiz in the list. Finished, it shows the last marks (coloured by how
+/// they went) and when, and offers Retake.
+class _QuizTile extends StatelessWidget {
+  const _QuizTile({
+    required this.quiz,
+    required this.expanded,
+    required this.onToggle,
+    required this.onStart,
+    required this.onDelete,
+  });
+
+  final Quiz quiz;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback? onStart;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final last = quiz.lastAttempt;
+    final finishedAt = last?.completedAt;
+    final pct = ((last?.accuracy ?? 0) * 100).round();
+    final tone = switch (pct) {
+      >= 80 => (bg: p.greenSoft, fg: p.green),
+      >= 50 => (bg: p.primarySoft, fg: p.primary),
+      _ => (bg: p.coralSoft, fg: p.coralInk),
+    };
+
+    return ExpandableItemCard(
+      expanded: expanded,
+      onToggle: onToggle,
+      leading: quiz.attempted
+          ? IconTile(Symbols.task_alt, bg: tone.bg, fg: tone.fg, size: 46)
+          : IconTile(Symbols.quiz, bg: p.primarySoft, fg: p.primary, size: 46),
+      title: quiz.title ?? 'Practice quiz',
+      badge: quiz.attempted
+          ? Tag('${last?.score ?? 0}/${last?.total ?? 0}',
+              bg: tone.bg, fg: tone.fg)
+          : null,
+      details: [
+        Text(
+            '${quiz.length ?? quiz.questions.length} questions · '
+            '${quiz.timerSec}s each',
+            style: TextStyle(color: p.ink3, fontSize: 12.5)),
+        if (finishedAt != null) ...[
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Icon(Symbols.history, color: p.ink3, size: 14),
+              const SizedBox(width: 4),
+              // The marks are in the badge; this line is when. Two lines
+              // rather than an ellipsis, so the time is never cut off.
+              Expanded(
+                child: Text(
+                    'Last attempt: ${whenLabel(finishedAt, DateTime.now())}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.ink2,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ],
+      ],
+      actions: [
+        ItemAction(quiz.attempted ? 'Retake' : 'Start quiz',
+            icon: quiz.attempted ? Symbols.replay : Symbols.play_arrow,
+            onTap: onStart),
+        ItemAction('Delete',
+            icon: Symbols.delete, danger: true, onTap: onDelete),
       ],
     );
   }
@@ -358,10 +440,11 @@ class _QuestionView extends StatelessWidget {
 
 /// Server-scored result of the attempt.
 class _Results extends StatelessWidget {
-  const _Results({required this.attempt, required this.onDone});
+  const _Results({required this.attempt, required this.onDone, this.onRetake});
 
   final QuizAttempt? attempt;
   final VoidCallback onDone;
+  final VoidCallback? onRetake;
 
   @override
   Widget build(BuildContext context) {
@@ -444,7 +527,18 @@ class _Results extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 20),
-        PillButton('Back to quizzes', onTap: onDone),
+        Row(
+          children: [
+            Expanded(
+              child: PillButton('Retake',
+                  icon: Symbols.replay,
+                  variant: PillVariant.outline,
+                  onTap: onRetake),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: PillButton('Back to quizzes', onTap: onDone)),
+          ],
+        ),
       ],
     );
   }

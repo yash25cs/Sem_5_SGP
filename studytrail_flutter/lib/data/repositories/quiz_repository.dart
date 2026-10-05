@@ -11,10 +11,21 @@ import '../supabase_client.dart';
 class QuizRepository {
   const QuizRepository();
 
+  /// Quizzes, newest first, each with its latest finished attempt embedded —
+  /// one request, not one per quiz. The `quiz_attempts.` filter, order and
+  /// limit apply to the embedded rows only: a quiz never finished still comes
+  /// back, with an empty list.
   Future<List<Quiz>> getQuizzes({String? subjectId}) async {
-    var query = db.from('quizzes').select('*, subjects(name)');
+    var query = db
+        .from('quizzes')
+        .select('*, subjects(name), '
+            'quiz_attempts(id, quiz_id, score, total, xp_earned, completed_at)')
+        .not('quiz_attempts.completed_at', 'is', null);
     if (subjectId != null) query = query.eq('subject_id', subjectId);
-    final rows = await query.order('created_at', ascending: false);
+    final rows = await query
+        .order('created_at', ascending: false)
+        .order('completed_at', referencedTable: 'quiz_attempts', ascending: false)
+        .limit(1, referencedTable: 'quiz_attempts');
     return rows.map(Quiz.fromMap).toList();
   }
 
@@ -66,6 +77,9 @@ class QuizRepository {
     return rows.map(QuizAttempt.fromMap).toList();
   }
 
+  /// Deletes the quiz with its questions and every attempt (FK cascades,
+  /// `0002_features.sql`). XP already earned stays: it lives in
+  /// `activity_log`, not on the attempt.
   Future<void> deleteQuiz(String quizId) =>
       db.from('quizzes').delete().eq('id', quizId);
 

@@ -662,6 +662,23 @@ non-trivial choice.
   instead. Without the exact-alarm permission the midnight redraw can land
   a few minutes late; the twice-a-day update is the fallback.
 
+### D-043 — Re-attempting a finished deck is practice, not review
+
+- **Decision:** quizzes and decks open in place to show their actions. A
+  finished quiz offers Retake and shows its last marks and date-time, read
+  with the list in one request. A deck with nothing due offers Re-attempt:
+  every card again, shuffled, with the grade buttons only moving on — no
+  grade reaches `apply_sr_grade`. Delete always asks first.
+- **Why:** a caught-up deck has no due cards, so "review" would open an
+  empty session. Sending grades for cards days before they're due would let
+  SM-2 push them further out on an early "Good", and the RPC pays nothing
+  for them anyway. One embedded query (`quiz_attempts` filtered to finished,
+  newest first, limit 1) avoids a request per quiz for the marks.
+- **Trade-off:** a re-attempt doesn't count towards the streak or XP. A quiz
+  retake does earn XP again — `finish_quiz_attempt` pays every finished
+  attempt, as it already did when a quiz was simply tapped twice; capping
+  it to the first attempt would be a server change of its own.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

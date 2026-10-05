@@ -59,6 +59,12 @@ class FlashcardStore extends AsyncStore {
   double get sessionProgress =>
       _queue.isEmpty ? 0 : _index / _queue.length;
 
+  bool _practice = false;
+
+  /// The session is a re-attempt of a whole deck ([startPractice]): grades
+  /// only move to the next card, and nothing is sent.
+  bool get practice => _practice;
+
   Future<void> load() => runLoad(() async {
         try {
           await _syncPending();
@@ -93,6 +99,38 @@ class FlashcardStore extends AsyncStore {
         _index = 0;
         _revealed = false;
         _reviewedThisSession = 0;
+        _practice = false;
+      });
+
+  /// Goes through every card in a deck again, due or not — the re-attempt of
+  /// a deck that has nothing left due.
+  ///
+  /// A practice run: the grade buttons only advance. Sending them would let
+  /// `apply_sr_grade` reschedule cards reviewed days early (a "Good" pushes
+  /// the next review further out), and it pays nothing for a card that isn't
+  /// due anyway. Shuffled, so a second run isn't the first one memorised.
+  Future<bool> startPractice(String deckId) => runMutation(() async {
+        List<Flashcard> cards;
+        try {
+          cards = await _cards.getDeckCards(deckId);
+          _offline = false;
+        } catch (e) {
+          if (!isNetworkError(e)) rethrow;
+          cards = [
+            for (final c in await _cache.cards())
+              if (c.deckId == deckId) c,
+          ];
+          _offline = true;
+          if (cards.isEmpty) {
+            throw "You're offline, and this deck's cards aren't saved on "
+                'this phone.';
+          }
+        }
+        _queue = cards..shuffle();
+        _index = 0;
+        _revealed = false;
+        _reviewedThisSession = 0;
+        _practice = true;
       });
 
   Future<void> _refreshCardCache() async {
@@ -175,6 +213,8 @@ class FlashcardStore extends AsyncStore {
     _revealed = false;
     _reviewedThisSession++;
     notifyListeners();
+    // A practice run changes nothing on the server; see [startPractice].
+    if (_practice) return;
 
     final ok = await runMutation(() async {
       try {
@@ -224,9 +264,16 @@ class FlashcardStore extends AsyncStore {
         _decks = await _cards.getDecks();
       });
 
+  /// Deletes a deck and its cards (FK cascade). The phone's offline copy
+  /// forgets it too, or an offline session could still open it.
   Future<bool> deleteDeck(FlashcardDeck deck) => runMutation(() async {
         await _cards.deleteDeck(deck.id);
         _decks = _decks.where((d) => d.id != deck.id).toList();
+        await _cache.saveDecks(_decks);
+        await _cache.saveCards([
+          for (final c in await _cache.cards())
+            if (c.deckId != deck.id) c,
+        ]);
       });
 
   /// Asks the server to write a deck from one of the student's materials, then
