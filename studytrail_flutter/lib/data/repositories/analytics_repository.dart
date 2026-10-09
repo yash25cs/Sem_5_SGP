@@ -80,8 +80,65 @@ class AnalyticsRepository {
     return total == 0 ? 0 : score / total;
   }
 
+  /// How the student's written answers have been marked — all kept attempts,
+  /// split by theory and NEP case questions.
+  Future<AnswerStats> getAnswerStats() async {
+    final rows = await db
+        .from('answer_attempts')
+        .select('score, max_marks, kind')
+        .order('created_at', ascending: false)
+        .limit(200);
+
+    final theory = _Tally(), nep = _Tally();
+    for (final r in rows) {
+      final max = (r['max_marks'] as num?)?.toDouble() ?? 0;
+      if (max <= 0) continue;
+      final score = (r['score'] as num?)?.toDouble() ?? 0;
+      (r['kind'] == 'nep' ? nep : theory).add(score / max);
+    }
+    return AnswerStats(
+      theoryCount: theory.count,
+      theoryAverage: theory.average,
+      nepCount: nep.count,
+      nepAverage: nep.average,
+    );
+  }
+
   static String _dateOnly(DateTime d) =>
       DateTime(d.year, d.month, d.day).toIso8601String().split('T').first;
+}
+
+class _Tally {
+  int count = 0;
+  double _sum = 0;
+  void add(double fraction) {
+    count++;
+    _sum += fraction;
+  }
+
+  double get average => count == 0 ? 0 : _sum / count;
+}
+
+/// Average marks (0–1) on written answers, per kind of question.
+class AnswerStats {
+  const AnswerStats({
+    this.theoryCount = 0,
+    this.theoryAverage = 0,
+    this.nepCount = 0,
+    this.nepAverage = 0,
+  });
+
+  final int theoryCount;
+  final double theoryAverage;
+  final int nepCount;
+  final double nepAverage;
+
+  int get total => theoryCount + nepCount;
+
+  /// Across both kinds, weighted by how many of each.
+  double get average => total == 0
+      ? 0
+      : (theoryAverage * theoryCount + nepAverage * nepCount) / total;
 }
 
 /// Rolled-up numbers behind the Progress stat tiles.

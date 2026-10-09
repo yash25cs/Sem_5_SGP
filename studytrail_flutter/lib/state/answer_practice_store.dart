@@ -49,11 +49,16 @@ class AnswerPracticeStore extends AsyncStore {
   }
 
   /// A new set of [count] questions (1–[maxQuestions]), starting at the first.
-  Future<bool> newQuestions({int count = 1, String? unitLabel}) =>
+  Future<bool> newQuestions({
+    int count = 1,
+    String? unitLabel,
+    AnswerKind kind = AnswerKind.theory,
+  }) =>
       runMutation(() async {
         _set = await _answers.newQuestions(
           count: count.clamp(1, maxQuestions),
           unitLabel: unitLabel,
+          kind: kind,
         );
         _index = 0;
         _result = null;

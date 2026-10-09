@@ -113,7 +113,9 @@ class _FakeAnswers extends AnswerRepository {
 
   @override
   Future<List<PracticeQuestion>> newQuestions(
-          {int count = 1, String? unitLabel}) async =>
+          {int count = 1,
+          String? unitLabel,
+          AnswerKind kind = AnswerKind.theory}) async =>
       const [
         PracticeQuestion(text: 'Explain ACID.', marks: 5, unitLabel: 'Unit 2')
       ];

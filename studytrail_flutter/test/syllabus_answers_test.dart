@@ -189,6 +189,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('How many questions?'), findsOneWidget);
     });
+
+    testWidgets('theory is the default; Practical (NEP) asks for NEP',
+        (tester) async {
+      final answers = _FakeAnswers();
+      await _phone(
+        tester,
+        ChangeNotifierProvider(
+          create: (_) => AnswerPracticeStore(answers: answers),
+          child: MaterialApp(
+              theme: AppTheme.light(), home: const AnswerPracticeScreen()),
+        ),
+      );
+
+      expect(find.text('Type of question'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('kind-nep')));
+      await tester.pump();
+      expect(find.textContaining('NEP style'), findsOneWidget);
+      await tester.tap(find.text('Give me 3 questions'));
+      await tester.pumpAndSettle();
+      expect(answers.kinds, [AnswerKind.nep]);
+    });
   });
 
   testWidgets('the badge sheet fits a small phone', (tester) async {
@@ -260,14 +281,18 @@ class _FakeMaterials extends MaterialRepository {
 
 class _FakeAnswers extends AnswerRepository {
   final asked = <int>[];
+  final kinds = <AnswerKind>[];
 
   @override
   Future<List<AnswerAttempt>> getAttempts({int limit = 20}) async => const [];
 
   @override
   Future<List<PracticeQuestion>> newQuestions(
-      {int count = 1, String? unitLabel}) async {
+      {int count = 1,
+      String? unitLabel,
+      AnswerKind kind = AnswerKind.theory}) async {
     asked.add(count);
+    kinds.add(kind);
     return [
       for (var i = 1; i <= count; i++)
         PracticeQuestion(text: 'Question $i', marks: 5, unitLabel: 'Unit $i'),

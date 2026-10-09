@@ -20,6 +20,10 @@ class ProgressStore extends AsyncStore {
   List<Subject> _subjects = const [];
   Streak _streak = const Streak();
   double _quizAccuracy = 0;
+  AnswerStats _answers = const AnswerStats();
+
+  /// How written answers (theory and NEP) have been marked.
+  AnswerStats get answers => _answers;
 
   StudyTotals get totals => _totals;
 
@@ -50,6 +54,7 @@ class ProgressStore extends AsyncStore {
           _analytics.getQuizAccuracy(),
           _game.getRecentActivity(),
           _game.getStreak(),
+          _analytics.getAnswerStats(),
         ]);
         _totals = results[0] as StudyTotals;
         _weekly = results[1] as List<ActivityDay>;
@@ -57,5 +62,6 @@ class ProgressStore extends AsyncStore {
         _quizAccuracy = results[3] as double;
         _heatmap = results[4] as List<ActivityDay>;
         _streak = results[5] as Streak;
+        _answers = results[6] as AnswerStats;
       });
 }

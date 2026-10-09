@@ -16,10 +16,12 @@ class AnswerRepository {
   Future<List<PracticeQuestion>> newQuestions({
     int count = 1,
     String? unitLabel,
+    AnswerKind kind = AnswerKind.theory,
   }) async {
     final res = await db.functions.invoke('grade-answer', body: {
       'action': 'question',
       'count': count,
+      'kind': kind.name,
       'unitLabel': ?unitLabel,
     });
     final data = Map<String, dynamic>.from(res.data as Map);
@@ -86,6 +88,7 @@ class AnswerRepository {
           'question': question.text,
           'marks': question.marks,
           'unitLabel': ?question.unitLabel,
+          'kind': question.kind.name,
         },
       };
 
@@ -99,6 +102,7 @@ class AnswerRepository {
       feedback: AnswerFeedback.fromMap(
           Map<String, dynamic>.from(data['feedback'] as Map)),
       unitLabel: question.unitLabel,
+      kind: question.kind,
       // For photos, what the examiner read off the page.
       answer: sent ?? (data['answer'] as String? ?? ''),
       createdAt: DateTime.now(),

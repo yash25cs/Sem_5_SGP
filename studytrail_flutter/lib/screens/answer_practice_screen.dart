@@ -39,6 +39,9 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
   /// How many questions the next set has; the student picks 1–5.
   int _count = 3;
 
+  /// Descriptive theory answers, or case-based NEP application questions.
+  AnswerKind _kind = AnswerKind.theory;
+
   @override
   void initState() {
     super.initState();
@@ -70,7 +73,7 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
 
   Future<void> _newSet() async {
     _clearAnswer();
-    await context.read<AnswerPracticeStore>().newQuestions(count: _count);
+    await context.read<AnswerPracticeStore>().newQuestions(count: _count, kind: _kind);
   }
 
   /// The next question in the set, or — after the last — back to choosing
@@ -178,7 +181,9 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                 if (question == null)
                   _SetPicker(
                     count: _count,
+                    kind: _kind,
                     busy: store.busy,
+                    onKind: (k) => setState(() => _kind = k),
                     onCount: (n) => setState(() => _count = n),
                     onStart: _newSet,
                   )
@@ -268,9 +273,12 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      question.marks >= 10
-                          ? '$_words words · a 10-mark answer is usually 250–400'
-                          : '$_words words · a 5-mark answer is usually 120–200',
+                      question.kind == AnswerKind.nep
+                          ? '$_words words · answer each part (a, b, c…) '
+                              'separately and give a reason from the case'
+                          : question.marks >= 10
+                              ? '$_words words · a 10-mark answer is usually 250–400'
+                              : '$_words words · a 5-mark answer is usually 120–200',
                       style: TextStyle(color: p.ink3, fontSize: 12),
                     ),
                     const SizedBox(height: 14),
@@ -334,13 +342,17 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
 class _SetPicker extends StatelessWidget {
   const _SetPicker({
     required this.count,
+    required this.kind,
     required this.busy,
+    required this.onKind,
     required this.onCount,
     required this.onStart,
   });
 
   final int count;
+  final AnswerKind kind;
   final bool busy;
+  final ValueChanged<AnswerKind> onKind;
   final ValueChanged<int> onCount;
   final VoidCallback onStart;
 
@@ -358,10 +370,39 @@ class _SetPicker extends StatelessWidget {
                   color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
           Text(
-              'Get 5 or 10-mark questions from your weakest units, write your '
-              'answers, and see what an examiner would give each one — and '
-              'what was missing.',
+              kind == AnswerKind.nep
+                  ? 'Case-based questions in the NEP style: a real situation, '
+                      'then parts that ask you to choose, estimate, analyse '
+                      'and justify. Marked part by part.'
+                  : 'Get 5 or 10-mark questions from your weakest units, write '
+                      'your answers, and see what an examiner would give each '
+                      'one — and what was missing.',
               style: TextStyle(color: p.ink2, fontSize: 13, height: 1.45)),
+          const SizedBox(height: 18),
+          Text('Type of question',
+              style: TextStyle(
+                  color: p.ink, fontSize: 13.5, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              SoftChip('Theory',
+                  key: const ValueKey('kind-theory'),
+                  icon: Symbols.menu_book,
+                  tone: kind == AnswerKind.theory
+                      ? ChipTone.primary
+                      : ChipTone.neutral,
+                  onTap: busy ? null : () => onKind(AnswerKind.theory)),
+              SoftChip('Practical (NEP)',
+                  key: const ValueKey('kind-nep'),
+                  icon: Symbols.psychology,
+                  tone: kind == AnswerKind.nep
+                      ? ChipTone.primary
+                      : ChipTone.neutral,
+                  onTap: busy ? null : () => onKind(AnswerKind.nep)),
+            ],
+          ),
           const SizedBox(height: 18),
           Text('How many questions?',
               style: TextStyle(
@@ -458,6 +499,9 @@ class _QuestionCard extends StatelessWidget {
                     small: true),
               SoftChip('${marks(question.marks)} marks',
                   tone: ChipTone.primary, small: true),
+              if (question.kind == AnswerKind.nep)
+                const SoftChip('Case-based',
+                    icon: Symbols.psychology, tone: ChipTone.green, small: true),
               if (question.unitLabel != null)
                 SoftChip(question.unitLabel!, icon: Symbols.menu_book, small: true),
               if (question.paperQuestionId != null)
@@ -647,6 +691,10 @@ class _HistoryRow extends StatelessWidget {
                 style: TextStyle(color: p.ink, fontSize: 13.5)),
           ),
           const SizedBox(width: 10),
+          if (attempt.kind == AnswerKind.nep) ...[
+            const SoftChip('NEP', tone: ChipTone.green, small: true),
+            const SizedBox(width: 6),
+          ],
           SoftChip('${marks(attempt.score)}/${marks(attempt.maxMarks)}',
               tone: attempt.fraction >= 0.7
                   ? ChipTone.green

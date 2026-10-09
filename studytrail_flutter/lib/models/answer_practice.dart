@@ -1,3 +1,15 @@
+/// What sort of written question this is.
+enum AnswerKind {
+  /// A descriptive 5- or 10-mark answer: explain, compare, derive.
+  theory,
+
+  /// A case-based application question in lettered parts, the way an
+  /// NEP 2020 outcome-based paper sets them.
+  nep;
+
+  static AnswerKind parse(Object? v) => v == 'nep' ? nep : theory;
+}
+
 /// A long-answer question to practise on — a past-paper question, or one
 /// `grade-answer` wrote from the student's notes.
 class PracticeQuestion {
@@ -6,11 +18,13 @@ class PracticeQuestion {
     required this.marks,
     this.unitLabel,
     this.paperQuestionId,
+    this.kind = AnswerKind.theory,
   });
 
   final String text;
   final double marks;
   final String? unitLabel;
+  final AnswerKind kind;
 
   /// Set for a past-paper question; the server then reads text and marks from
   /// that row rather than trusting these.
@@ -20,6 +34,7 @@ class PracticeQuestion {
         text: (m['question'] as String?) ?? '',
         marks: (m['marks'] as num?)?.toDouble() ?? 5,
         unitLabel: m['unitLabel'] as String?,
+        kind: AnswerKind.parse(m['kind']),
       );
 }
 
@@ -71,6 +86,7 @@ class AnswerAttempt {
     this.unitLabel,
     this.answer = '',
     this.createdAt,
+    this.kind = AnswerKind.theory,
   });
 
   final String id;
@@ -81,6 +97,7 @@ class AnswerAttempt {
   final String? unitLabel;
   final String answer;
   final DateTime? createdAt;
+  final AnswerKind kind;
 
   double get fraction => maxMarks <= 0 ? 0 : score / maxMarks;
 
@@ -93,6 +110,7 @@ class AnswerAttempt {
             Map<String, dynamic>.from((m['feedback'] as Map?) ?? const {})),
         unitLabel: m['unit_label'] as String?,
         answer: (m['answer'] as String?) ?? '',
+        kind: AnswerKind.parse(m['kind']),
         createdAt: m['created_at'] == null
             ? null
             : DateTime.parse(m['created_at'] as String),

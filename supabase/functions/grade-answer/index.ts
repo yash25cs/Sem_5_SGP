@@ -13,8 +13,10 @@ import {
 
 /// Long-answer practice.
 ///
-/// `{ action: 'question', unitLabel?, count? }` writes `count` (1–5, default 1)
-/// different exam-style questions from the student's notes — for that unit,
+/// `{ action: 'question', unitLabel?, count?, kind? }` writes `count` (1–5,
+/// default 1) different exam-style questions from the student's notes —
+/// `kind` 'theory' (default, descriptive 5/10 marks) or 'nep' (a case-based,
+/// application question in lettered parts, 4–10 marks) — for that unit,
 /// or spread over their weakest units, or over the units their notes cover —
 /// and saves nothing. The reply lists them in `questions`, and also carries
 /// the first one as `question`/`marks`/`unitLabel`, the shape app builds
@@ -77,6 +79,44 @@ is the name of the unit a question comes from, exactly as listed.
 - Each must be answerable from the excerpts alone.
 - marks is 5 or 10, matching how much a full answer needs to cover.`;
 
+/// The NEP kind: the case-based, competency-style question an outcome-based
+/// paper under India's NEP 2020 sets — application and analysis, not recall.
+const NEP_QUESTION_INSTRUCTION = `You set application-based university exam \
+questions in the outcome-based style India's National Education Policy 2020 \
+asks for: they test whether a student can use what they learnt, not whether \
+they can repeat it. You write them from the student's own notes.
+
+- Each question is a short real-world case or scenario (a company, an app, a \
+hospital, a farm, a lab, a city — whatever suits the unit) with concrete \
+numbers, observations or constraints, followed by 2 to 4 lettered parts: \
+a), b), c), d).
+- The parts ask the student to apply, analyse, compare, choose between \
+options, estimate, diagnose or justify using evidence from the scenario. \
+"Choose one and justify", "which of these two and why", "calculate and \
+explain what it implies", "would you accept or reject this proposal" are the \
+shapes to use. Never "define" or "list".
+- Put the marks for each part at the end of its line, like (2). The question's \
+marks is the sum of its parts, between 4 and 10.
+- Write the scenario and every part inside the question field, with a line \
+break before each lettered part.
+- Each case is about something different and may not copy the wording of the \
+notes; it must still be answerable from the concepts in the excerpts.
+- Spread them across the units listed. unit is the name of the unit a \
+question comes from, exactly as listed.`;
+
+const NEP_GRADE_RULES = `
+
+This is a case-based question in several lettered parts, each with its own \
+marks in brackets.
+- Mark part by part, then add them up for score. A part that picks an option \
+earns its marks only if the justification uses evidence from the scenario; a \
+correct pick with a generic reason earns about half.
+- strengths and missing: start each point with the part it is about, e.g. \
+"b) You rejected…". model_answer: the expected answer to each part, one short \
+line each, labelled a), b), c).
+- A part left unanswered earns 0. Do not give credit for parts the student \
+did not attempt.`;
+
 const GRADE_SCHEMA = {
   type: 'object',
   properties: {
@@ -131,7 +171,7 @@ serve(async (req) => {
   const body = await readJson(req);
 
   if (body.action === 'question') {
-    return await writeQuestions(supa, body.unitLabel, body.count);
+    return await writeQuestions(supa, body.unitLabel, body.count, body.kind);
   }
   if (body.action !== 'grade') {
     throw new HttpError(400, 'That request was malformed.');
@@ -160,6 +200,7 @@ serve(async (req) => {
     ? body.unitLabel.trim()
     : null;
   let questionId: string | null = null;
+  let kind = body.kind === 'nep' ? 'nep' : 'theory';
 
   if (typeof body.questionId === 'string' && body.questionId.trim()) {
     // A past-paper question: its text and marks come from the row, not the
@@ -174,6 +215,7 @@ serve(async (req) => {
     question = String(row.text);
     marks = Number(row.marks) > 0 ? Number(row.marks) : 5;
     unitLabel = row.unit_label ?? null;
+    kind = 'theory';
   }
 
   if (question.length === 0 || question.length > 4000) {
@@ -204,6 +246,7 @@ serve(async (req) => {
   try {
     raw = await interact({
       systemInstruction: GRADE_INSTRUCTION
+        + (kind === 'nep' ? NEP_GRADE_RULES : '')
         + (images ? PHOTO_RULES : '')
         // The transcript stays in the student's own words, whatever language
         // the feedback is in.
@@ -255,6 +298,7 @@ serve(async (req) => {
       question_id: questionId,
       question,
       unit_label: unitLabel,
+      kind,
       max_marks: marks,
       answer,
       score,
@@ -311,7 +355,13 @@ async function referenceNotes(supa: any, question: string, unitLabel: string | n
 }
 
 // deno-lint-ignore no-explicit-any
-async function writeQuestions(supa: any, requested: unknown, wanted: unknown): Promise<Response> {
+async function writeQuestions(
+  supa: any,
+  requested: unknown,
+  wanted: unknown,
+  wantedKind: unknown,
+): Promise<Response> {
+  const nep = wantedKind === 'nep';
   const count = Math.min(MAX_QUESTIONS, Math.max(1, Math.trunc(Number(wanted)) || 1));
   const asked = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
 
@@ -353,13 +403,13 @@ async function writeQuestions(supa: any, requested: unknown, wanted: unknown): P
   }
 
   const raw = await interact({
-    systemInstruction: QUESTION_INSTRUCTION,
+    systemInstruction: nep ? NEP_QUESTION_INSTRUCTION : QUESTION_INSTRUCTION,
     temperature: 0.6,
     schema: QUESTION_SCHEMA,
     input: `Questions to write: ${count}\n`
       + `Units: ${units.join('; ')}\n\n${numberedSource(chunks)}`,
-    maxOutputTokens: 300 + 300 * count,
-    budgetMs: 30_000 + 5_000 * (count - 1),
+    maxOutputTokens: nep ? 500 + 600 * count : 300 + 300 * count,
+    budgetMs: 30_000 + (nep ? 8_000 : 5_000) * (count - 1),
   });
   const parsed = parseJsonObject(raw);
   // deno-lint-ignore no-explicit-any
@@ -367,14 +417,16 @@ async function writeQuestions(supa: any, requested: unknown, wanted: unknown): P
   const questions: { question: string; marks: number; unitLabel: string }[] = [];
   const seen = new Set<string>();
   for (const item of items) {
-    const question = text(item?.question).slice(0, 1000);
+    const question = text(item?.question).slice(0, nep ? 2000 : 1000);
     const key = question.toLowerCase();
     if (question.length < 10 || seen.has(key)) continue;
     seen.add(key);
     const unit = text(item?.unit).toLowerCase();
     questions.push({
       question,
-      marks: Number(item?.marks) === 10 ? 10 : 5,
+      marks: nep
+        ? Math.min(10, Math.max(4, Math.round(Number(item?.marks)) || 4))
+        : Number(item?.marks) === 10 ? 10 : 5,
       // The model's unit when it is one we gave it; else the first.
       unitLabel: units.find((u) => u.toLowerCase() === unit) ?? units[0],
     });
@@ -383,7 +435,10 @@ async function writeQuestions(supa: any, requested: unknown, wanted: unknown): P
   if (questions.length === 0) {
     throw new HttpError(502, "The AI couldn't write a question. Try again.");
   }
-  return json({ ...questions[0], questions });
+  return json({
+    ...questions[0],
+    questions: questions.map((q) => ({ ...q, kind: nep ? 'nep' : 'theory' })),
+  });
 }
 
 // deno-lint-ignore no-explicit-any

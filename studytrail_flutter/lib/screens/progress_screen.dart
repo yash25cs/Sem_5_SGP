@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../data/repositories.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
@@ -126,6 +127,8 @@ class _ProgressScreenState extends State<ProgressScreen> {
                         bg: p.amberSoft)),
               ],
             ),
+            const SizedBox(height: 12),
+            _WeekSummary(store.totals),
             const SizedBox(height: 20),
 
             // weekly bar chart
@@ -192,6 +195,11 @@ class _ProgressScreenState extends State<ProgressScreen> {
             ),
             const SizedBox(height: 20),
 
+            // written answers, theory vs NEP
+            CardHeader('Written answers'),
+            AppCard(child: _AnswerStatsBody(store.answers)),
+            const SizedBox(height: 20),
+
             // consistency heatmap
             CardHeader('Consistency'),
             AppCard(
@@ -210,6 +218,99 @@ class _ProgressScreenState extends State<ProgressScreen> {
     );
   }
 
+}
+
+/// One line under the tiles: how many of the 7 days had study, tasks done,
+/// and the daily average.
+class _WeekSummary extends StatelessWidget {
+  const _WeekSummary(this.totals);
+  final StudyTotals totals;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final avg = totals.avgMinutesPerDay.round();
+    Widget part(IconData icon, String text) => Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: p.ink3),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.ink2,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: p.shadowSm,
+      ),
+      child: Row(
+        children: [
+          part(Symbols.event_available,
+              '${totals.activeDays}/${totals.windowDays} days'),
+          part(Symbols.task_alt, '${totals.tasksCompleted} tasks'),
+          part(Symbols.avg_pace, '$avg m/day'),
+        ],
+      ),
+    );
+  }
+}
+
+/// Average marks on written answers: overall, then theory next to NEP.
+class _AnswerStatsBody extends StatelessWidget {
+  const _AnswerStatsBody(this.stats);
+  final AnswerStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    if (stats.total == 0) {
+      return Row(
+        children: [
+          Icon(Symbols.edit_note, color: p.ink3, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+                'Write an answer in Answer practice and your marks show up '
+                'here, theory and NEP case questions apart.',
+                style: TextStyle(color: p.ink3, fontSize: 13, height: 1.45)),
+          ),
+        ],
+      );
+    }
+    return Column(
+      children: [
+        Row(children: [
+          Expanded(
+            child: Text('Average mark',
+                style: TextStyle(
+                    color: p.ink, fontSize: 14, fontWeight: FontWeight.w700)),
+          ),
+          Text('${(stats.average * 100).round()}% · ${stats.total} answers',
+              style: TextStyle(
+                  color: p.primary, fontSize: 13, fontWeight: FontWeight.w800)),
+        ]),
+        const SizedBox(height: 8),
+        ProgressTrack(stats.average, color: p.primary, height: 8),
+        const SizedBox(height: 14),
+        _AccRow('Theory · ${stats.theoryCount}', stats.theoryAverage, p.green),
+        const SizedBox(height: 14),
+        _AccRow('NEP case questions · ${stats.nepCount}', stats.nepAverage,
+            p.coral),
+      ],
+    );
+  }
 }
 
 class _StatTile extends StatelessWidget {
