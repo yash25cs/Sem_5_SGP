@@ -35,8 +35,16 @@ class AnswerPracticeStore extends AsyncStore {
   List<AnswerAttempt> _history = const [];
   List<AnswerAttempt> get history => _history;
 
+  /// Subjects and files to write questions from; loaded with the history.
+  PracticeSources _sources = const PracticeSources();
+  PracticeSources get sources => _sources;
+
   Future<void> load() => runLoad(() async {
         _history = await _answers.getAttempts();
+        // The picker is optional: a failure here shouldn't hide the history.
+        try {
+          _sources = await _answers.getSources();
+        } catch (_) {}
       });
 
   /// Practise on a specific question (e.g. from a past paper).
@@ -53,12 +61,14 @@ class AnswerPracticeStore extends AsyncStore {
     int count = 1,
     String? unitLabel,
     AnswerKind kind = AnswerKind.theory,
+    PracticeSource source = PracticeSource.all,
   }) =>
       runMutation(() async {
         _set = await _answers.newQuestions(
           count: count.clamp(1, maxQuestions),
           unitLabel: unitLabel,
           kind: kind,
+          source: source,
         );
         _index = 0;
         _result = null;

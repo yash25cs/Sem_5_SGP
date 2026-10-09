@@ -17,23 +17,56 @@ class AnswerRepository {
     int count = 1,
     String? unitLabel,
     AnswerKind kind = AnswerKind.theory,
+    PracticeSource source = PracticeSource.all,
   }) async {
     final res = await db.functions.invoke('grade-answer', body: {
       'action': 'question',
       'count': count,
       'kind': kind.name,
+      'subjectId': ?source.subjectId,
+      'materialId': ?source.materialId,
       'unitLabel': ?unitLabel,
     });
     final data = Map<String, dynamic>.from(res.data as Map);
     final list = data['questions'];
+    final List<PracticeQuestion> questions;
     if (list is List && list.isNotEmpty) {
-      return [
+      questions = [
         for (final q in list)
           PracticeQuestion.fromMap(Map<String, dynamic>.from(q as Map)),
       ];
+    } else {
+      // A function deployed before `count`: one question, at the top level.
+      questions = [PracticeQuestion.fromMap(data)];
     }
-    // A function deployed before `count`: one question, at the top level.
-    return [PracticeQuestion.fromMap(data)];
+    return [for (final q in questions) q.withSource(source)];
+  }
+
+  /// What the student can write questions from: their subjects (flagged by
+  /// whether any read file is tagged to them) and each file that's been read.
+  Future<PracticeSources> getSources() async {
+    final subjectRows = await db.from('subjects').select('id, name').order('name');
+    final fileRows = await db
+        .from('materials')
+        .select()
+        .eq('status', IngestStatus.embedded.db)
+        .order('created_at', ascending: false);
+    final files = fileRows.map(StudyMaterial.fromMap).toList();
+    final tagged = {for (final f in files) ?f.subjectId};
+    return PracticeSources(
+      subjects: [
+        for (final r in subjectRows)
+          (
+            PracticeSource(
+                subjectId: r['id'] as String, label: (r['name'] as String?) ?? ''),
+            tagged.contains(r['id']),
+          ),
+      ],
+      files: [
+        for (final f in files)
+          PracticeSource(materialId: f.id, label: f.displayName),
+      ],
+    );
   }
 
   Future<AnswerAttempt> grade(PracticeQuestion question, String answer) async {
@@ -89,6 +122,8 @@ class AnswerRepository {
           'marks': question.marks,
           'unitLabel': ?question.unitLabel,
           'kind': question.kind.name,
+          'subjectId': ?question.source.subjectId,
+          'materialId': ?question.source.materialId,
         },
       };
 

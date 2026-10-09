@@ -42,6 +42,9 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
   /// Descriptive theory answers, or case-based NEP application questions.
   AnswerKind _kind = AnswerKind.theory;
 
+  /// Which notes the questions come from.
+  PracticeSource _source = PracticeSource.all;
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +76,7 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
 
   Future<void> _newSet() async {
     _clearAnswer();
-    await context.read<AnswerPracticeStore>().newQuestions(count: _count, kind: _kind);
+    await context.read<AnswerPracticeStore>().newQuestions(count: _count, kind: _kind, source: _source);
   }
 
   /// The next question in the set, or — after the last — back to choosing
@@ -182,8 +185,11 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                   _SetPicker(
                     count: _count,
                     kind: _kind,
+                    source: _source,
+                    sources: store.sources,
                     busy: store.busy,
                     onKind: (k) => setState(() => _kind = k),
+                    onSource: (s) => setState(() => _source = s),
                     onCount: (n) => setState(() => _count = n),
                     onStart: _newSet,
                   )
@@ -343,16 +349,22 @@ class _SetPicker extends StatelessWidget {
   const _SetPicker({
     required this.count,
     required this.kind,
+    required this.source,
+    required this.sources,
     required this.busy,
     required this.onKind,
+    required this.onSource,
     required this.onCount,
     required this.onStart,
   });
 
   final int count;
   final AnswerKind kind;
+  final PracticeSource source;
+  final PracticeSources sources;
   final bool busy;
   final ValueChanged<AnswerKind> onKind;
+  final ValueChanged<PracticeSource> onSource;
   final ValueChanged<int> onCount;
   final VoidCallback onStart;
 
@@ -402,6 +414,66 @@ class _SetPicker extends StatelessWidget {
                       : ChipTone.neutral,
                   onTap: busy ? null : () => onKind(AnswerKind.nep)),
             ],
+          ),
+          const SizedBox(height: 18),
+          Text('Questions from',
+              style: TextStyle(
+                  color: p.ink, fontSize: 13.5, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Material(
+            color: p.card2,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              key: const ValueKey('source-picker'),
+              borderRadius: BorderRadius.circular(14),
+              onTap: busy
+                  ? null
+                  : () async {
+                      final picked = await showModalBottomSheet<PracticeSource>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: p.card,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(26)),
+                        ),
+                        builder: (_) =>
+                            _SourceSheet(sources: sources, selected: source),
+                      );
+                      if (picked != null) onSource(picked);
+                    },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: p.line),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                        source.materialId != null
+                            ? Symbols.description
+                            : source.subjectId != null
+                                ? Symbols.school
+                                : Symbols.library_books,
+                        size: 20,
+                        color: p.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(source.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: p.ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                    Icon(Symbols.expand_more, color: p.ink3),
+                  ],
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 18),
           Text('How many questions?',
@@ -483,7 +555,6 @@ class _QuestionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.p;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -510,13 +581,114 @@ class _QuestionCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Text(question.text,
-              style: TextStyle(
-                  color: p.ink,
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w700,
-                  height: 1.45)),
+          _QuestionText(question.text),
         ],
+      ),
+    );
+  }
+}
+
+/// The question as paragraphs: the scenario, then each lettered part on its
+/// own line with its marks beside it. Plain questions stay plain.
+class _QuestionText extends StatelessWidget {
+  const _QuestionText(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final layout = QuestionLayout.parse(text);
+    final base = TextStyle(
+        color: p.ink, fontSize: 15.5, fontWeight: FontWeight.w700, height: 1.5);
+    if (layout.parts.isEmpty) return Text(layout.lead, style: base);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (layout.lead.isNotEmpty) Text(layout.lead, style: base),
+        for (final part in layout.parts)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Text('${part.label})',
+                      style: base.copyWith(color: p.primary)),
+                ),
+                Expanded(
+                  child: Text(part.text,
+                      style: base.copyWith(fontWeight: FontWeight.w600)),
+                ),
+                if (part.marks != null) ...[
+                  const SizedBox(width: 8),
+                  SoftChip('${part.marks}',
+                      tone: ChipTone.amber, small: true),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Pick what questions are written from: all notes, a subject, or one file.
+class _SourceSheet extends StatelessWidget {
+  const _SourceSheet({required this.sources, required this.selected});
+  final PracticeSources sources;
+  final PracticeSource selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+
+    Widget row(PracticeSource s, IconData icon,
+        {String? note, bool enabled = true}) {
+      final on = s == selected;
+      return ListTile(
+        enabled: enabled,
+        leading: Icon(icon, color: on ? p.primary : p.ink3),
+        title: Text(s.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: enabled ? p.ink : p.ink3,
+                fontWeight: on ? FontWeight.w800 : FontWeight.w600)),
+        subtitle: note == null
+            ? null
+            : Text(note, style: TextStyle(color: p.ink3, fontSize: 12)),
+        trailing: on ? Icon(Symbols.check, color: p.primary) : null,
+        onTap: enabled ? () => Navigator.of(context).pop(s) : null,
+      );
+    }
+
+    Widget header(String t) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 2),
+          child: Text(t,
+              style: TextStyle(
+                  color: p.ink3, fontSize: 12, fontWeight: FontWeight.w800)),
+        );
+
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.75),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(top: 12, bottom: 12),
+          children: [
+            row(PracticeSource.all, Symbols.library_books),
+            if (sources.subjects.isNotEmpty) header('SUBJECTS'),
+            for (final (s, hasNotes) in sources.subjects)
+              row(s, Symbols.school,
+                  enabled: hasNotes,
+                  note: hasNotes ? null : 'Add its syllabus on Home first'),
+            if (sources.files.isNotEmpty) header('YOUR FILES'),
+            for (final f in sources.files) row(f, Symbols.description),
+          ],
+        ),
       ),
     );
   }

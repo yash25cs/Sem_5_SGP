@@ -10,6 +10,85 @@ enum AnswerKind {
   static AnswerKind parse(Object? v) => v == 'nep' ? nep : theory;
 }
 
+/// Which of the student's notes questions are written from: everything, one
+/// subject, or one file.
+class PracticeSource {
+  const PracticeSource({this.subjectId, this.materialId, this.label = 'All my notes'});
+
+  final String? subjectId;
+  final String? materialId;
+  final String label;
+
+  static const all = PracticeSource();
+
+  bool get isAll => subjectId == null && materialId == null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PracticeSource &&
+      other.subjectId == subjectId &&
+      other.materialId == materialId;
+
+  @override
+  int get hashCode => Object.hash(subjectId, materialId);
+}
+
+/// What the picker can offer: each subject (with whether it has notes yet)
+/// and each file that has been read.
+class PracticeSources {
+  const PracticeSources({this.subjects = const [], this.files = const []});
+
+  /// Subjects, each flagged true when a read file is tagged to it.
+  final List<(PracticeSource, bool)> subjects;
+  final List<PracticeSource> files;
+}
+
+/// A question's text split into its scenario and lettered parts, so a case
+/// question reads as paragraphs instead of one run of text.
+class QuestionLayout {
+  const QuestionLayout(this.lead, this.parts);
+
+  final String lead;
+  final List<QuestionPart> parts;
+
+  static final _label = RegExp(r'(?:^|\s)\(?([a-e])\)\s+');
+  static final _marks = RegExp(r'\s*\((\d+(?:\.\d+)?)\)\s*$');
+
+  factory QuestionLayout.parse(String text) {
+    final src = text.trim();
+    final hits = _label.allMatches(src).toList();
+    // Parts must run a, b, c… from the start; anything else is just prose.
+    var ok = hits.length >= 2;
+    for (var i = 0; ok && i < hits.length; i++) {
+      if (hits[i].group(1) != String.fromCharCode(97 + i)) ok = false;
+    }
+    if (!ok) return QuestionLayout(src, const []);
+
+    final parts = <QuestionPart>[];
+    for (var i = 0; i < hits.length; i++) {
+      final end = i + 1 < hits.length ? hits[i + 1].start : src.length;
+      var body = src.substring(hits[i].end, end).trim();
+      String? marks;
+      final m = _marks.firstMatch(body);
+      if (m != null) {
+        marks = m.group(1);
+        body = body.substring(0, m.start).trim();
+      }
+      parts.add(QuestionPart(hits[i].group(1)!, body, marks));
+    }
+    return QuestionLayout(src.substring(0, hits.first.start).trim(), parts);
+  }
+}
+
+class QuestionPart {
+  const QuestionPart(this.label, this.text, this.marks);
+  final String label;
+  final String text;
+
+  /// The "(2)" at the end of the part, when it had one.
+  final String? marks;
+}
+
 /// A long-answer question to practise on — a past-paper question, or one
 /// `grade-answer` wrote from the student's notes.
 class PracticeQuestion {
@@ -19,6 +98,7 @@ class PracticeQuestion {
     this.unitLabel,
     this.paperQuestionId,
     this.kind = AnswerKind.theory,
+    this.source = PracticeSource.all,
   });
 
   final String text;
@@ -26,9 +106,21 @@ class PracticeQuestion {
   final String? unitLabel;
   final AnswerKind kind;
 
+  /// The notes it was written from; grading looks at the same ones.
+  final PracticeSource source;
+
   /// Set for a past-paper question; the server then reads text and marks from
   /// that row rather than trusting these.
   final String? paperQuestionId;
+
+  PracticeQuestion withSource(PracticeSource s) => PracticeQuestion(
+        text: text,
+        marks: marks,
+        unitLabel: unitLabel,
+        paperQuestionId: paperQuestionId,
+        kind: kind,
+        source: s,
+      );
 
   factory PracticeQuestion.fromMap(Map<String, dynamic> m) => PracticeQuestion(
         text: (m['question'] as String?) ?? '',

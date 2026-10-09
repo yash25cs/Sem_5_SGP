@@ -171,7 +171,7 @@ serve(async (req) => {
   const body = await readJson(req);
 
   if (body.action === 'question') {
-    return await writeQuestions(supa, body.unitLabel, body.count, body.kind);
+    return await writeQuestions(supa, body.unitLabel, body.count, body.kind, scopeOf(body));
   }
   if (body.action !== 'grade') {
     throw new HttpError(400, 'That request was malformed.');
@@ -201,6 +201,7 @@ serve(async (req) => {
     : null;
   let questionId: string | null = null;
   let kind = body.kind === 'nep' ? 'nep' : 'theory';
+  const scope = scopeOf(body);
 
   if (typeof body.questionId === 'string' && body.questionId.trim()) {
     // A past-paper question: its text and marks come from the row, not the
@@ -229,7 +230,7 @@ serve(async (req) => {
   };
 
   const [notes, lang, images] = await Promise.all([
-    referenceNotes(supa, question, unitLabel),
+    referenceNotes(supa, question, unitLabel, scope),
     languageOf(supa, userId),
     photos ? downloadPhotos(supa, photos) : Promise.resolve(null),
   ]).catch(async (error) => {
@@ -335,12 +336,24 @@ async function downloadPhotos(supa: any, paths: string[]) {
 /// Notes to grade against: the unit's own chunks when the unit is known, else
 /// the closest matches to the question from everything the student uploaded.
 // deno-lint-ignore no-explicit-any
-async function referenceNotes(supa: any, question: string, unitLabel: string | null): Promise<Chunk[]> {
+async function referenceNotes(
+  supa: any,
+  question: string,
+  unitLabel: string | null,
+  scope: Scope,
+): Promise<Chunk[]> {
   if (unitLabel) {
-    const { data } = await supa
-      .from('material_chunks')
+    const { data } = await scoped(supa.from('material_chunks')
       .select('id, unit_label, content')
-      .eq('unit_label', unitLabel)
+      .eq('unit_label', unitLabel), scope)
+      .order('chunk_index', { ascending: true });
+    const chunks = toChunks(data);
+    if (chunks.length > 0) return sampleChunks(chunks, NOTES_CHARS);
+  }
+  if (scope.materialId) {
+    // One file named: its own notes, not the closest matches from everything.
+    const { data } = await scoped(supa.from('material_chunks')
+      .select('id, unit_label, content'), scope)
       .order('chunk_index', { ascending: true });
     const chunks = toChunks(data);
     if (chunks.length > 0) return sampleChunks(chunks, NOTES_CHARS);
@@ -349,7 +362,7 @@ async function referenceNotes(supa: any, question: string, unitLabel: string | n
   const { data } = await supa.rpc('match_material_chunks', {
     query_embedding: vector,
     match_count: 6,
-    filter_subject: null,
+    filter_subject: scope.subjectId ?? null,
   });
   return sampleChunks(toChunks(data), NOTES_CHARS);
 }
@@ -360,6 +373,7 @@ async function writeQuestions(
   requested: unknown,
   wanted: unknown,
   wantedKind: unknown,
+  scope: Scope,
 ): Promise<Response> {
   const nep = wantedKind === 'nep';
   const count = Math.min(MAX_QUESTIONS, Math.max(1, Math.trunc(Number(wanted)) || 1));
@@ -368,14 +382,27 @@ async function writeQuestions(
   // The units to ask about: the one named; else the weakest few; topped up,
   // for a fresh account with no weak spots yet, from the units the notes cover.
   const units: string[] = asked ? [asked] : [];
-  if (!asked) {
+  const narrowed = scope.materialId || scope.subjectId;
+  if (narrowed && !asked) {
+    // Only the units inside the chosen subject or file.
+    const { data } = await scoped(supa.from('material_chunks')
+      .select('unit_label')
+      .not('unit_label', 'is', null), scope)
+      .limit(500);
+    const labels: string[] = [
+      ...new Set<string>((data ?? []).map((r: { unit_label: string }) => text(r.unit_label))),
+    ].filter((label) => label.length > 0);
+    while (units.length < count && labels.length > 0) {
+      units.push(labels.splice(Math.floor(Math.random() * labels.length), 1)[0]);
+    }
+  } else if (!asked) {
     const { data: weak } = await supa.rpc('get_weak_topics', { p_limit: count });
     for (const row of weak ?? []) {
       const label = text(row?.unit_label);
       if (label && !units.includes(label)) units.push(label);
     }
   }
-  if (!asked && units.length < count) {
+  if (!asked && !narrowed && units.length < count) {
     const { data } = await supa
       .from('material_chunks')
       .select('unit_label')
@@ -388,18 +415,21 @@ async function writeQuestions(
       units.push(labels.splice(Math.floor(Math.random() * labels.length), 1)[0]);
     }
   }
-  if (units.length === 0) {
+  if (units.length === 0 && !narrowed) {
     throw new HttpError(404, 'Upload your notes first, and I can set you a question from them.');
   }
 
-  const { data } = await supa
-    .from('material_chunks')
-    .select('id, unit_label, content')
-    .in('unit_label', units)
-    .order('chunk_index', { ascending: true });
+  // Units named: those. A chosen subject or file with no unit labels: all of
+  // its notes.
+  let query = scoped(supa.from('material_chunks').select('id, unit_label, content'), scope);
+  if (units.length > 0) query = query.in('unit_label', units);
+  const { data } = await query.order('chunk_index', { ascending: true });
   const chunks = sampleChunks(toChunks(data), NOTES_CHARS);
+  if (units.length === 0 && chunks.length > 0) units.push('Your notes');
   if (chunks.length === 0) {
-    throw new HttpError(404, "There are no notes for that unit yet.");
+    throw new HttpError(404, narrowed
+      ? "There are no notes for that yet. Pick another subject or file."
+      : "There are no notes for that unit yet.");
   }
 
   const raw = await interact({
@@ -417,7 +447,8 @@ async function writeQuestions(
   const questions: { question: string; marks: number; unitLabel: string }[] = [];
   const seen = new Set<string>();
   for (const item of items) {
-    const question = text(item?.question).slice(0, nep ? 2000 : 1000);
+    const raw = text(item?.question).slice(0, nep ? 2000 : 1000);
+    const question = nep ? spaceParts(raw) : raw;
     const key = question.toLowerCase();
     if (question.length < 10 || seen.has(key)) continue;
     seen.add(key);
@@ -439,6 +470,38 @@ async function writeQuestions(
     ...questions[0],
     questions: questions.map((q) => ({ ...q, kind: nep ? 'nep' : 'theory' })),
   });
+}
+
+/// Which of the student's notes to draw on: one file, or one subject.
+interface Scope {
+  materialId?: string;
+  subjectId?: string;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function scopeOf(body: Record<string, unknown>): Scope {
+  const id = (v: unknown) => typeof v === 'string' && UUID.test(v.trim()) ? v.trim() : undefined;
+  return { materialId: id(body.materialId), subjectId: id(body.subjectId) };
+}
+
+// deno-lint-ignore no-explicit-any
+function scoped(query: any, scope: Scope) {
+  let q = query;
+  if (scope.materialId) q = q.eq('material_id', scope.materialId);
+  if (scope.subjectId) q = q.eq('subject_id', scope.subjectId);
+  return q;
+}
+
+/// A case question needs its scenario and each lettered part on their own
+/// lines. The model sometimes returns it as one run of text; put the breaks
+/// back, but leave text that already has them alone.
+function spaceParts(question: string): string {
+  if (question.includes('\n')) return question;
+  if (!/\s\(?a\)\s/.test(question) || !/\s\(?b\)\s/.test(question)) return question;
+  return question
+    .replace(/\s+(?=\(?[a-e]\)\s)/g, '\n')
+    .replace(/\n(\(?a\)\s)/, '\n\n$1');
 }
 
 // deno-lint-ignore no-explicit-any

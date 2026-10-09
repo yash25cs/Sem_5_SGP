@@ -210,6 +210,57 @@ void main() {
       await tester.pumpAndSettle();
       expect(answers.kinds, [AnswerKind.nep]);
     });
+
+    testWidgets('choose a subject or a file to write questions from',
+        (tester) async {
+      final answers = _FakeAnswers();
+      await _phone(
+        tester,
+        ChangeNotifierProvider(
+          create: (_) => AnswerPracticeStore(answers: answers),
+          child: MaterialApp(
+              theme: AppTheme.light(), home: const AnswerPracticeScreen()),
+        ),
+      );
+
+      expect(find.text('All my notes'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('source-picker')));
+      await tester.pumpAndSettle();
+      expect(find.text('Physics'), findsOneWidget);
+      expect(find.text('Add its syllabus on Home first'), findsOneWidget);
+      expect(find.text('Unit 3 notes.pdf'), findsOneWidget);
+
+      await tester.tap(find.text('Unit 3 notes.pdf'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Give me 3 questions'));
+      await tester.pumpAndSettle();
+      expect(answers.sourcesAsked.single.materialId, 'm1');
+    });
+  });
+
+  group('question layout', () {
+    test('splits a case question run together into scenario and parts', () {
+      final l = QuestionLayout.parse(
+          'A shop slows down on sale days. a) Pick one option (2) '
+          'b) Say why (1) c) What next? (1)');
+      expect(l.lead, 'A shop slows down on sale days.');
+      expect(l.parts.map((p) => p.label), ['a', 'b', 'c']);
+      expect(l.parts.first.text, 'Pick one option');
+      expect(l.parts.first.marks, '2');
+      expect(l.parts.last.marks, '1');
+    });
+
+    test('keeps lines the server already broke', () {
+      final l = QuestionLayout.parse('Case.\n\na) One (1)\nb) Two (1)');
+      expect(l.parts, hasLength(2));
+      expect(l.lead, 'Case.');
+    });
+
+    test('an ordinary question stays whole', () {
+      final l = QuestionLayout.parse('Explain ACID (a, b) properties.');
+      expect(l.parts, isEmpty);
+      expect(l.lead, 'Explain ACID (a, b) properties.');
+    });
   });
 
   testWidgets('the badge sheet fits a small phone', (tester) async {
@@ -282,17 +333,28 @@ class _FakeMaterials extends MaterialRepository {
 class _FakeAnswers extends AnswerRepository {
   final asked = <int>[];
   final kinds = <AnswerKind>[];
+  final sourcesAsked = <PracticeSource>[];
 
   @override
   Future<List<AnswerAttempt>> getAttempts({int limit = 20}) async => const [];
 
   @override
+  Future<PracticeSources> getSources() async => const PracticeSources(
+        subjects: [
+          (PracticeSource(subjectId: 's1', label: 'Physics'), false),
+        ],
+        files: [PracticeSource(materialId: 'm1', label: 'Unit 3 notes.pdf')],
+      );
+
+  @override
   Future<List<PracticeQuestion>> newQuestions(
       {int count = 1,
       String? unitLabel,
-      AnswerKind kind = AnswerKind.theory}) async {
+      AnswerKind kind = AnswerKind.theory,
+      PracticeSource source = PracticeSource.all}) async {
     asked.add(count);
     kinds.add(kind);
+    sourcesAsked.add(source);
     return [
       for (var i = 1; i <= count; i++)
         PracticeQuestion(text: 'Question $i', marks: 5, unitLabel: 'Unit $i'),
