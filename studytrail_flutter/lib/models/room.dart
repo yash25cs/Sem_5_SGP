@@ -1,6 +1,8 @@
 /// Models for the Study Buddy Room feature: rooms, members, and chat.
 library;
 
+import 'enums.dart';
+
 /// A study room where classmates focus together with a shared timer.
 class StudyRoom {
   const StudyRoom({
@@ -454,4 +456,170 @@ class RoomQuiz {
           : const {},
     );
   }
+}
+
+/// A material a member shared into a room (`0030`). Everyone who is or was in
+/// the room can save a copy to their own library.
+class RoomSharedMaterial {
+  const RoomSharedMaterial({
+    required this.id,
+    required this.roomId,
+    required this.materialId,
+    required this.title,
+    required this.sourceType,
+    required this.sharedBy,
+    required this.sharedByName,
+    required this.createdAt,
+    this.storagePath,
+    this.externalUrl,
+    this.saved = false,
+  });
+
+  final String id;
+  final String roomId;
+  final String materialId;
+  final String title;
+  final MaterialType sourceType;
+
+  /// The sharer's file, which room-mates may read to copy it.
+  final String? storagePath;
+  final String? externalUrl;
+  final String sharedBy;
+  final String sharedByName;
+  final DateTime createdAt;
+
+  /// In the caller's library already: their own, or a copy they saved.
+  final bool saved;
+
+  bool get isVideo => sourceType == MaterialType.videoLink;
+
+  RoomSharedMaterial asSaved() => RoomSharedMaterial(
+        id: id,
+        roomId: roomId,
+        materialId: materialId,
+        title: title,
+        sourceType: sourceType,
+        storagePath: storagePath,
+        externalUrl: externalUrl,
+        sharedBy: sharedBy,
+        sharedByName: sharedByName,
+        createdAt: createdAt,
+        saved: true,
+      );
+
+  factory RoomSharedMaterial.fromMap(Map<String, dynamic> m) =>
+      RoomSharedMaterial(
+        id: m['id'] as String,
+        roomId: m['room_id'] as String,
+        materialId: m['material_id'] as String,
+        title: (m['title'] as String?) ?? 'Untitled',
+        sourceType: MaterialType.fromDb(m['source_type'] as String?),
+        storagePath: m['storage_path'] as String?,
+        externalUrl: m['external_url'] as String?,
+        sharedBy: m['shared_by'] as String,
+        sharedByName: (m['shared_by_name'] as String?) ?? 'Student',
+        createdAt: DateTime.parse(m['created_at'] as String),
+        saved: m['saved'] == true,
+      );
+}
+
+/// A room the student created or joined, kept after they leave (`0030`).
+class RoomHistoryEntry {
+  const RoomHistoryEntry({
+    required this.roomId,
+    required this.name,
+    required this.inviteCode,
+    required this.status,
+    required this.role,
+    required this.createdAt,
+    required this.firstJoinedAt,
+    required this.lastJoinedAt,
+    this.leftAt,
+    this.isMember = false,
+    this.memberCount = 0,
+    this.materialCount = 0,
+    this.quizCount = 0,
+  });
+
+  final String roomId;
+  final String name;
+  final String inviteCode;
+  final String status;
+
+  /// 'host' if the student created the room, else 'member'.
+  final String role;
+  final DateTime createdAt;
+  final DateTime firstJoinedAt;
+  final DateTime lastJoinedAt;
+  final DateTime? leftAt;
+
+  /// Still in the room right now.
+  final bool isMember;
+  final int memberCount;
+  final int materialCount;
+
+  /// Group quizzes this student finished in the room.
+  final int quizCount;
+
+  bool get isHost => role == 'host';
+  bool get isActive => status == 'active';
+
+  factory RoomHistoryEntry.fromMap(Map<String, dynamic> m) => RoomHistoryEntry(
+        roomId: m['room_id'] as String,
+        name: (m['name'] as String?) ?? 'Study room',
+        inviteCode: (m['invite_code'] as String?) ?? '',
+        status: (m['status'] as String?) ?? 'closed',
+        role: (m['role'] as String?) ?? 'member',
+        createdAt: DateTime.parse(m['created_at'] as String),
+        firstJoinedAt: DateTime.parse(m['first_joined_at'] as String),
+        lastJoinedAt: DateTime.parse(m['last_joined_at'] as String),
+        leftAt: m['left_at'] is String
+            ? DateTime.tryParse(m['left_at'] as String)
+            : null,
+        isMember: m['is_member'] == true,
+        memberCount: (m['member_count'] as num?)?.toInt() ?? 0,
+        materialCount: (m['material_count'] as num?)?.toInt() ?? 0,
+        quizCount: (m['quiz_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// A finished group quiz, with this student's own result.
+class RoomQuizResult {
+  const RoomQuizResult({
+    required this.id,
+    required this.title,
+    required this.mode,
+    required this.questionCount,
+    required this.finishedAt,
+    this.score,
+    this.rank,
+    this.players = 0,
+    this.xpAwarded = 0,
+  });
+
+  final String id;
+  final String title;
+  final String mode;
+  final int questionCount;
+  final DateTime finishedAt;
+
+  /// Null if they didn't hand in.
+  final int? score;
+  final int? rank;
+  final int players;
+  final int xpAwarded;
+
+  bool get speed => mode == 'speed';
+
+  factory RoomQuizResult.fromMap(Map<String, dynamic> m) => RoomQuizResult(
+        id: m['id'] as String,
+        title: (m['title'] as String?) ?? 'Group quiz',
+        mode: (m['mode'] as String?) ?? 'standard',
+        questionCount: (m['question_count'] as num?)?.toInt() ?? 0,
+        finishedAt: DateTime.parse(m['finished_at'] as String),
+        score: (m['score'] as num?)?.toInt(),
+        rank: (m['rank'] as num?)?.toInt(),
+        players: (m['players'] as num?)?.toInt() ?? 0,
+        xpAwarded: (m['xp_awarded'] as num?)?.toInt() ?? 0,
+      );
 }

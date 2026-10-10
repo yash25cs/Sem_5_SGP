@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../config/supabase_config.dart';
 import '../../models/models.dart';
 import '../supabase_client.dart';
 
@@ -199,6 +200,89 @@ class RoomRepository {
   Future<RoomQuiz> _quizCall(String fn, Map<String, dynamic> params) async {
     final res = await db.rpc(fn, params: params);
     return RoomQuiz.fromMap(Map<String, dynamic>.from(res as Map));
+  }
+
+  // ── Shared materials and history (0030_room_materials_history.sql) ──
+
+  /// What members have shared into [roomId], newest first.
+  Future<List<RoomSharedMaterial>> getSharedMaterials(String roomId) async {
+    final rows = await db.rpc('get_room_materials', params: {'p_room': roomId});
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map(RoomSharedMaterial.fromMap)
+        .toList();
+  }
+
+  /// Shares one of the caller's own ready materials into the room.
+  Future<void> shareMaterial(String roomId, String materialId) async {
+    await db.rpc('share_room_material', params: {
+      'p_room': roomId,
+      'p_material': materialId,
+    });
+  }
+
+  /// Whoever shared it, or the host, takes it out of the room.
+  Future<void> unshareMaterial(String shareId) async {
+    await db.rpc('unshare_room_material', params: {'p_share': shareId});
+  }
+
+  /// Copies a shared material into the caller's library: the file into their
+  /// own folder here (`0030` lets room-mates read it), then the row and its
+  /// already-embedded chunks on the server, so it's ready without another
+  /// Gemini pass. If the server refuses, the copied file is removed again,
+  /// like [MaterialRepository.uploadFile]'s cleanup.
+  Future<StudyMaterial> saveSharedMaterial(RoomSharedMaterial share) async {
+    final source = share.storagePath;
+    if (source == null) throw "That material has no file to copy.";
+    final bucket = db.storage.from(SupabaseConfig.materialsBucket);
+    final bytes = await bucket.download(source);
+    final name = source.split('/').last.replaceFirst(RegExp(r'^\d+_'), '');
+    final path =
+        '$requireUserId/${DateTime.now().millisecondsSinceEpoch}_$name';
+    await bucket.uploadBinary(path, bytes);
+    try {
+      final row = await db.rpc('save_room_material', params: {
+        'p_share': share.id,
+        'p_path': path,
+      });
+      return StudyMaterial.fromMap(Map<String, dynamic>.from(row as Map));
+    } catch (_) {
+      try {
+        await bucket.remove([path]);
+      } catch (_) {
+        // Swallowed deliberately — the save error is the one worth seeing.
+      }
+      rethrow;
+    }
+  }
+
+  /// Rooms the caller created or joined, most recent first.
+  Future<List<RoomHistoryEntry>> getHistory({int limit = 50}) async {
+    final rows = await db.rpc('get_room_history', params: {'p_limit': limit});
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map(RoomHistoryEntry.fromMap)
+        .toList();
+  }
+
+  /// The group quizzes the caller finished in [roomId].
+  Future<List<RoomQuizResult>> getQuizHistory(String roomId) async {
+    final rows =
+        await db.rpc('get_room_quiz_history', params: {'p_room': roomId});
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map(RoomQuizResult.fromMap)
+        .toList();
+  }
+
+  /// Takes a room out of the caller's history, and with it their access to
+  /// what was shared there once they've left. Joining again brings it back.
+  Future<void> removeFromHistory(String roomId) async {
+    await db
+        .from('room_history')
+        .delete()
+        .eq('room_id', roomId)
+        .eq('user_id', requireUserId);
   }
 
   // ── Moderation (0013_room_moderation.sql) ──

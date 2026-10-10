@@ -165,6 +165,29 @@ class QuizStore extends AsyncStore {
         _available = _available.where((q) => q.id != quiz.id).toList();
       });
 
+  /// Every quiz, with all attempts.
+  Future<bool> deleteAllQuizzes() => runMutation(() async {
+        await _quizzes.deleteAllQuizzes();
+        _available = const [];
+      });
+
+  /// Past attempts at [quizId], newest first, for its history sheet.
+  Future<List<QuizAttempt>> attemptsFor(String quizId) =>
+      _quizzes.getAttempts(quizId: quizId, limit: 50);
+
+  /// Deletes one past attempt; the list re-reads so the quiz's last marks
+  /// fall back to the attempt before it.
+  Future<bool> deleteAttempt(QuizAttempt attempt) => runMutation(() async {
+        await _quizzes.deleteAttempt(attempt.id);
+        _available = await _quizzes.getQuizzes();
+      });
+
+  /// Clears a quiz's whole history; the quiz stays, ready to take again.
+  Future<bool> clearAttempts(Quiz quiz) => runMutation(() async {
+        await _quizzes.deleteAttempts(quiz.id);
+        _available = await _quizzes.getQuizzes();
+      });
+
   void reset() {
     _quiz = null;
     _attempt = null;

@@ -9,6 +9,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/nav.dart';
+import '../widgets/room_materials.dart';
 import 'room_quiz_screen.dart';
 
 /// Screen displayed when the student is inside an active Study Buddy Room.
@@ -325,6 +326,13 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     }
   }
 
+  Future<void> _refreshRoom() async {
+    final store = context.read<RoomStore>();
+    final ok = await store.refreshRoom();
+    if (!mounted) return;
+    _toast(ok ? 'Room refreshed.' : store.error ?? 'Could not refresh the room.');
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.p;
@@ -497,6 +505,18 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(width: 6),
+                store.refreshing
+                    ? Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.4, color: p.primary),
+                        ),
+                      )
+                    : RoundIconButton(Symbols.refresh, onTap: _refreshRoom),
               ],
             ),
           ),
@@ -690,6 +710,10 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
 
                 // ── Group quiz ──
                 const RoomQuizCard(),
+                const SizedBox(height: 14),
+
+                // ── Shared materials ──
+                const RoomMaterialsCard(),
                 const SizedBox(height: 18),
 
                 // ── Study Buddies in Room (Presence) ──

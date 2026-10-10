@@ -101,6 +101,18 @@ class QuizRepository {
   Future<void> deleteQuiz(String quizId) =>
       db.from('quizzes').delete().eq('id', quizId);
 
+  /// Every quiz the student has, the same way as [deleteQuiz].
+  Future<void> deleteAllQuizzes() =>
+      db.from('quizzes').delete().eq('user_id', requireUserId);
+
+  /// One past attempt and its answers (cascade). XP earned stays.
+  Future<void> deleteAttempt(String attemptId) =>
+      db.from('quiz_attempts').delete().eq('id', attemptId);
+
+  /// Every attempt at one quiz; the quiz itself stays, as if never taken.
+  Future<void> deleteAttempts(String quizId) =>
+      db.from('quiz_attempts').delete().eq('quiz_id', quizId);
+
   /// Asks the `generate-quiz` Edge Function to write a quiz from one material.
   /// Returns the new quiz's id.
   ///

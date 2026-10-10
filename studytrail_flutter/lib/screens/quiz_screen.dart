@@ -210,6 +210,27 @@ class _QuizPickerState extends State<_QuizPicker> {
     ));
   }
 
+  Future<void> _deleteAll() async {
+    final store = context.read<QuizStore>();
+    final n = store.available.length;
+    final sure = await confirmDelete(
+      context,
+      title: 'Delete all quizzes?',
+      message: 'All $n quiz${n == 1 ? '' : 'zes'}, with every attempt and '
+          'mark, will be deleted. XP you earned stays, and so does My '
+          'mistakes.',
+    );
+    if (!sure || !mounted) return;
+    final ok = await store.deleteAllQuizzes();
+    if (!mounted) return;
+    setState(() => _open = null);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'All quizzes deleted.'
+          : store.error ?? 'Could not delete your quizzes.'),
+    ));
+  }
+
   /// Writes a new quiz from a file the student picks.
   ///
   /// Appends rather than replaces, so the list grows: each quiz keeps its own
@@ -254,10 +275,20 @@ class _QuizPickerState extends State<_QuizPicker> {
           ),
         CardHeader(
           'Your quizzes',
-          action: PillButton('New',
-              icon: Symbols.auto_awesome,
-              expand: false,
-              onTap: store.busy ? null : () => _generate(context)),
+          action: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (store.available.isNotEmpty) ...[
+                RoundIconButton(Symbols.delete_sweep,
+                    onTap: store.busy ? null : _deleteAll),
+                const SizedBox(width: 6),
+              ],
+              PillButton('New',
+                  icon: Symbols.auto_awesome,
+                  expand: false,
+                  onTap: store.busy ? null : () => _generate(context)),
+            ],
+          ),
         ),
         if (store.loading && !store.loaded) ...[
           const LoadingBlock(height: 84),
@@ -279,6 +310,18 @@ class _QuizPickerState extends State<_QuizPicker> {
               onToggle: () =>
                   setState(() => _open = _open == quiz.id ? null : quiz.id),
               onStart: store.busy ? null : () => widget.onStart(quiz),
+              onHistory: store.busy
+                  ? null
+                  : () => showModalBottomSheet<void>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: context.p.card,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(28)),
+                        ),
+                        builder: (_) => _AttemptsSheet(quiz: quiz),
+                      ),
               onDelete: store.busy ? null : () => _delete(quiz),
             ),
       ],
@@ -295,6 +338,7 @@ class _QuizTile extends StatelessWidget {
     required this.onToggle,
     required this.onStart,
     required this.onDelete,
+    this.onHistory,
   });
 
   final Quiz quiz;
@@ -302,6 +346,9 @@ class _QuizTile extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback? onStart;
   final VoidCallback? onDelete;
+
+  /// Opens every past attempt; offered once the quiz has been finished.
+  final VoidCallback? onHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -357,9 +404,186 @@ class _QuizTile extends StatelessWidget {
         ItemAction(quiz.attempted ? 'Retake' : 'Start quiz',
             icon: quiz.attempted ? Symbols.replay : Symbols.play_arrow,
             onTap: onStart),
+        if (quiz.attempted)
+          ItemAction('History', icon: Symbols.history, onTap: onHistory),
         ItemAction('Delete',
             icon: Symbols.delete, danger: true, onTap: onDelete),
       ],
+    );
+  }
+}
+
+/// Every finished attempt at one quiz, newest first, each deletable, with
+/// Clear history at the bottom.
+class _AttemptsSheet extends StatefulWidget {
+  const _AttemptsSheet({required this.quiz});
+
+  final Quiz quiz;
+
+  @override
+  State<_AttemptsSheet> createState() => _AttemptsSheetState();
+}
+
+class _AttemptsSheetState extends State<_AttemptsSheet> {
+  List<QuizAttempt>? _attempts;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final list = await context.read<QuizStore>().attemptsFor(widget.quiz.id);
+      if (mounted) setState(() => _attempts = list);
+    } catch (_) {
+      if (mounted) setState(() => _error = "Couldn't load past attempts.");
+    }
+  }
+
+  Future<void> _delete(QuizAttempt a) async {
+    final sure = await confirmDelete(
+      context,
+      title: 'Delete this attempt?',
+      message: 'Your ${a.score ?? 0}/${a.total ?? 0} from '
+          '${whenLabel(a.completedAt!, DateTime.now())} will be deleted. '
+          'XP you earned stays.',
+    );
+    if (!sure || !mounted) return;
+    final store = context.read<QuizStore>();
+    final ok = await store.deleteAttempt(a);
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _attempts = [
+            for (final x in _attempts ?? const <QuizAttempt>[])
+              if (x.id != a.id) x,
+          ]);
+      if (_attempts!.isEmpty) Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(store.error ?? 'Could not delete that attempt.')));
+    }
+  }
+
+  Future<void> _clear() async {
+    final sure = await confirmDelete(
+      context,
+      title: 'Clear history?',
+      message: 'Every attempt at “${widget.quiz.title ?? 'this quiz'}” will '
+          'be deleted. The quiz stays, ready to take again, and XP you '
+          'earned stays too.',
+    );
+    if (!sure || !mounted) return;
+    final store = context.read<QuizStore>();
+    final ok = await store.clearAttempts(widget.quiz);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(store.error ?? 'Could not clear the history.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final busy = context.watch<QuizStore>().busy;
+    final attempts = _attempts;
+    final now = DateTime.now();
+
+    return ConstrainedBox(
+      constraints:
+          BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+        children: [
+          Text('Past attempts',
+              style: TextStyle(
+                  color: p.ink, fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text(widget.quiz.title ?? 'Practice quiz',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: p.ink2, fontSize: 13.5)),
+          const SizedBox(height: 14),
+          if (_error != null)
+            Text(_error!, style: TextStyle(color: p.ink3, fontSize: 13))
+          else if (attempts == null)
+            Center(child: CircularProgressIndicator(color: p.primary))
+          else if (attempts.isEmpty)
+            Text('No finished attempts.',
+                style: TextStyle(color: p.ink3, fontSize: 13))
+          else ...[
+            for (final a in attempts) _AttemptRow(
+              attempt: a,
+              now: now,
+              onDelete: busy ? null : () => _delete(a),
+            ),
+            const SizedBox(height: 12),
+            PillButton('Clear history',
+                icon: Symbols.delete_sweep,
+                variant: PillVariant.danger,
+                onTap: busy ? null : _clear),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AttemptRow extends StatelessWidget {
+  const _AttemptRow({
+    required this.attempt,
+    required this.now,
+    required this.onDelete,
+  });
+
+  final QuizAttempt attempt;
+  final DateTime now;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final a = attempt;
+    final tone = a.accuracy >= 0.8
+        ? (bg: p.greenSoft, fg: p.green)
+        : a.accuracy >= 0.5
+            ? (bg: p.primarySoft, fg: p.primary)
+            : (bg: p.coralSoft, fg: p.coralInk);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Tag('${a.score ?? 0}/${a.total ?? 0}', bg: tone.bg, fg: tone.fg),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(whenLabel(a.completedAt!, now),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700)),
+                Text('${(a.accuracy * 100).round()}% · +${a.xpEarned ?? 0} XP',
+                    style: TextStyle(color: p.ink3, fontSize: 12)),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Delete attempt',
+            onPressed: onDelete,
+            icon: Icon(Symbols.delete, color: p.ink3, size: 20),
+          ),
+        ],
+      ),
     );
   }
 }

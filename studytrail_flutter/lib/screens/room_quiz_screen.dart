@@ -1324,7 +1324,9 @@ class _SpeedRoundState extends State<_SpeedRound> {
             index: n,
             selected: picked == n,
             correct: revealing ? question.correctIndex : null,
-            onTap: clock.answering && picked == null && !store.busy
+            // Changeable until the window closes (0031); tapping the one
+            // already picked does nothing.
+            onTap: clock.answering && picked != n && !store.busy
                 ? () => store.answerSpeed(question.id, n)
                 : null,
           ),
@@ -1335,7 +1337,8 @@ class _SpeedRoundState extends State<_SpeedRound> {
           Text(
               picked == null
                   ? '$answered of ${quiz.players.length} answered'
-                  : 'Locked in. $answered of ${quiz.players.length} answered',
+                  : 'Tap another option to change it. '
+                      '$answered of ${quiz.players.length} answered',
               textAlign: TextAlign.center,
               style: TextStyle(color: p.ink3, fontSize: 12.5, fontWeight: FontWeight.w600))
         else ...[

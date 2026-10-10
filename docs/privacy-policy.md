@@ -24,8 +24,9 @@ below says otherwise.
   and written answers with the marks and feedback they received. A photo of a
   handwritten answer is used only to read the answer and is deleted as soon as
   it has been marked; what was read from it is kept with the grade.
-- **Study rooms** — messages you send, your group-quiz answers and scores, and
-  any blocks or reports you make.
+- **Study rooms** — messages you send, your group-quiz answers and scores,
+  materials you share into a room, the rooms you created or joined and when,
+  and any blocks or reports you make.
 - **Doubt board** — doubts you post and answers you write.
 - **Preferences** — the language you want explanations in.
 
@@ -35,6 +36,8 @@ below says otherwise.
   leaderboard, and your doubts and answers on the doubt board.
 - **People in the same study room**: your name, whether you're focusing or on a
   break, the room's chat, and — once a group quiz ends — every player's score.
+  A material you share into a room can be seen and saved to their own library
+  by anyone who is or was in that room, until you take it out or delete it.
 - **Anyone signed in**: an open study room's name, invite code and member count.
 - Reports you file are kept for whoever runs the project to review.
 

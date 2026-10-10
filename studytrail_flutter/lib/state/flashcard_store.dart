@@ -266,6 +266,39 @@ class FlashcardStore extends AsyncStore {
         ]);
       });
 
+  /// Every deck and card. The offline copy is emptied too.
+  Future<bool> deleteAllDecks() => runMutation(() async {
+        await _cards.deleteAllDecks();
+        _decks = const [];
+        _queue = const [];
+        _index = 0;
+        _revealed = false;
+        await _cache.saveDecks(const []);
+        await _cache.saveCards(const []);
+      });
+
+  /// The cards in one deck, for its card list.
+  Future<List<Flashcard>> deckCards(String deckId) =>
+      _cards.getDeckCards(deckId);
+
+  /// Deletes one card — from the deck list's card sheet, or the card being
+  /// reviewed. A review session carries on with the next card.
+  Future<bool> deleteCard(Flashcard card) => runMutation(() async {
+        await _cards.deleteCard(card.id);
+        final i = _queue.indexWhere((c) => c.id == card.id);
+        if (i >= 0) {
+          _queue = [..._queue]..removeAt(i);
+          if (i < _index) _index--;
+          if (i == _index) _revealed = false;
+        }
+        await _cache.saveCards([
+          for (final c in await _cache.cards())
+            if (c.id != card.id) c,
+        ]);
+        _decks = await _cards.getDecks();
+        await _cache.saveDecks(_decks);
+      });
+
   /// Asks the server to write a deck from one of the student's materials, then
   /// refreshes the deck list.
   ///

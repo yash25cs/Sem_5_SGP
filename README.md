@@ -32,8 +32,10 @@ material.
 
 **Practise**
 - **Quizzes** written from the notes, with a "My mistakes" deck of every wrong
-  answer.
+  answer, and a history of past attempts.
 - **Flashcards** with spaced repetition, usable offline.
+- Quizzes, attempts, decks and single cards can each be deleted, or all at
+  once.
 - **Answer practice** — Theory (5/10-mark) or Practical (NEP-style case
   questions in lettered parts), from all notes, one subject or one file;
   answers typed or photographed on paper, marked against the notes with
@@ -43,7 +45,8 @@ material.
 
 **Together**
 - **Study rooms** — a shared focus timer, live chat, group quizzes and speed
-  rounds.
+  rounds; members share notes that anyone in the room can save to their own
+  library; a room history with each room's materials and quiz results.
 - **Doubt board** — ask any student; an AI first answer from your notes;
   upvotes and "solved".
 - **Leaderboard** across every StudyTrail student.
@@ -61,7 +64,7 @@ material.
 |---|---|
 | App | Flutter 3.47 (Dart 3.11), Provider for state, Material 3 |
 | Backend | Supabase: PostgreSQL with Row Level Security, Auth, Storage, Realtime |
-| Server logic | 29 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
+| Server logic | 31 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
 | AI | Google Gemini (`gemini-3.5-flash-lite` for text, `gemini-embedding-2` for search), called only from Edge Functions |
 | Android | Kotlin for the home-screen widgets and calendar sync; local notifications |
 | CI | GitHub Actions: `flutter analyze`, `flutter test`, and a migrations check |
@@ -161,7 +164,7 @@ flutter analyze
 flutter test
 ```
 
-208 unit and widget tests cover the stores, repositories, onboarding, practice,
+225 unit and widget tests cover the stores, repositories, onboarding, practice,
 rooms, rewards and screen layouts down to a 320 dp phone. A few live tests
 against a real Supabase project are skipped unless configured. CI runs the same
 checks on every push.
@@ -205,9 +208,10 @@ Security scoped to the signed-in user (`docs/OWNERSHIP.md`):
 - **Doubt board** — doubts posted and answers written, upvotes, and any reports.
 - **Preferences** — the language explanations come back in (English, Hindi or
   Gujarati).
-- **Study rooms** — messages sent, group-quiz answers and scores, plus any
-  blocks and reports the student makes (reports are kept for whoever runs the
-  project to review).
+- **Study rooms** — messages sent, group-quiz answers and scores, materials
+  shared into a room, the rooms the student created or joined and when, plus
+  any blocks and reports the student makes (reports are kept for whoever runs
+  the project to review).
 
 Most of that is visible only to its owner. Four things are shared on purpose:
 
@@ -216,7 +220,9 @@ Most of that is visible only to its owner. Four things are shared on purpose:
   one leaderboard for everyone.
 - **Study rooms** — members of the same room see each other's name, whether
   they're focusing or on a break, and the room's chat messages. Once a group
-  quiz ends, everyone who was in it sees every player's score and rank.
+  quiz ends, everyone who was in it sees every player's score and rank. A
+  material shared into a room can be seen and copied by anyone who is or was
+  in that room, until the sharer takes it out or deletes it.
 - **Open rooms** — every signed-in student can see an open room's name, invite
   code, and member count, which is how the lobby works.
 - **Doubt board** — one board shared by every student: the doubts and answers

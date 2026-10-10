@@ -37,7 +37,8 @@ class PrivacyScreen extends StatelessWidget {
             'the leaderboard, and the doubts and answers you post on the '
             'doubt board.',
         'People in the same study room: your name, whether you are focusing, '
-            'the room chat, and group-quiz scores.',
+            'the room chat, group-quiz scores, and any material you share '
+            'there, which they can save to their own library.',
         'Everything else — your notes, chats, quizzes, marks and plan — is '
             'private to your account, enforced by the database itself.',
       ],

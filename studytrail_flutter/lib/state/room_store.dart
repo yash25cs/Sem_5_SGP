@@ -19,6 +19,8 @@ import 'async_store.dart';
 ///   hands in, ends it) pings the room, and everyone re-reads it from the
 ///   server. The payload is only the quiz id: answers and scores never travel
 ///   over the channel, and a short poll covers a missed ping.
+/// * **broadcast `materials`** — someone shared or unshared a material;
+///   everyone re-reads the list (`get_room_materials`).
 /// * **postgres_changes on `room_messages`** — chat. The sender picks the row
 ///   id up front, so its optimistic bubble and the realtime echo de-duplicate.
 ///
@@ -163,6 +165,23 @@ class RoomStore extends AsyncStore {
   final Set<String> _dismissedQuizzes = {};
   Timer? _quizPoll;
 
+  // ── Shared materials (0030) ──
+  List<RoomSharedMaterial> _shared = const [];
+
+  /// What members shared into the current room, newest first.
+  List<RoomSharedMaterial> get sharedMaterials => _shared;
+
+  /// Shares being copied into this student's library right now. Kept apart
+  /// from [busy] so one slow copy doesn't lock the rest of the room.
+  final Set<String> _saving = {};
+  bool isSaving(String shareId) => _saving.contains(shareId);
+
+  // ── History (0030) ──
+  List<RoomHistoryEntry> _history = const [];
+
+  /// Rooms this student created or joined, most recent first.
+  List<RoomHistoryEntry> get history => _history;
+
   RealtimeChannel? _channel;
   Map<String, dynamic>? _myPresence;
 
@@ -171,8 +190,41 @@ class RoomStore extends AsyncStore {
   // ───────────────────────────────────────────────────────────────────────────
 
   Future<void> loadLobby() => runLoad(() async {
-        _activeRooms = await _roomRepo.getActiveRooms();
+        final results = await Future.wait([
+          _roomRepo.getActiveRooms(),
+          // History is extra: a failed read shouldn't empty the lobby.
+          _roomRepo.getHistory().catchError((_) => _history),
+        ]);
+        _activeRooms = results[0] as List<StudyRoom>;
+        _history = results[1] as List<RoomHistoryEntry>;
       });
+
+  /// Takes a room out of this student's history.
+  Future<bool> removeFromHistory(String roomId) async {
+    final ok = await runMutation(() => _roomRepo.removeFromHistory(roomId));
+    if (ok) {
+      _history = [
+        for (final h in _history)
+          if (h.roomId != roomId) h,
+      ];
+      notifyListeners();
+    }
+    return ok;
+  }
+
+  /// One past room's shared materials and the group quizzes this student
+  /// finished there, for the history sheet.
+  Future<({List<RoomSharedMaterial> materials, List<RoomQuizResult> quizzes})>
+      loadHistoryDetail(String roomId) async {
+    final results = await Future.wait([
+      _roomRepo.getSharedMaterials(roomId),
+      _roomRepo.getQuizHistory(roomId),
+    ]);
+    return (
+      materials: results[0] as List<RoomSharedMaterial>,
+      quizzes: results[1] as List<RoomQuizResult>,
+    );
+  }
 
   /// Creates a room, joins it as host, and enters it.
   Future<StudyRoom?> createRoom({
@@ -224,11 +276,12 @@ class RoomStore extends AsyncStore {
   }
 
   /// Puts the store in [room] with its repository but no channel, for tests
-  /// of the quiz flow.
+  /// of the quiz and shared-material flows.
   @visibleForTesting
   Future<void> debugEnterRoomWithoutChannel(StudyRoom room) async {
     debugEnterRoomOffline(room);
     await _loadQuiz(room.id);
+    await _loadShared(room.id);
   }
 
   Future<void> _enterRoom(StudyRoom room) async {
@@ -245,11 +298,13 @@ class RoomStore extends AsyncStore {
     _members = const [];
     _messages = const [];
     _onlinePresence.clear();
+    _shared = const [];
     _setQuiz(null);
     notifyListeners();
 
     // A quiz already going on (or just finished) shows up straight away.
     _loadQuiz(room.id).ignore();
+    _loadShared(room.id).ignore();
 
     try {
       final results = await Future.wait([
@@ -282,6 +337,8 @@ class RoomStore extends AsyncStore {
       ..onBroadcast(event: 'timer', callback: _onTimerMessage)
       ..onBroadcast(event: 'room', callback: _onRoomMessage)
       ..onBroadcast(event: 'quiz', callback: _onQuizMessage)
+      ..onBroadcast(
+          event: 'materials', callback: (_) => _loadShared(room.id).ignore())
       ..onPostgresChanges(
         event: PostgresChangeEvent.insert,
         schema: 'public',
@@ -920,6 +977,133 @@ class RoomStore extends AsyncStore {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Shared materials
+  // ───────────────────────────────────────────────────────────────────────────
+
+  Future<void> _loadShared(String roomId) async {
+    try {
+      final list = await _roomRepo.getSharedMaterials(roomId);
+      if (_currentRoom?.id != roomId) return;
+      _shared = list;
+      notifyListeners();
+    } catch (_) {
+      // The list just stays as it was; the next ping or refresh retries.
+    }
+  }
+
+  /// Pull-to-refresh for the shared list.
+  Future<void> refreshShared() async {
+    final room = _currentRoom;
+    if (room != null) await _loadShared(room.id);
+  }
+
+  bool _refreshing = false;
+
+  /// True while [refreshRoom] runs, so the button can spin.
+  bool get refreshing => _refreshing;
+
+  /// The room's refresh button: re-reads members, chat, shared materials and
+  /// the quiz, in case a realtime message was missed. Returns false (with
+  /// [error]) if the room couldn't be read.
+  Future<bool> refreshRoom() async {
+    final room = _currentRoom;
+    if (room == null || _refreshing) return false;
+    _refreshing = true;
+    notifyListeners();
+    try {
+      final results = await Future.wait([
+        _roomRepo.getMembers(room.id),
+        _roomRepo.getMessages(room.id),
+        _roomRepo.getSharedMaterials(room.id),
+      ]);
+      if (_currentRoom?.id != room.id) return false;
+      _members = results[0] as List<RoomMember>;
+      final history = results[1] as List<RoomMessage>;
+      final known = {for (final m in history) m.id};
+      // Keep bubbles still sending; the server's copy replaces the rest.
+      _messages = [
+        ...history,
+        for (final m in _messages)
+          if (m.pending && !known.contains(m.id)) m,
+      ];
+      _shared = results[2] as List<RoomSharedMaterial>;
+      await refreshQuiz();
+      return true;
+    } catch (e) {
+      setError(e);
+      return false;
+    } finally {
+      _refreshing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Shares one of this student's own ready materials with the room.
+  Future<bool> shareMaterial(StudyMaterial material) async {
+    final room = _currentRoom;
+    if (room == null) return false;
+    final ok = await runMutation(
+        () => _roomRepo.shareMaterial(room.id, material.id));
+    if (ok) {
+      await _loadShared(room.id);
+      _pingMaterials();
+    }
+    return ok;
+  }
+
+  /// Whoever shared it, or the host, takes it out of the room.
+  Future<bool> unshareMaterial(RoomSharedMaterial share) async {
+    final ok = await runMutation(() => _roomRepo.unshareMaterial(share.id));
+    if (ok) {
+      _shared = [
+        for (final s in _shared)
+          if (s.id != share.id) s,
+      ];
+      notifyListeners();
+      _pingMaterials();
+    }
+    return ok;
+  }
+
+  /// Whether this student may take [share] out of the room.
+  bool canUnshare(RoomSharedMaterial share) =>
+      share.sharedBy == _me || isHost;
+
+  /// Copies [share] into this student's library. Works from the room and
+  /// from a past room in the history sheet. Returns the new material, or null
+  /// with [error] set.
+  Future<StudyMaterial?> saveShared(RoomSharedMaterial share) async {
+    if (_saving.contains(share.id)) return null;
+    _saving.add(share.id);
+    clearError();
+    notifyListeners();
+    try {
+      final copy = await _roomRepo.saveSharedMaterial(share);
+      _shared = [
+        for (final s in _shared) s.id == share.id ? s.asSaved() : s,
+      ];
+      return copy;
+    } catch (e) {
+      setError(e);
+      return null;
+    } finally {
+      _saving.remove(share.id);
+      notifyListeners();
+    }
+  }
+
+  /// The payload must be a map realtime_client can write to: it adds its own
+  /// keys before sending, and a `const {}` threw inside the ignored future, so
+  /// no other member ever heard a share.
+  void _pingMaterials() {
+    final room = _currentRoom;
+    if (room == null) return;
+    _channel
+        ?.sendBroadcastMessage(event: 'materials', payload: {'room_id': room.id})
+        .ignore();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Leaving
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -957,6 +1141,7 @@ class RoomStore extends AsyncStore {
     _members = const [];
     _onlinePresence.clear();
     _messages = const [];
+    _shared = const [];
     _setQuiz(null);
     _dismissedQuizzes.clear();
     notifyListeners();

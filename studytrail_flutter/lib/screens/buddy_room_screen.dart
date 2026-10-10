@@ -7,7 +7,9 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/expandable_item_card.dart';
 import '../widgets/nav.dart';
+import '../widgets/room_materials.dart';
 import 'study_room_screen.dart';
 
 /// Study buddies — browse active study rooms, join by code, create rooms,
@@ -23,6 +25,10 @@ class BuddyRoomScreen extends StatefulWidget {
 
 class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
   final _codeController = TextEditingController();
+
+  /// History shows its latest few until the student asks for all of it.
+  bool _allHistory = false;
+  static const _historyPreview = 4;
 
   @override
   void initState() {
@@ -105,6 +111,30 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       _toast(store.error ?? 'Could not join that room.');
       store.loadLobby();
     }
+  }
+
+  /// A room from the history: its details, with Rejoin while it's open.
+  void _openHistory(RoomHistoryEntry entry) {
+    showRoomHistorySheet(
+      context,
+      entry,
+      onRejoin: () async {
+        final store = context.read<RoomStore>();
+        final current = store.currentRoom;
+        if (current != null && current.id == entry.roomId) {
+          _openRoom(current);
+          return;
+        }
+        final joined = await store.joinByCode(entry.inviteCode);
+        if (!mounted) return;
+        if (joined != null) {
+          _openRoom(joined);
+        } else {
+          _toast(store.error ?? 'Could not rejoin that room.');
+          store.loadLobby();
+        }
+      },
+    );
   }
 
   /// Asks for a name and how many people; the timer is set inside the room.
@@ -314,6 +344,11 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     ],
                   ),
                 ),
+                RoundIconButton(
+                  Symbols.refresh,
+                  onTap: roomStore.loading ? null : _refresh,
+                ),
+                const SizedBox(width: 6),
                 // Create room button
                 RoundIconButton(
                   Symbols.add,
@@ -472,6 +507,62 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                       const SizedBox(height: 10),
                     ],
 
+                  // ── Rooms this student created or joined ──
+                  if (roomStore.history.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Icon(Symbols.history, size: 20, color: p.primary),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Your room history',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: p.ink,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        Text('${roomStore.history.length}',
+                            style: TextStyle(
+                                color: p.ink3,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    AppCard(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(
+                        children: [
+                          for (final h in _allHistory
+                              ? roomStore.history
+                              : roomStore.history.take(_historyPreview))
+                            _HistoryRow(
+                              entry: h,
+                              onTap: () => _openHistory(h),
+                            ),
+                          if (roomStore.history.length > _historyPreview)
+                            TextButton(
+                              onPressed: () =>
+                                  setState(() => _allHistory = !_allHistory),
+                              child: Text(
+                                _allHistory
+                                    ? 'Show less'
+                                    : 'Show all ${roomStore.history.length}',
+                                style: TextStyle(
+                                    color: p.primary,
+                                    fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 24),
 
                   // ── Everyone on StudyTrail ──
@@ -522,6 +613,69 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// One room in the history: created or joined, when, and what's in it.
+class _HistoryRow extends StatelessWidget {
+  const _HistoryRow({required this.entry, required this.onTap});
+
+  final RoomHistoryEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final e = entry;
+    final extras = [
+      if (e.materialCount > 0)
+        '${e.materialCount} material${e.materialCount == 1 ? '' : 's'}',
+      if (e.quizCount > 0) '${e.quizCount} quiz${e.quizCount == 1 ? '' : 'zes'}',
+    ];
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            IconTile(e.isHost ? Symbols.crown : Symbols.group,
+                bg: e.isHost ? p.amberSoft : p.primarySoft,
+                fg: e.isHost ? p.onAmber : p.primary,
+                size: 40,
+                radius: 12),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(e.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${e.isHost ? 'Created' : 'Joined'} '
+                    '${whenLabel(e.lastJoinedAt, DateTime.now())}'
+                    '${extras.isEmpty ? '' : ' · ${extras.join(' · ')}'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: p.ink3, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            e.isActive
+                ? Tag(e.isMember ? 'In room' : 'Live',
+                    bg: p.greenSoft, fg: p.green)
+                : Tag('Closed', bg: p.card2, fg: p.ink3),
+          ],
+        ),
       ),
     );
   }

@@ -7,8 +7,8 @@ existing Flutter UI.
 ```
 supabase/
   config.toml          # local/dev project config
-  migrations/          # ordered SQL — apply 0001 → 0027
-  all_migrations.sql   # GENERATED: all twenty-four concatenated, for the SQL editor
+  migrations/          # ordered SQL — apply 0001 → 0030
+  all_migrations.sql   # GENERATED: every migration concatenated, for the SQL editor
   functions/           # Edge Functions: embed-material, chat, generate-*, summarize-material, analyze-paper, grade-answer, room-quiz, doubt-ai, delete-account, _shared/
 ```
 
@@ -42,6 +42,10 @@ supabase/
 | `0025_goal_subject_dates.sql` | `create_goal` takes each subject's exam date (`p_subject_dates`, parallel to `p_subjects`), still one transaction; the old four-argument version is dropped |
 | `0026_achievements_rewards.sql` | `app_private.badge_progress()` (progress, goal and unit for every badge) drives both `evaluate_badges` and the new `get_badge_progress()`; eight more badges; three more rewards — Focus Boost (doubles focus XP for a day, in `record_focus_session`), 50:50 lifeline (`use_quiz_lifeline()`), Aurora profile card |
 | `0027_subject_syllabus.sql` | `materials.subject_id` (a syllabus belongs to a subject; its chunks carry the subject too) with an ownership trigger like 0024's |
+| `0028_answer_kind.sql` | `answer_attempts.kind` — theory or NEP-style practical answers |
+| `0029_custom_pace_global_community.sql` | `goals.daily_minutes` (custom pace); one community — `app_private.my_class()` returns a fixed "Everyone" class, so the leaderboard and doubt board cover every student |
+| `0030_room_materials_history.sql` | `room_history` (kept by triggers on `room_members`; owner can read and delete), `room_materials` (no client grants) with `share_room_material()`, `unshare_room_material()` (sharer or host), `get_room_materials()`, `save_room_material()` (copies the row and its embedded chunks; `materials.source_material_id` refuses a second copy), a storage policy letting room-mates read a shared file, `get_room_history()`, `get_room_quiz_history()` |
+| `0031_speed_answer_change.sql` | `answer_room_quiz_question()` lets a speed-round answer change until its window closes (points from the answer that stands, at the time it was given); the round ends on the clock rather than when everyone has answered the last question |
 | `0012_rewards_store.sql` | `reward_catalog` + `reward_redemptions`, `get_reward_wallet()` / `redeem_reward()` (balance = XP earned − XP spent), streak freezes consumed inside `log_activity`, `get_class_leaderboard()` ranked by total XP with `golden_border` |
 
 All files are idempotent — safe to re-run.

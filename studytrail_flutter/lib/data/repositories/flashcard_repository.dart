@@ -115,6 +115,15 @@ class FlashcardRepository {
   Future<void> deleteDeck(String deckId) =>
       db.from('flashcard_decks').delete().eq('id', deckId);
 
+  /// Every deck the student has, with their cards.
+  Future<void> deleteAllDecks() =>
+      db.from('flashcard_decks').delete().eq('user_id', requireUserId);
+
+  /// One card. `delete` on `flashcards` was never revoked (0008 narrowed only
+  /// insert and update), so RLS's owner check is all it needs.
+  Future<void> deleteCard(String cardId) =>
+      db.from('flashcards').delete().eq('id', cardId);
+
   /// Asks the `generate-flashcards` Edge Function to write a deck from one
   /// material. Returns how many cards it saved.
   ///

@@ -198,4 +198,78 @@ void main() {
         : 'Live: run with STUDYTRAIL_LIVE=1 (needs dart_define.json).',
     timeout: const Timeout(Duration(minutes: 2)),
   );
+
+  test(
+    'a shared material reaches the other member, who can save a copy',
+    () async {
+      final host = await account('sharer');
+      final member = await account('saver');
+      final hostId = host.auth.currentUser!.id;
+      final memberId = member.auth.currentUser!.id;
+
+      // A small ready material on the host's side, the way the app makes one.
+      final path = '$hostId/${DateTime.now().millisecondsSinceEpoch}_notes.txt';
+      await host.storage.from('materials').uploadBinary(
+          path,
+          utf8.encode('Unit 1: Optics\nA convex lens converges light to a '
+              'focal point. Refraction bends light at a boundary.'),
+          fileOptions: const FileOptions(contentType: 'text/plain'));
+      final mat = await host
+          .from('materials')
+          .insert({
+            'user_id': hostId,
+            'source_type': 'notes',
+            'title': 'Live optics notes',
+            'storage_path': path,
+          })
+          .select()
+          .single();
+      await host.functions
+          .invoke('embed-material', body: {'materialId': mat['id']});
+
+      final room = await host.rpc('create_study_room',
+          params: {'p_name': 'Live share', 'p_max_members': 2}) as Map;
+      final roomId = room['id'] as String;
+      await member
+          .rpc('join_room_by_code', params: {'p_code': room['invite_code']});
+
+      final ping = Completer<void>();
+      final (memberCh, _) = await join(member, roomId,
+          listen: (ch) => ch.onBroadcast(
+              event: 'materials',
+              callback: (_) {
+                if (!ping.isCompleted) ping.complete();
+              }));
+      final (hostCh, _) = await join(host, roomId);
+
+      await host.rpc('share_room_material',
+          params: {'p_room': roomId, 'p_material': mat['id']});
+      // Exactly what RoomStore._pingMaterials sends.
+      await hostCh.sendBroadcastMessage(
+          event: 'materials', payload: {'room_id': roomId});
+      await ping.future.timeout(const Duration(seconds: 15));
+
+      final list = await member
+          .rpc('get_room_materials', params: {'p_room': roomId}) as List;
+      expect(list, hasLength(1));
+      expect(list.first['title'], 'Live optics notes');
+      expect(list.first['saved'], isFalse);
+
+      final bytes =
+          await member.storage.from('materials').download(path);
+      final copyPath = '$memberId/${DateTime.now().millisecondsSinceEpoch}_notes.txt';
+      await member.storage.from('materials').uploadBinary(copyPath, bytes);
+      final copy = await member.rpc('save_room_material',
+          params: {'p_share': list.first['id'], 'p_path': copyPath}) as Map;
+      expect(copy['status'], 'embedded');
+
+      await member.removeChannel(memberCh);
+      await host.removeChannel(hostCh);
+      await host.rpc('close_study_room', params: {'p_room_id': roomId});
+    },
+    skip: _live
+        ? false
+        : 'Live: run with STUDYTRAIL_LIVE=1 (needs dart_define.json).',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
 }
