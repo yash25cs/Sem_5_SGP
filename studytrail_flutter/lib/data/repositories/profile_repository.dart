@@ -66,22 +66,4 @@ class ProfileRepository {
         .isFilter('consumed_at', null);
     return {for (final r in rows) r['reward_key'] as String};
   }
-
-  Future<List<Map<String, dynamic>>> getClasses() async {
-    final rows =
-        await db.from('classes').select().order('name', ascending: true);
-    return rows;
-  }
-
-  Future<void> joinClass(String classId) async {
-    await db
-        .from('profiles')
-        .update({'class_id': classId}).eq('id', requireUserId);
-  }
-
-  /// Clears `class_id` so the student leaves the leaderboard pool. Their
-  /// history and badges stay.
-  Future<void> leaveClass() async {
-    await db.from('profiles').update({'class_id': null}).eq('id', requireUserId);
-  }
 }

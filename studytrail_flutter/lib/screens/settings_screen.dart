@@ -13,11 +13,13 @@ import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/custom_pace_sheet.dart';
 import '../widgets/data_states.dart';
+import '../widgets/help_sheet.dart';
 import '../widgets/home_widgets_sheet.dart';
 import '../state/reminder_sync.dart';
 import '../widgets/nav.dart';
 import '../widgets/reminder_time.dart';
 import 'academic_profile_screen.dart';
+import 'privacy_screen.dart';
 import 'set_target_screen.dart';
 
 /// Full settings screen — grouped preference rows with a back button.
@@ -798,11 +800,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _Group(children: [
                   _Row(Symbols.lock, 'Privacy & security', p.green,
                       trailing: _chev(p),
-                      onTap: () => _toast(
-                          'Your data is private to your account and protected by row-level security.')),
-                  _Row(Symbols.help, 'Help & support', p.coral,
+                      onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const PrivacyScreen()))),
+                  _Row(Symbols.help, 'Help', p.coral,
                       trailing: _chev(p),
-                      onTap: () => _toast('Reach out at yash@charusat.edu.in')),
+                      onTap: () => showHelpSheet(context)),
                 ]),
                 const SizedBox(height: 22),
 
@@ -819,7 +822,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         : _deleteAccount),
                 const SizedBox(height: 12),
                 Center(
-                  child: Text('StudyTrail v1.0 · SGP · CSPIT',
+                  child: Text('StudyTrail v1.0 · SGP project',
                       style: TextStyle(color: p.ink3, fontSize: 12)),
                 ),
               ],

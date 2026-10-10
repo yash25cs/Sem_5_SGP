@@ -721,6 +721,35 @@ non-trivial choice.
   roadmap only uses it the next time it is written, so the student has to
   replace their roadmap — the success message says so.
 
+### D-046 — One community instead of classes
+
+- **Decision:** classes are gone from the app. `get_class_leaderboard` ranks
+  every student and returns the top N plus the caller's own row with its real
+  rank; `app_private.my_class()` returns one fixed "Everyone" community, so
+  the doubt board's functions are global without being rewritten; the room
+  lobby lists every open room and new rooms carry no class (0029).
+- **Why:** joining a class was a step most students never took, and until
+  they did the leaderboard and doubt board were empty screens. With one
+  community both work from the first day.
+- **Trade-off:** `classes`, `profiles.class_id` and `study_rooms.class_id`
+  stay in the schema, unused, so older installs keep working. A large user
+  base would want the leaderboard precomputed instead of summed per request.
+
+### D-047 — Calendar events are written, not exported
+
+- **Decision:** *Add to my calendar* is a switch. On, it writes exams, roadmap
+  weeks and upcoming tasks into the phone's main calendar through a platform
+  channel (`CalendarChannel.kt`), remembers each event's id on the phone, and
+  on every sync updates those, adds new ones and deletes ones whose source is
+  gone. Off, it deletes them. Replaces the shared `.ics` file (Day 21).
+- **Why:** importing a file was a dead end — the student had to find the
+  file, pick an app, and import again by hand whenever the plan changed, and
+  most calendars duplicated events on a second import.
+- **Trade-off:** Android only, and it needs calendar permission. Events live
+  in whichever calendar is primary (usually Google), so they sync to the
+  student's other devices; a phone with no writable calendar gets a local
+  "StudyTrail" one.
+
 ## Update rule
 
 For each meaningful decision, add the next `D-###` item with the decision,

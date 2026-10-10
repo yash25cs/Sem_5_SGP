@@ -19,8 +19,8 @@ Flutter app starts
   -> HomeShell keeps five tabs alive with IndexedStack
       -> Home | Roadmap | Chat | Quiz | Profile
       -> the + button opens a focus session, then Practise (Flashcards,
-         Answer practice, Past papers & mock), Together (Study rooms, Class
-         leaderboard) and Progress (Achievements, Analytics, My rewards)
+         Answer practice, Past papers & mock), Together (Study rooms,
+         Leaderboard) and Progress (Achievements, Analytics, My rewards)
 ```
 
 ## Data flow
@@ -167,10 +167,11 @@ group-quiz pings, presence, and inserts on `room_messages`.
 
 ### Doubt board
 
-1. Students in the same class share one board (`get_class_doubts`); posting
-   needs a class. Everything is an RPC — the tables have no client grants.
+1. Every student shares one board (`get_class_doubts`, which since 0029
+   scopes to a single "Everyone" community). Everything is an RPC — the
+   tables have no client grants.
 2. Asking can request a first answer from `doubt-ai`, written from the asker's
-   own notes and labelled so. Classmates answer; anyone but the author can
+   own notes and labelled so. Other students answer; anyone but the author can
    upvote; the asker marks the answer that solved it.
 3. Report sends a snapshot to `doubt_reports`; block (shared with rooms) hides
    the person's doubts and answers (D-036).
@@ -189,8 +190,10 @@ group-quiz pings, presence, and inserts on `room_messages`.
 4. **Weekly report.** `get_weekly_report` totals the last seven of the
    student's days against the seven before; a local Sunday 19:00 notification
    opens the screen.
-5. **Calendar.** Settings → *Add to my calendar* builds an `.ics` on the phone
-   (exams with reminders, roadmap weeks, upcoming tasks) and shares it.
+5. **Calendar.** Settings → *Add to my calendar* writes exams (with
+   reminders), roadmap weeks and upcoming tasks straight into the phone's main
+   calendar through `CalendarChannel.kt`, and keeps them current on app open
+   and pause — updating what it wrote and removing what's gone (D-047).
 6. **Home-screen widgets** (Android, D-042). Home pushes every subject's exam
    date, the streak with the day last studied, and today's tasks to three
    widgets — Today, Exam countdown, Streak — which work out "days left",
@@ -245,7 +248,10 @@ group-quiz pings, presence, and inserts on `room_messages`.
    `grade-answer` writes that many different ones in one call, spread over
    the weakest units (or takes a past-paper question), and the screen goes
    through them one at a time — grading each typed or photographed answer
-   against that unit's notes into `answer_attempts`. No XP (D-028).
+   against that unit's notes into `answer_attempts`. No XP (D-028). The
+   student chooses Theory or Practical (NEP) — a case with lettered parts,
+   marked part by part (0028) — and which notes to draw on: all, one subject,
+   or one file. Progress shows the average mark for each kind.
 5. **Chat extras.** `chat` returns three follow-ups from the same call;
    `generate-flashcards {messageId}` saves cards from one answer into "Saved from
    chat".
@@ -370,7 +376,7 @@ group-quiz pings, presence, and inserts on `room_messages`.
   every room read failed on the live project. The database side is verified live
   (34/34 checks); the Realtime side (timer, presence, chat echo) still needs the
   two-phone pass.
-- Rewards, the class leaderboard, notifications, the academic profile, the
+- Rewards, the leaderboard, notifications, the academic profile, the
   summary sheet and account deletion landed between 28 and 30 September. The
   rewards store and leaderboard were rebuilt on the server in `0012` (D-025),
   and all seven Edge Functions are deployed and ACTIVE with `verify_jwt`.
@@ -415,3 +421,4 @@ in `DECISIONS.md`.
 | 2026-10-05 | Day 28: quizzes and decks open in place (D-043) — Start/Retake or Review/Re-attempt, and Delete with a confirmation; a finished quiz shows its last marks and date-time; a deck with nothing due re-attempts as a practice run. | `studytrail_flutter/lib/{models/quiz,data/repositories/quiz_repository,state/quiz_store,state/flashcard_store,screens/quiz_screen,screens/flashcards_screen}.dart`, `lib/widgets/expandable_item_card.dart` (new), `test/quiz_deck_actions_test.dart` (new) | Live with a self-deleting account and two seeded quizzes: the list query returns only the latest finished attempt per quiz (not an older one, not an unfinished one) and nothing for a quiz never finished; a student can delete their own quiz and deck, and the attempts / cards go with them (10/10). Both lists checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 180 passed (4 live skipped). |
 | 2026-10-05 | Day 29: equal bottom-bar tabs; badge progress (rings, counts, Next up) from one server function that also decides the unlocks; eight more badges; three more rewards — Focus Boost, 50:50 lifeline, Aurora profile card (D-044). | `supabase/migrations/0026_achievements_rewards.sql` (new), `studytrail_flutter/lib/{widgets/nav,models/gamification,data/repositories/{gamification,quiz,profile}_repository,state/{gamification,quiz,profile}_store,theme/badge_style,screens/{achievements,rewards,quiz,profile}_screen}.dart`, `test/achievements_rewards_test.dart` (new) | 0026 dry-run in a rolled-back transaction (two focus sessions of 25 and 30 min on one boost earned 110 XP and used one boost of two; the lifeline refused with none held and left 0 after use; progress for all 18 badges), then applied; `anon` can't call the new RPCs. Live with a self-deleting account (9/9): progress for all 18, a new account at zero, a focus session counted in Focused Mind and XP Collector, the wallet lists five rewards. Screens checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 188 passed (4 live skipped). |
 | 2026-10-06 | Day 30: the badge sheet's bottom overflow fixed; answer practice in sets of 1–5 questions; a syllabus for each subject from Home, as a PDF or text, which the roadmap plans that subject from (D-045). | `supabase/migrations/0027_subject_syllabus.sql` (new), `supabase/functions/{grade-answer,generate-roadmap,embed-material}/index.ts`, `supabase/functions/_shared/material.ts`, `studytrail_flutter/lib/{models/study_material,data/repositories/{material,answer}_repository,state/{home,answer_practice}_store,screens/{home,answer_practice,achievements}_screen}.dart`, `lib/widgets/syllabus_sheet.dart` (new), `test/syllabus_answers_test.dart` (new), `test/papers_answers_test.dart` | 0027 dry-run (own subject accepted, someone else's refused with 42501), then applied. Three functions deployed. Live with self-deleting accounts (11/11): a typed Physics syllabus read into three units, every chunk carrying the subject; three different questions asked for and returned, one per unit, the old single-question fields still filled; no count still gives one; the generated roadmap names the syllabus units. One run's roadmap call hit a transient gateway 520 and passed on the next. Home and Answer practice checked in a browser at 375 dp. `flutter analyze` clean, `flutter test` 197 passed (4 live skipped). |
+| 2026-10-10 | Day 31: answer practice gets Theory / Practical (NEP) questions and a choice of notes (all, a subject, a file), with case questions laid out in parts; Progress shows written-answer marks and a week summary (0028). Daily reminder time, chosen in Settings and onboarding; a custom pace of the student's own time a day, which the roadmap is sized to (0029); Add to my calendar writes to the phone's calendar instead of sharing an `.ics` (D-047); classes removed — one leaderboard, doubt board and room lobby for everyone (0029, D-046). Review pass: unused class and store code removed, an in-app privacy page and help sheet replace two pop-ups, docs brought up to date. | `supabase/migrations/{0028_answer_kind,0029_custom_pace_global_community}.sql` (new), `supabase/functions/{grade-answer,generate-roadmap}/index.ts`, `android/app/src/main/{AndroidManifest.xml,kotlin/.../{MainActivity,CalendarChannel}.kt}`, `studytrail_flutter/lib/services/calendar_sync.dart` (was `calendar_export.dart`), `lib/widgets/{custom_pace_sheet,reminder_time,help_sheet}.dart`, `lib/screens/privacy_screen.dart` (new), `lib/screens/{answer_practice,progress,settings,profile,set_target,upload_material,leaderboard,buddy_room,doubt_board,achievements}_screen.dart`, `test/settings_layout_test.dart` (new) | 0028 and 0029 dry-run in rolled-back transactions (leaderboard returns the top N plus the caller at their real rank), then applied; both functions deployed. `flutter analyze` clean, `flutter test` 208 passed (4 live skipped), `flutter build apk --debug` exit 0. Calendar sync and the reminder picker are not yet checked on a device. |

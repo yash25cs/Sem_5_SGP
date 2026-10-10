@@ -12,7 +12,7 @@ below says otherwise.
 
 - **Account** — your email address, a password (stored hashed by Supabase Auth;
   the app never sees it), your name, and the academic profile you enter:
-  college, program and semester, and enrollment ID.
+  college, program, and semester or class.
 - **Study material** — the PDFs, notes and photos you upload, and the text read
   from them.
 - **Study activity** — goals, subjects and exam dates, your roadmap and daily
@@ -31,8 +31,8 @@ below says otherwise.
 
 ## Who else can see it
 
-- **Classmates**, once you join a class: your name, level, total XP and border
-  on the class leaderboard; your doubts and answers on the class doubt board.
+- **Every StudyTrail student**: your name, level, total XP and border on the
+  leaderboard, and your doubts and answers on the doubt board.
 - **People in the same study room**: your name, whether you're focusing or on a
   break, the room's chat, and — once a group quiz ends — every player's score.
 - **Anyone signed in**: an open study room's name, invite code and member count.
@@ -47,6 +47,14 @@ below says otherwise.
 
 There is no advertising, no analytics SDK, no crash reporter and no device
 identifier. Reminders and the home-screen widget are prepared on your phone.
+
+## Calendar
+
+Only if you turn on **Settings → Add to my calendar**, StudyTrail asks for
+calendar access and writes its own events — exams, roadmap weeks and study
+tasks — into your phone's calendar, keeping them up to date. It does not read
+or upload your other events. Turning the setting off removes StudyTrail's
+events.
 
 ## Deleting your data
 

@@ -67,7 +67,6 @@ class PomodoroStore extends AsyncStore {
 
   PomodoroPhase get phase => _phase;
   int get secondsLeft => _secondsLeft;
-  int get phaseTotalSeconds => _phaseTotalSeconds;
   bool get running => _running;
   bool get isFocus => _phase == PomodoroPhase.focus;
 
@@ -110,7 +109,6 @@ class PomodoroStore extends AsyncStore {
 
   /// Blocks logged today, across app runs — the footer tiles.
   int get sessionsToday => _sessionsToday;
-  int get minutesToday => _minutesToday;
 
   /// "1h 15m" / "50m" for the focused-time tile.
   String get minutesTodayLabel {

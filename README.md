@@ -46,11 +46,14 @@ release builds, signing, and the manual device checklist.
 Written down plainly because an exam planner sees a student's coursework, and
 because anyone installing this deserves to know before they upload a file. There
 is no analytics SDK, no advertising library, no crash reporter, and no device
-identifier of any kind. The app declares four Android permissions:
+identifier of any kind. The app declares six Android permissions:
 `INTERNET` to reach Supabase; `POST_NOTIFICATIONS` for the optional study
 reminders (Android 13+ asks first); `RECEIVE_BOOT_COMPLETED` so they survive a
-restart; and `VIBRATE`, which the notification plugin adds. Reminders are
-scheduled on the phone itself — there is no push server. Files come through the
+restart; `VIBRATE`, which the notification plugin adds; and `READ_CALENDAR` /
+`WRITE_CALENDAR`, asked for only when the student turns on *Add to my
+calendar*, which writes StudyTrail's own events and removes them when it's
+turned off. Reminders are scheduled on the phone itself, at a time the student
+picks — there is no push server. Files come through the
 system document picker and photos through the system camera app, neither of
 which needs a permission of its own.
 
@@ -82,20 +85,21 @@ Security scoped to the signed-in user (`OWNERSHIP.md`):
 
 Most of that is visible only to its owner. Four things are shared on purpose:
 
-- **Class leaderboard** — once a student joins a class, classmates see their
-  name, level, total XP, and whether they bought the golden border. Leaving the
-  class removes them from it.
+- **Leaderboard** — every student sees every other student's name, level,
+  total XP, and whether they bought the golden border. There are no classes
+  (0029): one leaderboard for everyone.
 - **Study rooms** — members of the same room see each other's name, whether
   they're focusing or on a break, and the room's chat messages. Once a group
   quiz ends, everyone who was in it sees every player's score and rank.
 - **Open rooms** — every signed-in student can see an open room's name, invite
   code, and member count, which is how the lobby works.
-- **Doubt board** — classmates see the doubts and answers posted in their class,
-  with the author's name. An AI answer is labelled as written from the asker's
+- **Doubt board** — one board shared by every student: the doubts and answers
+  posted there, with the author's name. An AI answer is labelled as written from the asker's
   notes. Blocking someone hides what they post.
 
 A few things stay on the phone and are never uploaded: timer presets, dark
-mode, whether reminders are on, whether the welcome tour has been seen, a copy
+mode, whether reminders are on and when, whether calendar sync is on and which
+calendar events it wrote, whether the welcome tour has been seen, a copy
 of the student's flashcards for offline review, and what the home-screen widgets
 show (exam dates, today's tasks, streak — cleared on sign-out).
 

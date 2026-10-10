@@ -247,7 +247,4 @@ class GoalRepository {
         .order('name', ascending: true);
     return rows.map(Subject.fromMap).toList();
   }
-
-  Future<void> toggleSubjectFocus(String subjectId, bool isFocus) =>
-      db.from('subjects').update({'is_focus': isFocus}).eq('id', subjectId);
 }

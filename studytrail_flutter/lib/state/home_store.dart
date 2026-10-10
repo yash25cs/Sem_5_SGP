@@ -96,19 +96,12 @@ class HomeStore extends AsyncStore {
     return ok;
   }
 
-  /// Subjects the student marked as focus, for the "Focus areas" row.
-  List<Subject> get focusSubjects =>
-      _subjects.where((s) => s.isFocus).toList();
-
   int get doneCount => _tasksToday.where((t) => t.done).length;
 
   /// How many tasks the last [planDayFromRoadmap] scheduled, and the milestone
   /// they came from — so the screen can name the week it just planned.
   int get plannedCount => _plannedCount;
   String? get plannedFrom => _plannedFrom;
-
-  double get todayProgress =>
-      _tasksToday.isEmpty ? 0 : doneCount / _tasksToday.length;
 
   bool _prefetched = false;
 
@@ -372,25 +365,10 @@ class HomeStore extends AsyncStore {
     }
   }
 
-  Future<bool> addTask({
-    required String title,
-    String? subjectId,
-    int? durationMin,
-  }) =>
-      runMutation(() async {
-        final created = await _tasks.createTask(
-          title: title,
-          goalId: _goal?.id,
-          subjectId: subjectId,
-          durationMin: durationMin,
-        );
-        _tasksToday = [..._tasksToday, created];
-      });
-
   /// Fills today's checklist from the next unfinished stretch of the roadmap.
   ///
   /// Without this the generated roadmap sat one tab away and Home stayed empty:
-  /// `daily_tasks` rows only ever came from [addTask]. Each seeded row carries its
+  /// `daily_tasks` rows were only ever added by hand. Each seeded row carries its
   /// `milestone_task_id`, which is what makes `complete_task` tick the roadmap
   /// checkbox in the same transaction — one tick, both screens.
   ///

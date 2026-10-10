@@ -17,7 +17,6 @@ class GamificationStore extends AsyncStore {
   List<AchievementBadge> _badges = const [];
   List<LeaderboardEntry> _leaderboard = const [];
   List<ActivityDay> _recent = const [];
-  List<String> _newlyUnlocked = const [];
 
   Profile? get profile => _profile;
   Streak get streak => _streak;
@@ -28,7 +27,6 @@ class GamificationStore extends AsyncStore {
 
   /// Badge keys this load unlocked for the first time — empty on every visit
   /// after the one that earned them.
-  List<String> get newlyUnlocked => _newlyUnlocked;
 
   int get unlockedCount => unlockedBadges.length;
 
@@ -112,7 +110,8 @@ class GamificationStore extends AsyncStore {
           _orElse(_game.getBadgeProgress(),
               const <String, (int, int, String?)>{}),
         ]);
-        _newlyUnlocked = results[0] as List<String>;
+        // results[0] is what evaluate_badges just unlocked; the badge list
+        // read after it already shows them as earned.
         final badges = results[1] as List<AchievementBadge>;
         final progress = results[6] as Map<String, (int, int, String?)>;
         _badges = [

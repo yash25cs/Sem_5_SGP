@@ -20,8 +20,10 @@ the first one.
 - **Version** is `version:` in `pubspec.yaml` — `1.0.0+1` is versionName `1.0.0`,
   versionCode `1`. Every upload needs a higher number after the `+`.
 - **Permissions:** `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`,
-  `VIBRATE`. No location, contacts, microphone or storage permission; the
-  camera opens through the system app.
+  `VIBRATE`, `READ_CALENDAR`, `WRITE_CALENDAR`. Calendar access is asked for
+  only when the student turns on *Add to my calendar*; nothing read from the
+  calendar leaves the phone. No location, contacts, microphone or storage
+  permission; the camera opens through the system app.
 - **Account deletion** is in the app (Settings → Delete account), as Play
   requires.
 - **Privacy policy and deletion pages:** `docs/privacy-policy.md` and
@@ -68,7 +70,7 @@ From README "What the app collects" — check them against the build you upload.
 | Data type | Collected | Why | Optional |
 |---|---|---|---|
 | Name, email address | Yes | Account | No |
-| User IDs (enrollment ID) | Yes | Academic profile | No |
+| Calendar events | Yes — StudyTrail writes its own events; none leave the phone | App functionality | Yes |
 | Photos | Yes — notes, papers, answers (answer photos deleted after marking) | App functionality | Yes |
 | Files and docs | Yes — uploaded study material | App functionality | Yes |
 | In-app messages | Yes — study-room chat, doubt board | App functionality | Yes |
@@ -85,7 +87,7 @@ From README "What the app collects" — check them against the build you upload.
 
 **Short description (80 characters max)**
 
-> Plan your exams, practise from your own notes, and study with your class.
+> Plan your exams, practise from your own notes, and study with others.
 
 **Full description**
 
@@ -99,13 +101,14 @@ From README "What the app collects" — check them against the build you upload.
 >   become cards in "My mistakes".
 > • Past papers: upload one and see which topics come up most, then take a
 >   mock exam weighted the same way.
-> • Answer practice: write a 5- or 10-mark answer — or photograph your
->   handwritten one — and get marked like an examiner would.
+> • Answer practice: theory answers or NEP-style case questions — typed or
+>   photographed — marked like an examiner would.
 > • Explanations in English, Hindi or Gujarati.
 > • Study rooms with a shared focus timer, chat and group quizzes, including a
 >   speed round.
-> • A class doubt board, a class leaderboard, streaks, badges and a weekly
->   report.
+> • A shared doubt board, a leaderboard, streaks, badges and a weekly report.
+> • Reminders at the time you choose, and your exams and plan in your phone's
+>   calendar.
 >
 > No ads. Your notes stay in your account, and you can delete everything from
 > Settings at any time.

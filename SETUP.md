@@ -182,9 +182,10 @@ list on a physical device before calling a build good.
 3. Upload a PDF. The tile goes **Processing** and reaches **Embedded** within
    about a minute; `material_chunks` fills up. A file over the size limit is
    refused with a readable message, not a crash.
-4. **Skip for now** also works — onboarding must not require a file.
-5. Set a target: goal name, exam date, pace, at least one subject. The footer
-   button stays disabled until the required fields are filled.
+4. **Skip for now** also works — onboarding must not require a file. The
+   same screen ends with **Daily study reminder**: tap the time to change it.
+5. Set a target: goal name, at least one subject with its exam date, and a
+   pace — a preset, or **Custom** for your own time a day.
 6. It lands on Home with the goal in the hero card.
 
 **The five tabs** — Home, Roadmap, Chat, Quiz, Profile. Flashcards, focus
@@ -230,13 +231,14 @@ the **+** button.
 
 **Rewards, reminders, account**
 
-19. **Leaderboard** (from **+**) — without a class it offers to pick one; after
-    joining, it lists only real classmates, ranked by total XP.
+19. **Leaderboard** (from **+**) — every student, ranked by total XP; if you
+    aren't in the top list, your own row follows it with your real rank.
 20. **Rewards** (from **+**) — the balance matches XP earned. With under 100 XP,
     **Redeem** is disabled and says how much more is needed.
-21. **Settings → Daily study reminder** — turning it on asks for notification
-    permission and confirms 6:00 PM. Turn it off and back on: no duplicate
-    reminders.
+21. **Settings → Daily study reminder** — tap the row to pick a time; turning
+    it on asks for notification permission and confirms the time. Turn it off
+    and back on: no duplicate reminders. **Settings → Pace → Custom** sets your
+    own time a day.
 22. **Settings → Delete account** with a throwaway account: the app returns to
     sign-in, and the account can no longer log in.
 
@@ -289,7 +291,7 @@ the **+** button.
     both: the card shows both scores ranked, *Answers* shows the right options,
     and the winner's XP goes up by 30 (second by 20 if they got any right). A
     second quiz where B taps *Not now* is cancelled for both.
-41. **Reminders** — study before 6 PM: no 6 PM reminder that day.
+41. **Reminders** — study before your reminder time: no reminder that day.
 42. **Handwritten answer** — Answer practice → *Photo of my paper*, photograph
     a written answer: it's marked, and *What I read from your page* shows the
     transcription.
@@ -302,11 +304,13 @@ the **+** button.
 46. **Speed round** (two phones) — the host picks *Speed round*, 10 s: both
     phones show a 5-second countdown, the same question at once, then the right
     answer and the scores; the faster right answer scores more.
-47. **Doubt board** (+ → Together, both accounts in one class) — A asks with
+47. **Doubt board** (+ → Together, any two accounts) — A asks with
     *Get a first answer from AI* on; B sees the doubt and the AI answer,
     answers, and A marks it solved.
-48. **Calendar** — Settings → *Add to my calendar*: the share sheet offers
-    `studytrail.ics`; importing it shows the exams with reminders.
+48. **Calendar** — Settings → *Add to my calendar*: allow calendar access, and
+    the exams (with reminders a week and a day before), roadmap weeks and
+    upcoming tasks appear in the phone's calendar. Tick a task and leave the
+    app: it disappears there. Turn the switch off: StudyTrail's events go.
 49. **Home-screen widgets** — Settings → *Home-screen widgets* → **Add** (or
     long-press the launcher → Widgets → StudyTrail). Three: **Today** (4×2:
     countdown, task ring, next tasks sliding past, Focus / Cards / Ask AI),

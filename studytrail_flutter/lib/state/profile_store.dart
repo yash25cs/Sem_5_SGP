@@ -14,7 +14,6 @@ class ProfileStore extends AsyncStore {
 
   Profile? _profile;
   List<Goal> _allGoals = const [];
-  List<Map<String, dynamic>> _classes = const [];
 
   Profile? get profile => _profile;
 
@@ -24,9 +23,6 @@ class ProfileStore extends AsyncStore {
 
   /// Every goal the student has, newest first, for the goal manager.
   List<Goal> get allGoals => _allGoals;
-
-  /// Classes the student can join, for the settings picker.
-  List<Map<String, dynamic>> get classes => _classes;
 
   Set<String> _heldRewards = const {};
 
@@ -39,8 +35,6 @@ class ProfileStore extends AsyncStore {
           // The whole list, not just the active one: Settings manages all of
           // them, and the active goal falls out of the same rows.
           _goals.getGoals(),
-          // Needed to resolve `class_id` into a name for the Settings row.
-          _profiles.getClasses(),
           // Only a look; a failed read keeps the plain card.
           _profiles
               .getHeldRewards()
@@ -48,8 +42,7 @@ class ProfileStore extends AsyncStore {
         ]);
         _profile = results[0] as Profile?;
         _allGoals = results[1] as List<Goal>;
-        _classes = results[2] as List<Map<String, dynamic>>;
-        _heldRewards = results[3] as Set<String>;
+        _heldRewards = results[2] as Set<String>;
       });
 
   Future<bool> updateProfile({
@@ -71,29 +64,6 @@ class ProfileStore extends AsyncStore {
       runMutation(() async {
         _profile = await _profiles.setAnswerLanguage(language);
       });
-
-  Future<bool> loadClasses() => runMutation(() async {
-        _classes = await _profiles.getClasses();
-      });
-
-  Future<bool> joinClass(String classId) => runMutation(() async {
-        await _profiles.joinClass(classId);
-        _profile = await _profiles.getMyProfile();
-      });
-
-  Future<bool> leaveClass() => runMutation(() async {
-        await _profiles.leaveClass();
-        _profile = await _profiles.getMyProfile();
-      });
-
-  /// Display name of the class the student belongs to, once [loadClasses] has
-  /// run. Null when they haven't joined one or the list isn't loaded yet.
-  String? get className {
-    final id = _profile?.classId;
-    if (id == null) return null;
-    final match = _classes.where((c) => c['id'] == id).firstOrNull;
-    return match?['name'] as String?;
-  }
 
   /// Edits a goal in place. Defaults to the active one, so the three shortcut
   /// rows in Settings keep working without naming an id.

@@ -32,36 +32,6 @@ class TaskRepository {
     return rows.map(DailyTask.fromMap).toList();
   }
 
-  Future<DailyTask> createTask({
-    required String title,
-    String? goalId,
-    String? subjectId,
-    String? milestoneTaskId,
-    int? durationMin,
-    TaskTag tag = TaskTag.now,
-    DateTime? scheduledDate,
-  }) async {
-    final draft = DailyTask(
-      id: '',
-      title: title,
-      subjectId: subjectId,
-      milestoneTaskId: milestoneTaskId,
-      durationMin: durationMin,
-      tag: tag,
-      scheduledDate: scheduledDate ?? DateTime.now(),
-    );
-    final row = await db
-        .from('daily_tasks')
-        .insert({
-          ...draft.toInsertMap(),
-          'user_id': requireUserId,
-          'goal_id': ?goalId,
-        })
-        .select('*, subjects(name)')
-        .single();
-    return DailyTask.fromMap(row);
-  }
-
   /// Schedules several roadmap tasks for one day in a single insert.
   ///
   /// Every row keeps its `milestone_task_id`, which is the whole point of this

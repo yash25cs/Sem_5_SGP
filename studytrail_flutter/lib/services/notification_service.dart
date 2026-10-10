@@ -194,8 +194,4 @@ class NotificationService {
       payload: payload,
     );
   }
-
-  Future<void> cancelAll() async {
-    await _notificationsPlugin.cancelAll();
-  }
 }

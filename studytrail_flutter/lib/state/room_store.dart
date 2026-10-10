@@ -64,7 +64,6 @@ class RoomStore extends AsyncStore {
   // ── Current room ──
   StudyRoom? _currentRoom;
   StudyRoom? get currentRoom => _currentRoom;
-  bool get inRoom => _currentRoom != null;
   bool get isHost =>
       _currentRoom != null && _currentRoom!.createdBy == _me;
 
@@ -133,7 +132,6 @@ class RoomStore extends AsyncStore {
   int get secondsLeft => _secondsLeft;
   int get totalSeconds => _totalSeconds;
   bool get timerRunning => _timerRunning;
-  String get timerPhase => _timerPhase;
   bool get isFocus => _timerPhase == 'focus';
 
   String get timerDisplay {

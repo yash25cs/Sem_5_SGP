@@ -105,9 +105,6 @@ class RoadmapRepository {
     return (result as num?)?.toDouble() ?? 0;
   }
 
-  Future<void> deleteMilestones(String goalId) =>
-      db.from('milestones').delete().eq('goal_id', goalId);
-
   /// Asks the `generate-roadmap` Edge Function to write a weekly plan for this
   /// goal. Returns how many milestones it saved.
   ///
@@ -116,7 +113,7 @@ class RoadmapRepository {
   /// function's service-role write is the only route a roadmap exists through.
   ///
   /// Replaces rather than appends — the function clears the goal's existing
-  /// milestones first, so [deleteMilestones] isn't needed around this call.
+  /// milestones first.
   Future<int> generateRoadmap(String goalId) async {
     final res = await db.functions.invoke(
       'generate-roadmap',

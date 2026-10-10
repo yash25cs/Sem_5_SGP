@@ -209,8 +209,6 @@ class _FakeProfiles extends ProfileRepository {
   @override
   Future<Profile?> getMyProfile() async => const Profile(id: 'me');
 
-  @override
-  Future<List<Map<String, dynamic>>> getClasses() async => const [];
 
   @override
   Future<Set<String>> getHeldRewards() async => held;

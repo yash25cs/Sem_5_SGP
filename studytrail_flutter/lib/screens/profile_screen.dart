@@ -10,6 +10,7 @@ import '../theme/badge_style.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
+import '../widgets/help_sheet.dart';
 import '../widgets/streak_heatmap.dart';
 import 'academic_profile_screen.dart';
 import 'achievements_screen.dart';
@@ -261,25 +262,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onChanged: (v) => context.read<ThemeController>().set(v),
                     )),
                 _divider(p),
-                _SettingRow(Symbols.target, 'Edit study goal', p.green,
+                // One way in: goals, pace, reminders and calendar all live
+                // in Settings. Two rows used to open the same screen.
+                _SettingRow(Symbols.settings, 'Goals, reminders & calendar',
+                    p.green,
                     trailing: _chevron(p),
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => SettingsScreen(
                             onBack: () => Navigator.pop(context))))),
                 _divider(p),
-                _SettingRow(Symbols.notifications, 'Study reminders', p.coral,
+                _SettingRow(Symbols.help, 'Help', p.amber,
                     trailing: _chevron(p),
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => SettingsScreen(
-                            onBack: () => Navigator.pop(context))))),
-                _divider(p),
-                _SettingRow(Symbols.help, 'Help & feedback', p.amber,
-                    trailing: _chevron(p),
-                    onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content:
-                                  Text('Reach out at yash@charusat.edu.in')),
-                        )),
+                    onTap: () => showHelpSheet(context)),
               ],
             ),
           ),
@@ -290,7 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: context.watch<AuthStore>().busy ? null : _confirmLogout),
           const SizedBox(height: 12),
           Center(
-            child: Text('StudyTrail v1.0 · Made for SGP',
+            child: Text('StudyTrail v1.0 · SGP project',
                 style: TextStyle(color: p.ink3, fontSize: 12)),
           ),
         ],

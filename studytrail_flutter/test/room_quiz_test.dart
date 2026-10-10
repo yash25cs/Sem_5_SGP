@@ -442,8 +442,6 @@ class _Profiles extends ProfileRepository {
   const _Profiles();
   @override
   Future<Profile?> getMyProfile() async => null;
-  @override
-  Future<List<Map<String, dynamic>>> getClasses() async => const [];
 }
 
 class _Goals extends GoalRepository {

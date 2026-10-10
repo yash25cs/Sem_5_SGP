@@ -366,13 +366,6 @@ class MaterialRepository {
     }
   }
 
-  /// Signed URL for previewing a private object.
-  Future<String> signedUrl(String storagePath, {int expiresIn = 3600}) {
-    return db.storage
-        .from(SupabaseConfig.materialsBucket)
-        .createSignedUrl(storagePath, expiresIn);
-  }
-
   /// Asks the `summarize-material` Edge Function to summarize this material
   /// into bullet points. Returns the summary text.
   Future<String> requestSummary(String materialId) async {

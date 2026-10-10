@@ -81,26 +81,6 @@ class FlashcardRepository {
     return rows.map(Flashcard.fromMap).toList();
   }
 
-  Future<Flashcard> createCard({
-    required String deckId,
-    required String front,
-    required String back,
-    String? unitLabel,
-  }) async {
-    final row = await db
-        .from('flashcards')
-        .insert({
-          'user_id': requireUserId,
-          'deck_id': deckId,
-          'front': front,
-          'back': back,
-          'unit_label': ?unitLabel,
-        })
-        .select()
-        .single();
-    return Flashcard.fromMap(row);
-  }
-
   /// Every card due within the next [days] — what the offline cache keeps, so
   /// a day or two without signal still has something to review.
   Future<List<Flashcard>> getUpcomingCards({int days = 7, int limit = 300}) async {
@@ -134,9 +114,6 @@ class FlashcardRepository {
 
   Future<void> deleteDeck(String deckId) =>
       db.from('flashcard_decks').delete().eq('id', deckId);
-
-  Future<void> deleteCard(String cardId) =>
-      db.from('flashcards').delete().eq('id', cardId);
 
   /// Asks the `generate-flashcards` Edge Function to write a deck from one
   /// material. Returns how many cards it saved.

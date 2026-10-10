@@ -254,16 +254,6 @@ class FlashcardStore extends AsyncStore {
         _decks = [deck, ..._decks];
       });
 
-  Future<bool> addCard({
-    required String deckId,
-    required String front,
-    required String back,
-  }) =>
-      runMutation(() async {
-        await _cards.createCard(deckId: deckId, front: front, back: back);
-        _decks = await _cards.getDecks();
-      });
-
   /// Deletes a deck and its cards (FK cascade). The phone's offline copy
   /// forgets it too, or an offline session could still open it.
   Future<bool> deleteDeck(FlashcardDeck deck) => runMutation(() async {
