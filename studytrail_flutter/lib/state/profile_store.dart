@@ -102,6 +102,7 @@ class ProfileStore extends AsyncStore {
     String? name,
     DateTime? examDate,
     Pace? pace,
+    int? dailyMinutes,
   }) =>
       runMutation(() async {
         final id = goalId ?? activeGoal?.id;
@@ -111,6 +112,7 @@ class ProfileStore extends AsyncStore {
           name: name,
           examDate: examDate,
           pace: pace,
+          dailyMinutes: dailyMinutes,
         );
         _allGoals = [
           for (final g in _allGoals) g.id == saved.id ? saved : g,

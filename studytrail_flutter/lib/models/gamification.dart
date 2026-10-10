@@ -143,7 +143,7 @@ class AchievementBadge {
   }
 }
 
-/// A row from the `get_class_leaderboard()` RPC.
+/// A row from the `get_class_leaderboard()` RPC — every student since 0029.
 class LeaderboardEntry {
   const LeaderboardEntry({
     required this.userId,
@@ -195,7 +195,9 @@ class LeaderboardEntry {
             0,
         goldenBorder: (m['golden_border'] as bool?) ?? false,
         isMe: (m['is_me'] as bool?) ?? false,
-        rank: rank,
+        // 0029 returns each row's real rank: the caller's own row can come
+        // after the top list, far down.
+        rank: (m['rank'] as num?)?.toInt() ?? rank,
       );
 }
 

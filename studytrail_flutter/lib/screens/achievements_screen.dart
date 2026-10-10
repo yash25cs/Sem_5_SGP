@@ -13,7 +13,7 @@ import '../widgets/streak_modal.dart';
 import 'leaderboard_screen.dart';
 import 'rewards_screen.dart';
 
-/// Achievements + class leaderboard screen.
+/// Achievements + leaderboard screen.
 class AchievementsScreen extends StatefulWidget {
   const AchievementsScreen({super.key, this.onBack});
   final VoidCallback? onBack;
@@ -226,7 +226,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   const SizedBox(height: 22),
 
                   CardHeader(
-                    'Class leaderboard',
+                    'Leaderboard',
                     action: TextButton.icon(
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
@@ -242,12 +242,8 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   else if (entries.isEmpty)
                     EmptyState(
                       icon: Symbols.leaderboard,
-                      title: store.profile?.classId == null
-                          ? 'Not in a class yet'
-                          : 'No rankings yet',
-                      message: store.profile?.classId == null
-                          ? 'Join your class from Study Rooms to see how you rank.'
-                          : 'Classmates appear here as they earn XP.',
+                      title: 'No rankings yet',
+                      message: 'Students appear here as they earn XP.',
                     )
                   else
                     AppCard(

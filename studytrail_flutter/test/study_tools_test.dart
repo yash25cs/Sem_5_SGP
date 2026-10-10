@@ -1,8 +1,10 @@
-// Speed rounds, the calendar export, the weekly report, the doubt board, and
+// Speed rounds, calendar sync, the weekly report, the doubt board, and
 // how their screens fit a 320-dp phone.
 
 import 'package:flutter/material.dart' hide MaterialType;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
 import 'package:studytrail_flutter/data/repositories.dart';
@@ -10,7 +12,8 @@ import 'package:studytrail_flutter/models/models.dart';
 import 'package:studytrail_flutter/screens/doubt_board_screen.dart';
 import 'package:studytrail_flutter/screens/room_quiz_screen.dart';
 import 'package:studytrail_flutter/screens/weekly_report_screen.dart';
-import 'package:studytrail_flutter/services/calendar_export.dart';
+import 'package:studytrail_flutter/services/calendar_sync.dart';
+import 'package:studytrail_flutter/services/notification_service.dart';
 import 'package:studytrail_flutter/state/stores.dart';
 import 'package:studytrail_flutter/theme/app_theme.dart';
 
@@ -69,8 +72,7 @@ void main() {
     });
   });
 
-  group('CalendarExport', () {
-    final now = DateTime.utc(2026, 10, 2, 8, 30);
+  group('CalendarSync', () {
     final goal = Goal(
       id: 'g1',
       name: 'Sem 5, end-sem; DBMS & ML',
@@ -78,8 +80,9 @@ void main() {
       roadmapStartedOn: DateTime(2026, 10, 5),
     );
 
-    test('one all-day event per subject exam, with two reminders', () {
-      final ics = CalendarExport.build(
+    test('one all-day event per subject exam, reminded a week and a day before',
+        () {
+      final events = CalendarSync.events(
         goals: [goal],
         subjectsByGoal: {
           'g1': [
@@ -87,29 +90,23 @@ void main() {
             const Subject(id: 's2', name: 'ML'),
           ],
         },
-        now: now,
       );
-      expect(ics, startsWith('BEGIN:VCALENDAR\r\n'));
-      expect(ics, endsWith('END:VCALENDAR\r\n'));
-      expect(ics, contains('UID:exam-s1@studytrail'));
-      expect(ics, contains('DTSTART;VALUE=DATE:20261120'));
-      expect(ics, contains('DTEND;VALUE=DATE:20261121'));
-      expect(ics, contains('TRIGGER:-P7D'));
-      expect(ics, contains('TRIGGER:-P1D'));
-      // A dated subject makes the goal's own date redundant.
-      expect(ics, isNot(contains('goal-g1')));
-      expect(ics, contains('DTSTAMP:20261002T083000Z'));
+      expect(events.map((e) => e.key), ['exam-s1']);
+      final exam = events.single.toChannel();
+      expect(exam['title'], 'Exam: DBMS');
+      expect(exam['start'], '2026-11-20');
+      expect(exam['end'], '2026-11-21');
+      expect(exam['reminders'], [7 * 24 * 60, 24 * 60]);
     });
 
     test("the goal's date stands in when no subject has one", () {
-      final ics = CalendarExport.build(goals: [goal], now: now);
-      expect(ics, contains('UID:goal-g1@studytrail'));
-      // Commas and semicolons are escaped in TEXT values.
-      expect(ics, contains(r'SUMMARY:Exam: Sem 5\, end-sem\; DBMS & ML'));
+      final events = CalendarSync.events(goals: [goal]);
+      expect(events.single.key, 'goal-g1');
+      expect(events.single.title, 'Exam: Sem 5, end-sem; DBMS & ML');
     });
 
     test('roadmap weeks span seven days from the start, in order', () {
-      final ics = CalendarExport.build(
+      final events = CalendarSync.events(
         goals: const [],
         roadmapGoal: goal,
         milestones: const [
@@ -121,43 +118,75 @@ void main() {
               orderIndex: 0,
               tasks: [MilestoneTask(id: 't', name: 'Revise 3NF')]),
         ],
-        now: now,
       );
-      final w1 = ics.indexOf('UID:week-m1');
-      final w2 = ics.indexOf('UID:week-m2');
-      expect(w1, lessThan(w2));
-      expect(ics, contains('SUMMARY:Week 1: Normalisation'));
-      expect(ics, contains('DTSTART;VALUE=DATE:20261005'));
-      expect(ics, contains('DTEND;VALUE=DATE:20261012'));
-      expect(ics, contains('SUMMARY:Week 2: Indexing'));
-      expect(ics, contains(r'DESCRIPTION:• Revise 3NF'));
+      expect(events.map((e) => e.key), ['week-m1', 'week-m2']);
+      expect(events.first.title, 'Week 1: Normalisation');
+      expect(events.first.toChannel()['start'], '2026-10-05');
+      expect(events.first.toChannel()['end'], '2026-10-12');
+      expect(events.first.description, '• Revise 3NF');
+      expect(events.last.title, 'Week 2: Indexing');
     });
 
-    test('long lines fold at 75 octets without splitting a character', () {
-      final ics = CalendarExport.build(
-        goals: const [],
-        tasks: [
-          DailyTask(
-              id: 't1',
-              title: 'નોર્મલાઇઝેશન ' * 12,
-              scheduledDate: DateTime(2026, 10, 3)),
-        ],
-        now: now,
-      );
-      final summary = ics
-          .split('\r\n')
-          .skipWhile((l) => !l.startsWith('SUMMARY:Study:'))
-          .takeWhile((l) => l.startsWith('SUMMARY') || l.startsWith(' '))
-          .toList();
-      expect(summary.length, greaterThan(1));
-      for (final l in summary) {
-        expect(const Utf8Length().of(l), lessThanOrEqualTo(75));
-      }
-      // Unfolded, it reads back as written.
-      final unfolded =
-          summary.first + summary.skip(1).map((l) => l.substring(1)).join();
-      expect(unfolded, 'SUMMARY:Study: ${'નોર્મલાઇઝેશન ' * 12}');
+    group('writing to the phone', () {
+      const channel = MethodChannel('studytrail/calendar');
+      final calls = <MethodCall>[];
+
+      setUp(() {
+        SharedPreferences.setMockInitialValues({});
+        calls.clear();
+      });
+      tearDown(() => TestDefaultBinaryMessengerBinding
+          .instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null));
+
+      void phone(Future<Object?> Function(MethodCall) handler) =>
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) {
+            calls.add(call);
+            return handler(call);
+          });
+
+      final events = [
+        CalendarEvent(
+            key: 'exam-s1',
+            title: 'Exam: DBMS',
+            start: DateTime(2026, 11, 20),
+            end: DateTime(2026, 11, 21)),
+      ];
+
+      test('remembers the ids it wrote and hands them back next time',
+          () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        phone((_) async => {
+              'calendar': 'me@gmail.com',
+              'ids': {'exam-s1': 41},
+            });
+
+        final first = await CalendarSync.write(events);
+        expect(first.ok, isTrue);
+        expect(first.events, 1);
+        expect(first.calendar, 'me@gmail.com');
+
+        await CalendarSync.write(events);
+        final known = (calls.last.arguments as Map)['known'] as Map;
+        expect(known, {'exam-s1': 41});
+      });
+
+      test('a refused permission says so', () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        phone((_) async =>
+            throw PlatformException(code: 'denied', message: 'no'));
+        final r = await CalendarSync.write(events);
+        expect(r.failure, CalendarSyncFailure.denied);
+      });
     });
+  });
+
+  test('the streak nudge follows a late study reminder, never past midnight',
+      () {
+    expect(NotificationService.streakReminderTime(18 * 60), (21, 0));
+    expect(NotificationService.streakReminderTime(20 * 60 + 30), (21, 30));
+    expect(NotificationService.streakReminderTime(23 * 60 + 15), (-1, -1));
   });
 
   test('the weekly report parses this week, last week and the units', () {
@@ -202,12 +231,6 @@ void main() {
       expect(store.thread!.solved, isTrue);
     });
 
-    test('a student without a class is told to join one', () async {
-      final store = DoubtStore(doubts: _Doubts(noClass: true));
-      addTearDown(store.dispose);
-      await store.load();
-      expect(store.error, contains('Join your class'));
-    });
   });
 
   // ── Layout at 320 dp ──────────────────────────────────────────────────────
@@ -336,7 +359,7 @@ class _Game extends GamificationRepository {
 }
 
 class _Doubts extends DoubtRepository {
-  _Doubts({this.noClass = false, bool seeded = false}) {
+  _Doubts({bool seeded = false}) {
     if (seeded) {
       _thread = DoubtThread(
         id: 'd1',
@@ -377,7 +400,6 @@ class _Doubts extends DoubtRepository {
     }
   }
 
-  final bool noClass;
   DoubtThread? _thread;
 
   List<DoubtSummary> get _list => _thread == null
@@ -399,10 +421,6 @@ class _Doubts extends DoubtRepository {
 
   @override
   Future<List<DoubtSummary>> getDoubts({String filter = 'all'}) async {
-    if (noClass) {
-      throw 'Join your class first — the doubt board is shared with your '
-          'classmates.';
-    }
     return _list;
   }
 

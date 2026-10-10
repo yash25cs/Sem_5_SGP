@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Exams and the study plan are written into the phone's calendar
+         (CalendarChannel.kt), only after the student turns that on. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR"/>
+    <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
     <!-- No SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM: the daily reminder is
          scheduled inexact, and Play reserves USE_EXACT_ALARM for alarm-clock
          and calendar apps. -->

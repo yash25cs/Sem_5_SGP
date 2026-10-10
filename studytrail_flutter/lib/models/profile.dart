@@ -120,12 +120,22 @@ class Goal {
     this.overallPercent = 0,
     this.isActive = true,
     this.roadmapStartedOn,
+    this.dailyMinutes,
   });
 
   final String id;
   final String name;
   final DateTime? examDate;
   final Pace pace;
+
+  /// Study time a day the student set themselves (`0029`); null when a
+  /// preset [pace] stands.
+  final int? dailyMinutes;
+
+  /// "Steady", or "Custom · 2.5 hrs/day".
+  String get paceLabel => dailyMinutes == null
+      ? pace.label
+      : 'Custom · ${formatStudyTime(dailyMinutes!)}/day';
   final int? roadmapDays;
   final int currentDay;
   final double overallPercent;
@@ -158,6 +168,7 @@ class Goal {
             ? null
             : DateTime.parse(m['roadmap_started_on'] as String),
         isActive: (m['is_active'] as bool?) ?? true,
+        dailyMinutes: (m['daily_minutes'] as num?)?.toInt(),
       );
 
   /// `user_id` is filled in by the repository from the live session.

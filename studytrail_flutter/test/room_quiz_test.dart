@@ -110,7 +110,7 @@ class _Rooms extends RoomRepository {
   (int, int)? createdTimer;
 
   @override
-  Future<List<StudyRoom>> getActiveRooms({String? classId}) async => const [];
+  Future<List<StudyRoom>> getActiveRooms() async => const [];
 
   @override
   Future<StudyRoom> createRoom({

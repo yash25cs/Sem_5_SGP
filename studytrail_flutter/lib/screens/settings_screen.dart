@@ -3,7 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../data/local_prefs.dart';
-import '../services/calendar_export.dart';
+import '../services/calendar_sync.dart';
 import '../services/home_widget_sync.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
@@ -11,10 +11,12 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/common.dart';
+import '../widgets/custom_pace_sheet.dart';
 import '../widgets/data_states.dart';
 import '../widgets/home_widgets_sheet.dart';
 import '../state/reminder_sync.dart';
 import '../widgets/nav.dart';
+import '../widgets/reminder_time.dart';
 import 'academic_profile_screen.dart';
 import 'set_target_screen.dart';
 
@@ -35,6 +37,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// to be a local bool that reset every visit and scheduled nothing.
   bool _notifications = true;
 
+  /// When the daily reminder fires, minutes after midnight.
+  int _reminderMinute = LocalPrefs.defaultReminderMinute;
+
+  /// Exams and the plan kept in the phone's calendar.
+  bool _calendarSync = false;
+  bool _syncingCalendar = false;
+
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -46,17 +55,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<ProfileStore>().load();
     });
-    LocalPrefs.remindersEnabled().then((on) {
-      if (mounted) setState(() => _notifications = on);
+    Future.wait([
+      LocalPrefs.remindersEnabled(),
+      LocalPrefs.reminderMinute(),
+      LocalPrefs.calendarSync(),
+    ]).then((r) {
+      if (!mounted) return;
+      setState(() {
+        _notifications = r[0] as bool;
+        _reminderMinute = r[1] as int;
+        _calendarSync = r[2] as bool;
+      });
     });
+  }
+
+  Future<void> _pickReminderTime() async {
+    final minute = await pickReminderTime(context, _reminderMinute);
+    if (minute == null || !mounted) return;
+    setState(() {
+      _reminderMinute = minute;
+      _notifications = true;
+    });
+    _toast('Daily reminder set for ${reminderTimeLabel(context, minute)}.');
   }
 
   Future<void> _setReminders(bool on) async {
     setState(() => _notifications = on);
     await LocalPrefs.setRemindersEnabled(on);
     await ReminderSync.run(askPermission: on);
+    if (!mounted) return;
     _toast(on
-        ? 'Reminders on: 6 PM, and 9 PM if your streak is at risk.'
+        ? 'Reminders on: every day at ${reminderTimeLabel(context, _reminderMinute)}.'
         : 'Daily study reminder turned off.');
   }
 
@@ -116,7 +145,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600)),
               subtitle: Text(
-                  '${_dateLabel(g.examDate)} · ${g.pace.label}'
+                  '${_dateLabel(g.examDate)} · ${g.paceLabel}'
                   '${g.id == activeId ? ' · active' : ''}',
                   style: TextStyle(color: p.ink3, fontSize: 12)),
               trailing: Row(
@@ -290,7 +319,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    final picked = await _showSheet<Pace>(
+    // null: dismissed; a Pace: a preset; 'custom': set their own.
+    final picked = await _showSheet<Object>(
       title: 'Study pace',
       builder: (sheetContext) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -304,29 +334,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       color: context.p.ink,
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600)),
-              trailing: goal.pace == pace
+              subtitle: Text('${formatStudyTime(pace.minutes)} a day',
+                  style: TextStyle(color: context.p.ink3, fontSize: 12)),
+              trailing: goal.dailyMinutes == null && goal.pace == pace
                   ? Icon(Symbols.check, color: context.p.primary)
                   : null,
               onTap: () => Navigator.of(sheetContext).pop(pace),
             ),
+          ListTile(
+            key: const ValueKey('settings-pace-custom'),
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Symbols.tune, color: context.p.primary),
+            title: Text('Custom',
+                style: TextStyle(
+                    color: context.p.ink,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600)),
+            subtitle: Text(
+                goal.dailyMinutes == null
+                    ? 'Set your own time a day'
+                    : '${formatStudyTime(goal.dailyMinutes!)} a day',
+                style: TextStyle(color: context.p.ink3, fontSize: 12)),
+            trailing: goal.dailyMinutes != null
+                ? Icon(Symbols.check, color: context.p.primary)
+                : Icon(Symbols.chevron_right, color: context.p.ink3),
+            onTap: () => Navigator.of(sheetContext).pop('custom'),
+          ),
         ],
       ),
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
 
-    final ok = await store.updateGoal(pace: picked);
-    _toast(ok ? 'Pace updated' : store.error ?? 'Could not save');
+    final bool ok;
+    if (picked is Pace) {
+      ok = await store.updateGoal(pace: picked);
+    } else {
+      final minutes = await showCustomPaceSheet(context,
+          initial: goal.dailyMinutes ?? goal.pace.minutes);
+      if (minutes == null) return;
+      ok = await store.updateGoal(dailyMinutes: minutes);
+    }
+    _toast(ok
+        ? 'Pace updated. It applies the next time your roadmap is written.'
+        : store.error ?? 'Could not save');
   }
 
-  Future<void> _exportCalendar() async {
-    _toast('Putting your calendar together…');
+  /// Turns calendar sync on (adding everything now, asking for access the
+  /// first time) or off (taking StudyTrail's events back out).
+  Future<void> _setCalendarSync(bool on) async {
+    if (_syncingCalendar) return;
+    if (!on) {
+      setState(() => _calendarSync = false);
+      await LocalPrefs.setCalendarSync(false);
+      await CalendarSync.removeAll();
+      _toast('Removed StudyTrail from your calendar.');
+      return;
+    }
+    await _syncCalendar(turningOn: true);
+  }
+
+  Future<void> _syncCalendar({bool turningOn = false}) async {
+    setState(() => _syncingCalendar = true);
     try {
-      final events = await CalendarExport.collectAndShare();
-      if (events == 0) {
-        _toast('Nothing to add yet — set an exam date or plan a roadmap first.');
+      final result = await CalendarSync.syncNow();
+      if (!mounted) return;
+      if (result.ok) {
+        await LocalPrefs.setCalendarSync(true);
+        setState(() => _calendarSync = true);
+        _toast(result.events == 0
+            ? 'Calendar sync is on. Set an exam date or plan a roadmap and it shows up there.'
+            : 'Added ${result.events} event${result.events == 1 ? '' : 's'} to '
+                '${result.calendar ?? 'your calendar'}. It stays up to date.');
+      } else {
+        _toast(switch (result.failure!) {
+          CalendarSyncFailure.denied =>
+            'Allow calendar access to add your exams and plan.',
+          CalendarSyncFailure.noCalendar =>
+            'No calendar on this phone can take events.',
+          CalendarSyncFailure.unsupported =>
+            'Adding to the calendar works on Android phones.',
+          CalendarSyncFailure.failed =>
+            "Couldn't write to your calendar. Try again.",
+        });
+        if (turningOn) setState(() => _calendarSync = false);
       }
     } catch (_) {
-      _toast("Couldn't build your calendar. Check your connection.");
+      _toast("Couldn't read your plan. Check your connection.");
+    } finally {
+      if (mounted) setState(() => _syncingCalendar = false);
     }
   }
 
@@ -367,60 +462,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _toast(ok
         ? 'Explanations will come in ${picked.label}.'
         : store.error ?? 'Could not save');
-  }
-
-  /// Joining a class is what puts the student on the leaderboard.
-  Future<void> _pickClass() async {
-    final store = context.read<ProfileStore>();
-    if (store.classes.isEmpty) await store.loadClasses();
-    if (!mounted) return;
-
-    if (store.classes.isEmpty) {
-      _toast('No classes are set up yet.');
-      return;
-    }
-
-    final currentId = store.profile?.classId;
-    final picked = await _showSheet<String>(
-      title: 'Your class',
-      builder: (sheetContext) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final c in store.classes)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Symbols.groups, color: context.p.primary),
-              title: Text((c['name'] as String?) ?? 'Class',
-                  style: TextStyle(
-                      color: context.p.ink,
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600)),
-              trailing: currentId == c['id']
-                  ? Icon(Symbols.check, color: context.p.primary)
-                  : null,
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(c['id'] as String),
-            ),
-          if (currentId != null)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Symbols.logout, color: context.p.error),
-              title: Text('Leave class',
-                  style: TextStyle(
-                      color: context.p.error,
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600)),
-              onTap: () => Navigator.of(sheetContext).pop('__leave__'),
-            ),
-        ],
-      ),
-    );
-    if (picked == null) return;
-
-    final ok = picked == '__leave__'
-        ? await store.leaveClass()
-        : await store.joinClass(picked);
-    _toast(ok ? 'Class updated' : store.error ?? 'Could not save');
   }
 
   Future<void> _logout() async {
@@ -672,7 +713,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // "Sound effects" used to sit here too, a switch wired to
                   // nothing — the app plays no sounds.
                   _Row(Symbols.notifications, 'Daily study reminder', p.coral,
-                      value: '6:00 PM',
+                      key: const ValueKey('settings-reminder'),
+                      value: _notifications
+                          ? reminderTimeLabel(context, _reminderMinute)
+                          : 'Off',
+                      onTap: _pickReminderTime,
                       trailing: Switch(
                         value: _notifications,
                         onChanged: _setReminders,
@@ -725,22 +770,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       trailing: _chev(p),
                       onTap: _editExamDate),
                   _Row(Symbols.speed, 'Pace', p.amber,
-                      value: goal?.pace.label ?? '—',
+                      value: goal?.paceLabel ?? '—',
                       trailing: _chev(p),
                       onTap: _editPace),
                   _Row(Symbols.calendar_add_on, 'Add to my calendar', p.green,
-                      value: 'Exams & plan',
-                      trailing: _chev(p),
-                      onTap: _exportCalendar),
+                      key: const ValueKey('settings-calendar'),
+                      value: _syncingCalendar
+                          ? 'Adding…'
+                          : _calendarSync
+                              ? 'Synced'
+                              : 'Exams & plan',
+                      // With sync on, a tap brings it up to date right now.
+                      onTap: _syncingCalendar
+                          ? null
+                          : () => _calendarSync
+                              ? _syncCalendar()
+                              : _setCalendarSync(true),
+                      trailing: Switch(
+                        value: _calendarSync,
+                        onChanged:
+                            _syncingCalendar ? null : _setCalendarSync,
+                      )),
                 ]),
                 const SizedBox(height: 20),
 
                 _GroupLabel('Account'),
                 _Group(children: [
-                  _Row(Symbols.groups, 'Class', p.primary,
-                      value: store.className ?? 'Not joined',
-                      trailing: _chev(p),
-                      onTap: _pickClass),
                   _Row(Symbols.lock, 'Privacy & security', p.green,
                       trailing: _chev(p),
                       onTap: () => _toast(
@@ -870,7 +925,7 @@ class _Group extends StatelessWidget {
 
 class _Row extends StatelessWidget {
   const _Row(this.icon, this.label, this.color,
-      {this.value, required this.trailing, this.onTap});
+      {super.key, this.value, required this.trailing, this.onTap});
   final IconData icon;
   final String label;
   final Color color;

@@ -9,7 +9,6 @@ import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
-import 'settings_screen.dart';
 
 String _ago(DateTime at) {
   final d = DateTime.now().difference(at.toLocal());
@@ -27,7 +26,7 @@ void _toast(BuildContext context, String message) {
   );
 }
 
-/// Report or block, for a classmate's doubt or answer.
+/// Report or block, for another student's doubt or answer.
 Future<void> _moderate(
   BuildContext context, {
   required String userId,
@@ -108,7 +107,8 @@ Future<void> _moderate(
   }
 }
 
-/// The class's doubt board: ask, answer, upvote, mark solved.
+/// The doubt board, shared by every student (0029): ask, answer, upvote,
+/// mark solved.
 class DoubtBoardScreen extends StatefulWidget {
   const DoubtBoardScreen({super.key, this.onBack});
 
@@ -151,21 +151,16 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
   Widget build(BuildContext context) {
     final p = context.p;
     final store = context.watch<DoubtStore>();
-    final noClass = (store.error ?? '').contains('Join your class');
-
     return Scaffold(
       backgroundColor: p.bg,
-      floatingActionButton: noClass
-          ? null
-          : FloatingActionButton.extended(
-              key: const ValueKey('ask-doubt'),
-              onPressed: _ask,
-              backgroundColor: p.primary,
-              icon: const Icon(Symbols.add_comment, color: Colors.white),
-              label: const Text('Ask a doubt',
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w800)),
-            ),
+      floatingActionButton: FloatingActionButton.extended(
+        key: const ValueKey('ask-doubt'),
+        onPressed: _ask,
+        backgroundColor: p.primary,
+        icon: const Icon(Symbols.add_comment, color: Colors.white),
+        label: const Text('Ask a doubt',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+      ),
       body: Column(
         children: [
           const TopInset(),
@@ -186,7 +181,7 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
                               color: p.ink,
                               fontSize: 19,
                               fontWeight: FontWeight.w800)),
-                      Text('Ask your class · classmates and AI answer',
+                      Text('Ask everyone · students and AI answer',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(color: p.ink3, fontSize: 12)),
@@ -196,8 +191,7 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
               ],
             ),
           ),
-          if (!noClass)
-            Padding(
+          Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Wrap(
                 spacing: 8,
@@ -220,21 +214,7 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
                 children: [
-                  if (noClass)
-                    EmptyState(
-                      icon: Symbols.groups,
-                      title: 'Join your class first',
-                      message: 'The doubt board is shared with your '
-                          'classmates. Pick your class in Settings → Class.',
-                      actionLabel: 'Open Settings',
-                      onAction: () async {
-                        await Navigator.of(context).push(MaterialPageRoute(
-                            builder: (ctx) => SettingsScreen(
-                                onBack: () => Navigator.of(ctx).pop())));
-                        if (mounted) store.load();
-                      },
-                    )
-                  else if (store.error != null)
+                  if (store.error != null)
                     ErrorNotice(message: store.error!, onRetry: store.load)
                   else if (store.loading && store.doubts.isEmpty)
                     const LoadingBlock(height: 160)
@@ -244,7 +224,7 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
                       title: store.filter == 'mine'
                           ? "You haven't asked anything yet"
                           : 'No doubts here yet',
-                      message: 'Stuck on something? Ask it here — classmates '
+                      message: 'Stuck on something? Ask it here — other students '
                           'can answer, and the AI can give a first answer '
                           'from your notes.',
                       actionLabel: 'Ask a doubt',
@@ -412,11 +392,11 @@ class _AskSheetState extends State<_AskSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Ask your class',
+            Text('Ask everyone',
                 style: TextStyle(
                     color: p.ink, fontSize: 19, fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
-            Text('Your classmates see your name and your question.',
+            Text('Other students see your name and your question.',
                 style: TextStyle(color: p.ink3, fontSize: 12.5)),
             const SizedBox(height: 14),
             TextField(
@@ -454,7 +434,7 @@ class _AskSheetState extends State<_AskSheet> {
                   style: TextStyle(
                       color: p.ink, fontSize: 14, fontWeight: FontWeight.w700)),
               subtitle: Text(
-                  'Written from your own notes; classmates see it '
+                  'Written from your own notes; other students see it '
                   'too.',
                   style: TextStyle(color: p.ink3, fontSize: 12)),
             ),

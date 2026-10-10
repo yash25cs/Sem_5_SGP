@@ -11,7 +11,7 @@ import '../widgets/nav.dart';
 import 'study_room_screen.dart';
 
 /// Study buddies — browse active study rooms, join by code, create rooms,
-/// and view classmates in your cohort.
+/// and see where you stand among every StudyTrail student.
 class BuddyRoomScreen extends StatefulWidget {
   const BuddyRoomScreen({super.key, this.onBack});
 
@@ -34,7 +34,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       final game = context.read<GamificationStore>();
       if (!game.loaded) game.load();
       final rooms = context.read<RoomStore>();
-      rooms.loadLobby(classId: profiles.profile?.classId);
+      rooms.loadLobby();
     });
   }
 
@@ -56,7 +56,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     if (!mounted) return;
     await context.read<GamificationStore>().load();
     if (!mounted) return;
-    await context.read<RoomStore>().loadLobby(classId: profiles.profile?.classId);
+    await context.read<RoomStore>().loadLobby();
   }
 
   /// Pushes the room screen for the room the store has already entered.
@@ -65,8 +65,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       MaterialPageRoute(
         builder: (_) => StudyRoomScreen(
           onLeave: () {
-            context.read<RoomStore>().loadLobby(
-                classId: context.read<ProfileStore>().profile?.classId);
+            context.read<RoomStore>().loadLobby();
           },
         ),
       ),
@@ -104,7 +103,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
       _openRoom(joined);
     } else {
       _toast(store.error ?? 'Could not join that room.');
-      store.loadLobby(classId: context.read<ProfileStore>().profile?.classId);
+      store.loadLobby();
     }
   }
 
@@ -246,12 +245,8 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   }
 
                   final store = sheetCtx.read<RoomStore>();
-                  final classId =
-                      sheetCtx.read<ProfileStore>().profile?.classId;
-
                   final room = await store.createRoom(
                     name: name,
-                    classId: classId,
                     maxMembers: maxMembers,
                   );
 
@@ -275,115 +270,15 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     }
   }
 
-  Future<void> _joinClass() async {
-    final store = context.read<ProfileStore>();
-    if (store.classes.isEmpty) await store.loadClasses();
-    if (!mounted) return;
-
-    if (store.classes.isEmpty) {
-      _toast('No classes are set up yet.');
-      return;
-    }
-
-    final p = context.p;
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: p.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-                child: Text('Pick your class',
-                    style: TextStyle(
-                        color: p.ink,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800)),
-              ),
-              for (final c in store.classes)
-                ListTile(
-                  leading: Icon(Symbols.groups, color: p.primary),
-                  title: Text((c['name'] as String?) ?? 'Class',
-                      style: TextStyle(
-                          color: p.ink,
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w600)),
-                  onTap: () => Navigator.of(sheetContext).pop(c['id'] as String),
-                ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (picked == null || !mounted) return;
-
-    final ok = await store.joinClass(picked);
-    if (!mounted) return;
-    if (!ok) {
-      _toast(store.error ?? 'Could not join that class');
-      return;
-    }
-    await _refresh();
-  }
-
-  Future<void> _leaveClass() async {
-    final p = context.p;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: p.card,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Text('Leave this class?',
-            style: TextStyle(
-                color: p.ink, fontSize: 18, fontWeight: FontWeight.w800)),
-        content: Text(
-            'You’ll drop off the class leaderboard. Your streak, XP and badges '
-            'stay with you.',
-            style: TextStyle(color: p.ink2, fontSize: 14, height: 1.45)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text('Cancel', style: TextStyle(color: p.ink2)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text('Leave',
-                style: TextStyle(color: p.error, fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final store = context.read<ProfileStore>();
-    final ok = await store.leaveClass();
-    if (!mounted) return;
-    if (!ok) {
-      _toast(store.error ?? 'Could not leave the class');
-      return;
-    }
-    await _refresh();
-  }
-
   String _thousands(int n) =>
       n.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    final profiles = context.watch<ProfileStore>();
     final game = context.watch<GamificationStore>();
     final roomStore = context.watch<RoomStore>();
 
-    final joined = profiles.profile?.classId != null;
     final members = game.leaderboard;
     final activeRooms = roomStore.activeRooms;
 
@@ -413,7 +308,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                         ),
                       ),
                       Text(
-                        'Focus with classmates in real-time',
+                        'Focus with other students in real time',
                         style: TextStyle(color: p.ink3, fontSize: 12),
                       ),
                     ],
@@ -528,8 +423,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   if (roomStore.error != null && !roomStore.busy) ...[
                     ErrorNotice(
                       message: roomStore.error!,
-                      onRetry: () => roomStore.loadLobby(
-                          classId: profiles.profile?.classId),
+                      onRetry: () => roomStore.loadLobby(),
                     ),
                     const SizedBox(height: 10),
                   ],
@@ -556,7 +450,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Start a room and invite your classmates to focus together!',
+                            'Start a room and share its code to focus together!',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: p.ink3, fontSize: 12.5),
                           ),
@@ -580,95 +474,49 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ── Class Cohort Section ──
+                  // ── Everyone on StudyTrail ──
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      Icon(Symbols.public, size: 20, color: p.primary),
+                      const SizedBox(width: 6),
                       Flexible(
-                        child: Row(
-                          children: [
-                            Icon(Symbols.school, size: 20, color: p.primary),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                'Your Class Cohort',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: p.ink,
-                                  fontSize: 16.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (joined)
-                        TextButton(
-                          onPressed: profiles.busy ? null : _leaveClass,
-                          child: Text(
-                            'Leave Class',
-                            style: TextStyle(
-                              color: p.error,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
-                            ),
+                        child: Text(
+                          'Top students',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: p.ink,
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),
-
-                  if (!joined)
+                  _CommunityCard(myRank: game.myRank),
+                  const SizedBox(height: 16),
+                  if (game.loading && !game.loaded)
+                    const LoadingBlock(height: 120)
+                  else if (members.isEmpty)
                     EmptyState(
-                      icon: Symbols.groups,
-                      title: 'You haven’t joined a class yet',
-                      message:
-                          'Join your college class to see cohort rankings and rooms.',
-                      actionLabel: 'Join a class',
-                      onAction: profiles.busy ? null : _joinClass,
+                      icon: Symbols.person_add,
+                      title: 'No rankings yet',
+                      message: 'Students show up here as they earn XP.',
                     )
-                  else ...[
-                    _ClassCard(
-                      name: profiles.className ?? 'Your class',
-                      memberCount: members.length,
-                      myRank: game.myRank,
-                    ),
-                    const SizedBox(height: 16),
-                    CardHeader('Classmates',
-                        action: game.loading && !game.loaded
-                            ? SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                    color: p.ink3, strokeWidth: 2),
-                              )
-                            : null),
-                    if (game.loading && !game.loaded)
-                      const LoadingBlock(height: 120)
-                    else if (members.isEmpty)
-                      EmptyState(
-                        icon: Symbols.person_add,
-                        title: 'Nobody else here yet',
-                        message:
-                            'You’re the first from this class on StudyTrail. '
-                            'Classmates show up as soon as they join.',
-                      )
-                    else
-                      AppCard(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Column(
-                          children: [
-                            for (final entry in members)
-                              _MemberRow(
-                                entry: entry,
-                                xpLabel: '${_thousands(entry.totalXp)} XP',
-                              ),
-                          ],
-                        ),
+                  else
+                    AppCard(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        children: [
+                          for (final entry in members)
+                            _MemberRow(
+                              entry: entry,
+                              xpLabel: '${_thousands(entry.totalXp)} XP',
+                            ),
+                        ],
                       ),
-                  ],
+                    ),
                 ],
               ),
             ),
@@ -754,15 +602,12 @@ class _RoomTile extends StatelessWidget {
   }
 }
 
-class _ClassCard extends StatelessWidget {
-  const _ClassCard({
-    required this.name,
-    required this.memberCount,
+/// Where the student stands among everyone on StudyTrail.
+class _CommunityCard extends StatelessWidget {
+  const _CommunityCard({
     required this.myRank,
   });
 
-  final String name;
-  final int memberCount;
   final LeaderboardEntry? myRank;
 
   @override
@@ -783,7 +628,7 @@ class _ClassCard extends StatelessWidget {
               Icon(Symbols.groups,
                   color: Colors.white.withValues(alpha: 0.9), size: 20),
               const SizedBox(width: 8),
-              Text('YOUR CLASS',
+              Text('EVERYONE ON STUDYTRAIL',
                   style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.8),
                       fontSize: 12,
@@ -791,20 +636,11 @@ class _ClassCard extends StatelessWidget {
                       fontWeight: FontWeight.w800)),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5)),
           const SizedBox(height: 16),
           Row(
             children: [
-              _Stat('$memberCount', 'On StudyTrail'),
               _Stat(rank == null ? '—' : '#${rank.rank}', 'Your rank'),
+              _Stat(rank == null ? '—' : '${rank.totalXp}', 'Your XP'),
               _Stat(rank == null ? '—' : 'Lv ${rank.level}', 'Your level'),
             ],
           ),

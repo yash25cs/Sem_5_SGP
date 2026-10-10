@@ -270,8 +270,8 @@ class GamificationRepository {
     };
   }
 
-  /// Classmates ordered by XP. `is_me` comes from the RPC; rank is assigned
-  /// client-side from the returned order.
+  /// The top students by XP, plus the caller's own row when they're further
+  /// down. Ranks come from the RPC (0029); before it, from the order.
   Future<List<LeaderboardEntry>> getLeaderboard({int limit = 20}) async {
     final result =
         await db.rpc('get_class_leaderboard', params: {'limit_count': limit});

@@ -28,6 +28,7 @@ import 'screens/answer_practice_screen.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/rewards_screen.dart';
 import 'screens/weekly_report_screen.dart';
+import 'services/calendar_sync.dart';
 import 'services/home_widget_sync.dart';
 import 'services/notification_service.dart';
 
@@ -66,14 +67,19 @@ class _HomeShellState extends State<HomeShell> {
     // lifecycle re-syncs never do, or a denied dialog would reappear on every
     // resume.
     ReminderSync.run(askPermission: true);
+    CalendarSync.refreshIfOn();
     _lifecycle = AppLifecycleListener(
       onResume: () {
         ReminderSync.run();
         _resumeImports();
       },
       // Leaving the app is when today's studying is known, so a 6 PM nudge
-      // for work already done gets dropped.
-      onPause: ReminderSync.run,
+      // for work already done gets dropped — and the calendar catches up
+      // with tasks finished or planned in this session.
+      onPause: () {
+        ReminderSync.run();
+        CalendarSync.refreshIfOn();
+      },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) => _resumeImports());
     // A tapped weekly-report notification, now or the one that launched us.
@@ -229,7 +235,7 @@ class _HomeShellState extends State<HomeShell> {
               ),
               QuickAction(
                 icon: Symbols.emoji_events,
-                title: 'Class leaderboard',
+                title: 'Leaderboard',
                 color: const Color(0xFFF59E0B),
                 onTap: go(
                     sheetCtx,

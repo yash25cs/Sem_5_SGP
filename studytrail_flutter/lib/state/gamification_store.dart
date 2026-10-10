@@ -3,7 +3,7 @@ import '../models/models.dart';
 import 'async_store.dart';
 
 /// Backs the Achievements screen: streak, week dots, badge grid, and the
-/// class leaderboard.
+/// leaderboard.
 class GamificationStore extends AsyncStore {
   GamificationStore({GamificationRepository? game, ProfileRepository? profiles})
       : _game = game ?? const GamificationRepository(),

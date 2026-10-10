@@ -19,20 +19,15 @@ class RoomRepository {
   /// the host opens another. Past this age the lobby stops offering it.
   static const staleAfter = Duration(hours: 12);
 
-  /// Open rooms, newest first: the caller's class rooms plus unscoped ones.
-  Future<List<StudyRoom>> getActiveRooms({String? classId}) async {
+  /// Every open room, newest first — rooms are open to all students (0029).
+  Future<List<StudyRoom>> getActiveRooms() async {
     final since = DateTime.now().toUtc().subtract(staleAfter).toIso8601String();
-    var query = db
+    final rows = await db
         .from('study_rooms')
         .select('*, room_members(user_id)')
         .eq('status', 'active')
-        .gte('created_at', since);
-
-    query = classId != null
-        ? query.or('class_id.eq.$classId,class_id.is.null')
-        : query.isFilter('class_id', null);
-
-    final rows = await query.order('created_at', ascending: false);
+        .gte('created_at', since)
+        .order('created_at', ascending: false);
     return rows.map(StudyRoom.fromMap).toList();
   }
 

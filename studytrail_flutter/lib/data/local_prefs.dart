@@ -145,4 +145,74 @@ class LocalPrefs {
       // Non-fatal: the schedule itself was already changed.
     }
   }
+
+  static const String _reminderTimeKey = 'daily_reminder_minute_v1';
+
+  /// When the daily study reminder fires, as minutes after midnight. 6 PM
+  /// until the student picks a time.
+  static const int defaultReminderMinute = 18 * 60;
+
+  static Future<int> reminderMinute() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getInt(_reminderTimeKey);
+      return v == null || v < 0 || v >= 24 * 60 ? defaultReminderMinute : v;
+    } catch (_) {
+      return defaultReminderMinute;
+    }
+  }
+
+  static Future<void> setReminderMinute(int minute) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_reminderTimeKey, minute);
+    } catch (_) {
+      // Non-fatal: this run's schedule already uses it.
+    }
+  }
+
+  static const String _calendarSyncKey = 'calendar_sync_v1';
+  static const String _calendarEventsKey = 'calendar_events_v1';
+
+  /// Whether exams and the plan are kept in the phone's calendar.
+  static Future<bool> calendarSync() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_calendarSyncKey) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setCalendarSync(bool on) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_calendarSyncKey, on);
+    } catch (_) {}
+  }
+
+  /// The calendar events StudyTrail wrote, by its own id for each, so a later
+  /// sync updates or removes them instead of adding copies.
+  static Future<Map<String, int>> calendarEvents() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_calendarEventsKey);
+      if (raw == null || raw.isEmpty) return {};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return {
+        for (final e in decoded.entries)
+          if (e.value is num) e.key as String: (e.value as num).toInt(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> setCalendarEvents(Map<String, int> events) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_calendarEventsKey, jsonEncode(events));
+    } catch (_) {}
+  }
 }

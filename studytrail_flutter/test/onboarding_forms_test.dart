@@ -121,7 +121,58 @@ void main() {
       expect(goals.lastSubjectDates, [maths, physics]);
       // The goal runs to the last paper.
       expect(goals.lastExamDate, physics);
+      expect(goals.lastDailyMinutes, isNull);
     });
+
+    testWidgets('Custom sets the student\'s own time a day', (tester) async {
+      final goals = _FakeGoals();
+      await _pump(tester, const SetTargetScreen(), [
+        ChangeNotifierProvider<OnboardingStore>(
+            create: (_) => OnboardingStore(goals: goals)),
+      ]);
+      await tester.enterText(find.byType(TextFormField), 'Semester exams');
+      await tester.tap(find.text('Add your first subject'));
+      await tester.pumpAndSettle();
+      await tester.enterText(_sheetField(), 'Physics');
+      await tester.tap(find.text('Pick a date'));
+      await _pickDay(tester, 20);
+      await tester.tap(find.text('Add subject'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Set my own'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('pace-custom')));
+      await tester.tap(find.byKey(const ValueKey('pace-custom')));
+      await tester.pumpAndSettle();
+      // Opens on the selected preset's time: Steady, 2 hours.
+      expect(find.text('2 hrs a day'), findsOneWidget);
+      await tester.drag(find.byType(Slider), const Offset(-60, 0));
+      await tester.pumpAndSettle();
+      final label = tester
+          .widget<Text>(find.byKey(const ValueKey('custom-pace-value')))
+          .data!;
+      await tester.tap(find.textContaining('Use '));
+      await tester.pumpAndSettle();
+      expect(find.text('Set my own'), findsNothing);
+
+      await tester.tap(find.text('Generate my roadmap'));
+      await tester.pumpAndSettle();
+      final minutes = goals.lastDailyMinutes;
+      expect(minutes, isNotNull);
+      expect(minutes, lessThan(120));
+      expect('${formatStudyTime(minutes!)} a day', label);
+    });
+  });
+
+  test('study time reads naturally and picks the nearest preset', () {
+    expect(formatStudyTime(45), '45 min');
+    expect(formatStudyTime(60), '1 hr');
+    expect(formatStudyTime(150), '2.5 hrs');
+    expect(Pace.nearest(45), Pace.relaxed);
+    expect(Pace.nearest(150), Pace.steady);
+    expect(Pace.nearest(300), Pace.intense);
+    expect(const Goal(id: 'g', name: 'x', dailyMinutes: 150).paceLabel,
+        'Custom · 2.5 hrs/day');
+    expect(const Goal(id: 'g', name: 'x').paceLabel, 'Steady');
   });
 
   group('Academic details', () {
@@ -248,6 +299,7 @@ class _FakeGoals extends GoalRepository {
   List<String>? lastSubjects;
   List<DateTime?>? lastSubjectDates;
   DateTime? lastExamDate;
+  int? lastDailyMinutes;
 
   @override
   Future<List<Goal>> getGoals() async => const [];
@@ -259,11 +311,13 @@ class _FakeGoals extends GoalRepository {
     Pace pace = Pace.steady,
     List<String> subjectNames = const [],
     List<DateTime?> subjectExamDates = const [],
+    int? dailyMinutes,
   }) async {
     calls++;
     lastSubjects = subjectNames;
     lastSubjectDates = subjectExamDates;
     lastExamDate = examDate;
+    lastDailyMinutes = dailyMinutes;
     return Goal(id: 'goal-1', name: name, examDate: examDate);
   }
 }

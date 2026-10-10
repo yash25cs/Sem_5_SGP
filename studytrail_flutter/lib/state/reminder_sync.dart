@@ -32,6 +32,7 @@ class ReminderSync {
       studiedToday: plan.studiedToday,
       streak: plan.streak,
       askPermission: askPermission,
+      studyMinute: await LocalPrefs.reminderMinute(),
     );
   }
 }

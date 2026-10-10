@@ -12,6 +12,7 @@ import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
 import '../widgets/nav.dart';
 import '../widgets/playlist_tile.dart';
+import '../widgets/reminder_time.dart';
 import '../widgets/summary_sheet.dart';
 import '../widgets/video_link_sheet.dart';
 
@@ -270,6 +271,10 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
                     ),
                   for (final material in store.standalone) _tile(material),
                 ],
+
+                const SizedBox(height: 22),
+                CardHeader('When should we remind you to study?'),
+                const ReminderTimeCard(),
               ],
             ),
           ),

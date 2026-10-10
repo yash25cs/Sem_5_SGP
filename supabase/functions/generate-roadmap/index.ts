@@ -35,6 +35,14 @@ const DEFAULT_WEEKS = 6;
 
 /// Pace-based fallback lengths, matching `set_target_screen.dart`'s
 /// `_estimatedDays` so the roadmap is the length the student was promised.
+/// Study time a day each preset pace promised on the goal form, in minutes.
+/// A goal with its own `daily_minutes` (0029) uses that instead.
+const PACE_MINUTES: Record<string, number> = {
+  relaxed: 60,
+  steady: 120,
+  intense: 240,
+};
+
 const PACE_DAYS: Record<string, number> = {
   relaxed: 45,
   steady: 30,
@@ -111,7 +119,10 @@ and revised before its own exam: schedule it earlier, give the week of its \
 exam to revising it, and stop scheduling it after that week.
 - When a subject lists its syllabus units, those are what its exam covers: \
 plan that subject from exactly those units, in that order, and name them in \
-its tasks.`;
+its tasks.
+- Size each week to the student's daily study time: with under an hour a day, \
+keep a week's tasks small and few; with three hours or more, make them \
+substantial and cover more ground each week.`;
 
 interface Milestone {
   weekLabel: string;
@@ -131,7 +142,7 @@ serve(async (req) => {
   // RLS turns "not yours" into "not found", which is the honest answer anyway.
   const { data: goal, error: goalError } = await supa
     .from('goals')
-    .select('id, name, exam_date, pace, roadmap_days')
+    .select('id, name, exam_date, pace, roadmap_days, daily_minutes')
     .eq('id', goalId)
     .maybeSingle();
   if (goalError) {
@@ -199,7 +210,7 @@ serve(async (req) => {
     temperature: 0.2,
     schema: ROADMAP_SCHEMA,
     input: buildPrompt(String(goal.name ?? '').trim(), subjects, units, weeks,
-      days, goal.exam_date),
+      days, goal.exam_date, dailyMinutes(goal)),
     maxOutputTokens: 900 + weeks * 400,
     // Shorter than the quiz's 60 s: this prompt carries headings, not chunk
     // bodies, so a call that hasn't answered by now is one that won't.
@@ -387,6 +398,13 @@ function roadmapDays(examDate: unknown, pace: unknown): number {
   return Math.min(days, MAX_ROADMAP_DAYS);
 }
 
+/// The student's own minutes a day, else the preset pace's.
+function dailyMinutes(goal: { pace?: unknown; daily_minutes?: unknown }): number {
+  const own = Number(goal.daily_minutes);
+  if (Number.isFinite(own) && own >= 15 && own <= 720) return own;
+  return PACE_MINUTES[String(goal.pace ?? 'steady')] ?? PACE_MINUTES.steady;
+}
+
 function weekCount(days: number): number {
   const weeks = Math.ceil(days / 7);
   if (!Number.isFinite(weeks)) return DEFAULT_WEEKS;
@@ -400,12 +418,17 @@ function buildPrompt(
   weeks: number,
   days: number,
   examDate: unknown,
+  minutesADay: number,
 ): string {
+  const hours = minutesADay / 60;
   const parts: string[] = [
     `Goal: ${goalName.length > 0 ? goalName : 'Exam preparation'}`,
     typeof examDate === 'string' && examDate.length > 0
       ? `Exam date: ${examDate} (about ${days} days away)`
       : `No exam date set; plan for about ${days} days`,
+    `Daily study time: about ${
+      hours < 1 ? `${minutesADay} minutes` : `${Number(hours.toFixed(1))} hours`
+    } a day`,
     `Subjects: ${subjects.join(', ')}`,
   ];
 

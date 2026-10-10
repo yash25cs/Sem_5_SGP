@@ -16,6 +16,29 @@ enum Pace {
 
   static Pace fromDb(String? v) =>
       Pace.values.firstWhere((e) => e.db == v, orElse: () => Pace.steady);
+
+  /// Study time a day each preset stands for, as the goal form shows it.
+  int get minutes => switch (this) {
+        relaxed => 60,
+        steady => 120,
+        intense => 240,
+      };
+
+  /// The preset closest to a custom [minutes] a day, kept in `goals.pace` so
+  /// anything that only reads pace still gets a sensible answer.
+  static Pace nearest(int minutes) => minutes <= 90
+      ? relaxed
+      : minutes <= 180
+          ? steady
+          : intense;
+}
+
+/// 90 → "1.5 hrs", 45 → "45 min", 60 → "1 hr".
+String formatStudyTime(int minutes) {
+  if (minutes < 60) return '$minutes min';
+  final h = minutes / 60;
+  final text = h == h.roundToDouble() ? h.toInt().toString() : h.toStringAsFixed(1);
+  return h == 1 ? '1 hr' : '$text hrs';
 }
 
 enum MilestoneState {

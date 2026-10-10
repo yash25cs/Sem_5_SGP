@@ -90,7 +90,9 @@ class NotificationService {
     bool studiedToday = false,
     int streak = 0,
     bool askPermission = false,
+    int studyMinute = 18 * 60,
   }) async {
+    final (riskHour, riskMinute) = streakReminderTime(studyMinute);
     try {
       await _cancelReminders();
       if (!enabled) return;
@@ -100,7 +102,8 @@ class NotificationService {
       for (var day = 0; day < _daysAhead; day++) {
         final skipToday = day == 0 && studiedToday;
 
-        final study = _localTime(now, day, 18, 0);
+        final study =
+            _localTime(now, day, studyMinute ~/ 60, studyMinute % 60);
         if (!skipToday && study.isAfter(now)) {
           await _scheduleOnce(
             id: _studyBase + day,
@@ -122,8 +125,11 @@ class NotificationService {
           );
         }
 
-        final risk = _localTime(now, day, 21, 0);
-        if (streak > 0 && !skipToday && risk.isAfter(now)) {
+        final risk = _localTime(now, day, riskHour, riskMinute);
+        if (streak > 0 &&
+            !skipToday &&
+            riskHour >= 0 &&
+            risk.isAfter(now)) {
           await _scheduleOnce(
             id: _streakBase + day,
             title: day == 0
@@ -137,6 +143,15 @@ class NotificationService {
     } catch (e) {
       debugPrint('Reminder scheduling failed: $e');
     }
+  }
+
+  /// The "streak at risk" nudge: 9 PM, or an hour after a study reminder set
+  /// later than 8 PM. (-1, -1) when that would run past midnight, since a
+  /// nudge for a day that's already over saves nothing.
+  static (int, int) streakReminderTime(int studyMinute) {
+    final at = studyMinute < 20 * 60 ? 21 * 60 : studyMinute + 60;
+    if (at >= 24 * 60) return (-1, -1);
+    return (at ~/ 60, at % 60);
   }
 
   DateTime _localTime(DateTime now, int dayOffset, int hour, int minute) =>

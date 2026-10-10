@@ -564,7 +564,7 @@ class _HowItWorksTab extends StatelessWidget {
       ),
       (
         q: 'Does spending XP lower my level or rank?',
-        a: 'No. Your level and your place on the class leaderboard use all '
+        a: 'No. Your level and your place on the leaderboard use all '
             'the XP you have ever earned. Spending only lowers the balance '
             'shown on this screen.',
       ),
@@ -576,8 +576,8 @@ class _HowItWorksTab extends StatelessWidget {
       ),
       (
         q: 'Where does the Golden Scholar Border show?',
-        a: 'Around your name on the class leaderboard, for you and your '
-            'classmates to see. It\'s permanent.',
+        a: 'Around your name on the leaderboard, for you and every other '
+            'student to see. It\'s permanent.',
       ),
       (
         q: 'How does a Focus Boost work?',

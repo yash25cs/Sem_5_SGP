@@ -803,6 +803,7 @@ class OnboardingStore extends AsyncStore {
     Pace pace = Pace.steady,
     List<String> subjects = const [],
     List<DateTime?> subjectExamDates = const [],
+    int? dailyMinutes,
   }) =>
       runMutation(() async {
         _goal = await _goals.createGoal(
@@ -811,6 +812,7 @@ class OnboardingStore extends AsyncStore {
           pace: pace,
           subjectNames: subjects,
           subjectExamDates: subjectExamDates,
+          dailyMinutes: dailyMinutes,
         );
       });
 }

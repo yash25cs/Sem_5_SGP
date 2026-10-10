@@ -172,8 +172,8 @@ class RoomStore extends AsyncStore {
   // Lobby
   // ───────────────────────────────────────────────────────────────────────────
 
-  Future<void> loadLobby({String? classId}) => runLoad(() async {
-        _activeRooms = await _roomRepo.getActiveRooms(classId: classId);
+  Future<void> loadLobby() => runLoad(() async {
+        _activeRooms = await _roomRepo.getActiveRooms();
       });
 
   /// Creates a room, joins it as host, and enters it.

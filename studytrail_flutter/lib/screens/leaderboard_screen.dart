@@ -6,12 +6,11 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/data_states.dart';
-import 'buddy_room_screen.dart';
 
-/// The class leaderboard: everyone in the student's class, ranked by total XP
-/// earned (`get_class_leaderboard`).
+/// The leaderboard: every StudyTrail student, ranked by total XP earned
+/// (`get_class_leaderboard`, global since 0029).
 ///
-/// Only real classmates are listed. An earlier version padded a sparse class
+/// Only real students are listed. An earlier version padded a sparse class
 /// with nine invented names and showed a "promotion zone" and a 14-day
 /// reshuffle that nothing in the backend implements; a leaderboard that makes
 /// people up can't be trusted about anything else either.
@@ -34,20 +33,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     });
   }
 
-  void _openRooms() {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (routeCtx) =>
-          BuddyRoomScreen(onBack: () => Navigator.of(routeCtx).pop()),
-    ));
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = context.p;
     final store = context.watch<GamificationStore>();
     final profile = store.profile;
     final entries = store.leaderboard;
-    final inClass = profile?.classId != null;
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -92,16 +83,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: store.loading && entries.isEmpty
                   ? const LoadingBlock(height: 180)
-                  : !inClass && profile != null
-                      ? EmptyState(
-                          icon: Symbols.groups,
-                          title: 'Join your class to compete',
-                          message: 'The leaderboard ranks you against '
-                              'classmates. Pick your class in Study Rooms.',
-                          actionLabel: 'Choose my class',
-                          onAction: _openRooms,
-                        )
-                      : entries.isEmpty
+                  : entries.isEmpty
                           ? const EmptyState(
                               icon: Symbols.leaderboard,
                               title: 'No rankings yet',
@@ -112,21 +94,18 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                               children: [
                                 _RankCard(entries: entries),
                                 const SizedBox(height: 18),
-                                for (final entry in entries)
+                                for (final (i, entry) in entries.indexed) ...[
+                                  // The student's own row, when it comes after
+                                  // the top list, sits apart from it.
+                                  if (i > 0 &&
+                                      entry.rank > entries[i - 1].rank + 1)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 4),
+                                      child: Icon(Symbols.more_vert,
+                                          color: p.ink3, size: 20),
+                                    ),
                                   _LeaderboardItemTile(entry: entry),
-                                if (entries.length < 3) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Only ${entries.length} of your class '
-                                    '${entries.length == 1 ? 'is' : 'are'} on '
-                                    'StudyTrail so far. Share the app and the '
-                                    'race gets interesting.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        color: p.ink3,
-                                        fontSize: 12.5,
-                                        height: 1.4),
-                                  ),
                                 ],
                               ],
                             ),
@@ -335,21 +314,29 @@ class _RankCard extends StatelessWidget {
     final p = context.p;
     final me = entries.where((e) => e.isMe).firstOrNull;
     final leader = entries.first;
+    final second = entries.where((e) => e.rank == 2).firstOrNull;
+    // The place above the student, when it's in the list; the student's own
+    // row can come after the top list with a gap before it.
+    final above = me == null
+        ? null
+        : entries.where((e) => e.rank == me.rank - 1).firstOrNull;
 
     final String headline;
     final String detail;
     if (me == null) {
-      headline = '${entries.length} classmates ranked';
+      headline = 'Top ${entries.length} students';
       detail = 'Earn XP to appear on the board.';
     } else if (me.rank == 1) {
-      headline = "You're #1 of ${entries.length}";
-      detail = entries.length > 1
-          ? '${me.totalXp - entries[1].totalXp} XP ahead of #2. Keep it up!'
-          : 'Top of the class.';
+      headline = "You're #1 on StudyTrail";
+      detail = second != null
+          ? '${me.totalXp - second.totalXp} XP ahead of #2. Keep it up!'
+          : 'Top of the board.';
+    } else if (above == null) {
+      headline = "You're #${me.rank} on StudyTrail";
+      detail = '${leader.totalXp - me.totalXp} XP behind #1. Every task climbs.';
     } else {
-      final above = entries[me.rank - 2];
       final gap = above.totalXp - me.totalXp;
-      headline = "You're #${me.rank} of ${entries.length}";
+      headline = "You're #${me.rank} on StudyTrail";
       detail = gap <= 0
           ? 'Level with #${above.rank}. One more task takes the spot.'
           : '$gap XP behind #${above.rank}. A couple of tasks closes that.';
@@ -690,9 +677,9 @@ class LevelUpInfoSheet extends StatelessWidget {
                   iconBg: const Color(0xFFDCFCE7),
                   icon: Symbols.military_tech,
                   iconColor: const Color(0xFF15803D),
-                  title: 'Class leaderboard',
+                  title: 'Leaderboard',
                   description:
-                      'Everyone in your class, ranked by total XP ever earned. Spending XP on rewards never lowers your rank. Leave your class to stop appearing.',
+                      'Every StudyTrail student, ranked by total XP ever earned. Spending XP on rewards never lowers your rank.',
                 ),
                 const SizedBox(height: 24),
               ],

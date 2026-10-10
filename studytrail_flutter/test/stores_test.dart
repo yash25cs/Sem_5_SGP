@@ -378,6 +378,7 @@ class _FakeGoals extends GoalRepository {
     Pace pace = Pace.steady,
     List<String> subjectNames = const [],
     List<DateTime?> subjectExamDates = const [],
+    int? dailyMinutes,
   }) async {
     if (failing) throw Exception('create_goal timed out');
     lastSubjects = subjectNames;

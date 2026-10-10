@@ -69,6 +69,27 @@ class GoalRepository {
     Pace pace = Pace.steady,
     List<String> subjectNames = const [],
     List<DateTime?> subjectExamDates = const [],
+    int? dailyMinutes,
+  }) async {
+    final goal = await _createGoal(
+      name: name,
+      examDate: examDate,
+      pace: dailyMinutes == null ? pace : Pace.nearest(dailyMinutes),
+      subjectNames: subjectNames,
+      subjectExamDates: subjectExamDates,
+    );
+    if (dailyMinutes == null) return goal;
+    // create_goal doesn't take it; set straight after, before the roadmap is
+    // written from the goal.
+    return updateGoal(goalId: goal.id, dailyMinutes: dailyMinutes);
+  }
+
+  Future<Goal> _createGoal({
+    required String name,
+    DateTime? examDate,
+    Pace pace = Pace.steady,
+    List<String> subjectNames = const [],
+    List<DateTime?> subjectExamDates = const [],
   }) async {
     final goalName = name.trim();
     // Built together so dropping a blank name can't shift the dates over.
@@ -178,6 +199,7 @@ class GoalRepository {
     String? name,
     DateTime? examDate,
     Pace? pace,
+    int? dailyMinutes,
   }) async {
     final examDay = examDate?.toIso8601String().split('T').first;
     final row = await db
@@ -185,7 +207,15 @@ class GoalRepository {
         .update({
           'name': ?name,
           'exam_date': ?examDay,
-          'pace': ?pace?.db,
+          // A custom time a day keeps the nearest preset beside it; picking a
+          // preset clears the custom time.
+          if (dailyMinutes != null) ...{
+            'daily_minutes': dailyMinutes,
+            'pace': Pace.nearest(dailyMinutes).db,
+          } else if (pace != null) ...{
+            'pace': pace.db,
+            'daily_minutes': null,
+          },
         })
         .eq('id', goalId)
         .select()

@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/custom_pace_sheet.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
@@ -44,6 +45,9 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
   final _name = TextEditingController();
 
   Pace _pace = Pace.steady;
+
+  /// Set when the student chose their own time a day instead of a preset.
+  int? _customMinutes;
 
   /// Starts empty: every student's subjects are different, so none are
   /// guessed. Kept in exam order, so the list reads as their timetable.
@@ -93,6 +97,16 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
         .difference(DateTime(now.year, now.month, now.day))
         .inDays;
     return days < 1 ? 1 : days;
+  }
+
+  Future<void> _pickCustomPace() async {
+    final minutes =
+        await showCustomPaceSheet(context, initial: _customMinutes ?? _pace.minutes);
+    if (minutes == null || !mounted) return;
+    setState(() {
+      _customMinutes = minutes;
+      _pace = Pace.nearest(minutes);
+    });
   }
 
   Future<void> _changeDate(_NewSubject subject) async {
@@ -148,6 +162,7 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
       pace: _pace,
       subjects: [for (final s in _subjects) s.name],
       subjectExamDates: [for (final s in _subjects) s.examDate],
+      dailyMinutes: _customMinutes,
     );
     if (!mounted) return;
 
@@ -248,18 +263,31 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                   _Label('Daily study pace'),
                   Row(
                     children: [
-                      for (final (i, pace) in Pace.values.indexed) ...[
+                      for (final pace in Pace.values) ...[
                         Expanded(
                           child: _PaceCard(
                             label: pace.label,
                             hours: _paceHours[pace] ?? '',
-                            selected: _pace == pace,
-                            onTap: () => setState(() => _pace = pace),
+                            selected: _customMinutes == null && _pace == pace,
+                            onTap: () => setState(() {
+                              _pace = pace;
+                              _customMinutes = null;
+                            }),
                           ),
                         ),
-                        if (i < Pace.values.length - 1)
-                          const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                       ],
+                      Expanded(
+                        child: _PaceCard(
+                          key: const ValueKey('pace-custom'),
+                          label: 'Custom',
+                          hours: _customMinutes == null
+                              ? 'Set my own'
+                              : '${formatStudyTime(_customMinutes!)}/day',
+                          selected: _customMinutes != null,
+                          onTap: _pickCustomPace,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -671,7 +699,8 @@ class _SubjectRow extends StatelessWidget {
 
 class _PaceCard extends StatelessWidget {
   const _PaceCard(
-      {required this.label,
+      {super.key,
+      required this.label,
       required this.hours,
       required this.selected,
       this.onTap});
@@ -704,6 +733,8 @@ class _PaceCard extends StatelessWidget {
                     fontWeight: FontWeight.w800)),
             const SizedBox(height: 3),
             Text(hours,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                     color: selected
                         ? p.onPrimary.withValues(alpha: 0.8)
