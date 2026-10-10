@@ -38,7 +38,7 @@ export interface Caller {
 /// under RLS, and `match_material_chunks` is security-invoker keyed on
 /// `auth.uid()`. Forwarding the caller's token means the database enforces
 /// ownership, so a `user_id` in the request body could never override it
-/// (OWNERSHIP.md).
+/// (docs/OWNERSHIP.md).
 export async function requireUser(req: Request): Promise<Caller> {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
@@ -74,7 +74,7 @@ export async function requireUser(req: Request): Promise<Caller> {
 /// forwarding the user's token". `generate-flashcards` needs none of this —
 /// `insert on flashcards` is granted — so it keeps [requireUser]'s client.
 ///
-/// The rule that keeps `OWNERSHIP.md` intact once this key is in the room: every
+/// The rule that keeps `docs/OWNERSHIP.md` intact once this key is in the room: every
 /// read and every ownership check still goes through [requireUser]'s client, and
 /// every `user_id` written comes from [Caller.userId]. A `user_id` in the
 /// request body is never read.

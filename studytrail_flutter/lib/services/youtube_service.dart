@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 /// YouTube videos and playlists as study material.
 ///
 /// The transcript is read **on the phone**, not in an Edge Function, and that
-/// was measured rather than chosen (DECISIONS.md D-037). From Supabase's
+/// was measured rather than chosen (docs/DECISIONS.md D-037). From Supabase's
 /// servers YouTube's player API answers every client with "Sign in to confirm
 /// you're not a bot"; from a home or mobile connection the same request returns
 /// caption tracks that need no extra token. Gemini can watch a YouTube URL

@@ -204,7 +204,7 @@ class FlashcardStore extends AsyncStore {
   /// review feel sluggish. If the grade doesn't land, the card goes back on the
   /// end of the queue rather than vanishing — it's still due in the database,
   /// and silently dropping it meant the session claimed a review that never
-  /// happened (REVIEW.md P1).
+  /// happened (docs/REVIEW.md P1).
   Future<void> grade(SrGrade grade) async {
     final card = current;
     if (card == null) return;

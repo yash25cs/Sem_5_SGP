@@ -1,1 +1,0 @@
-flutter run -d 3C15A60003Y00000 --dart-define-from-file=dart_define.json

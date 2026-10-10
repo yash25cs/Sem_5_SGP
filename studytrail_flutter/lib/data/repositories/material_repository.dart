@@ -32,7 +32,7 @@ class MaterialRepository {
   /// Storage and Postgres can't share a transaction, so the row insert is
   /// wrapped in compensating cleanup: if it fails, the object just written is
   /// removed again. Without it every failed upload left a paid-for object in the
-  /// bucket that nothing referenced and no screen could ever show (REVIEW.md P1).
+  /// bucket that nothing referenced and no screen could ever show (docs/REVIEW.md P1).
   Future<StudyMaterial> uploadFile({
     required File file,
     required String fileName,

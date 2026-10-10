@@ -23,8 +23,8 @@ supabase/
 | `0005_storage.sql` | Private `materials` bucket + `/{uid}/…` prefix policies |
 | `0006_seed.sql` | 10 badges + one default class (`CE-A 2025`) |
 | `0007_activity.sql` | `activity_log` roll-up, streak advance, `finish_quiz_attempt()` |
-| `0008_rewards.sql` | **Security.** `app_private` schema, `xp_rules`, server-derived XP + badge evaluation, column-level privileges. Closes REVIEW.md P0 |
-| `0009_atomicity.sql` | `create_goal()` (three writes → one transaction), retryable material ingest. Closes REVIEW.md P1 |
+| `0008_rewards.sql` | **Security.** `app_private` schema, `xp_rules`, server-derived XP + badge evaluation, column-level privileges. Closes docs/REVIEW.md P0 |
+| `0009_atomicity.sql` | `create_goal()` (three writes → one transaction), retryable material ingest. Closes docs/REVIEW.md P1 |
 | `0010_study_rooms.sql` | `study_rooms`, `room_members`, `room_messages` (Realtime-published), `create_study_room` / `join_room_by_code` / `close_study_room` |
 | `0011_study_rooms_fix.sql` | **Fixes 0010.** Non-recursive `room_members` policy (0010's was 42P17 on every read), joins/creates/closes RPC-only, `get_room_members()` for names, `search_path` + input checks on the room RPCs, rooms auto-close when the host or last member leaves |
 | `0013_room_moderation.sql` | `user_blocks`, `room_reports` (with a message snapshot), `room_bans`; `report_room_user()`, `remove_room_member()`; `join_room_by_code()` refuses a removed student |

@@ -55,7 +55,7 @@ class GoalRepository {
   /// fail together. Doing them here as three calls left a real failure mode: a
   /// drop after the first one deactivated the old goal but never created the
   /// new one, and the student was left with no active goal and no way to notice
-  /// (REVIEW.md P1). `user_id` comes from the JWT inside the function, so it
+  /// (docs/REVIEW.md P1). `user_id` comes from the JWT inside the function, so it
   /// isn't sent.
   ///
   /// [subjectExamDates] runs parallel to [subjectNames]: entry `i` is the date

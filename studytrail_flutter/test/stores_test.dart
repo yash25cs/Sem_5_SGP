@@ -80,7 +80,7 @@ void main() {
 
   group('OnboardingStore.createGoal', () {
     // One RPC, not the old insert-goal-then-insert-subjects pair: a half-created
-    // goal used to leave onboarding unable to finish (`DECISIONS.md` D-005).
+    // goal used to leave onboarding unable to finish (`docs/DECISIONS.md` D-005).
     test('creates the goal and its subjects in one call', () async {
       final goals = _FakeGoals();
       final store = OnboardingStore(goals: goals);
@@ -114,7 +114,7 @@ void main() {
   });
 
   group('HomeStore.toggleTask retry', () {
-    // REVIEW.md P1: the tick used to be applied locally and then forgotten if
+    // docs/REVIEW.md P1: the tick used to be applied locally and then forgotten if
     // the write failed, so the checklist claimed work the database never saw.
     test('a failed tick goes back to unticked, and a retry sticks', () async {
       final tasks = _FakeTasks(today: [_task], failing: true);
@@ -152,7 +152,7 @@ void main() {
   });
 
   group('FlashcardStore.grade retry', () {
-    // Also REVIEW.md P1: the advance is optimistic so review doesn't stutter,
+    // Also docs/REVIEW.md P1: the advance is optimistic so review doesn't stutter,
     // but a card whose grade never landed is still due in the database — losing
     // it made the session claim a review that never happened.
     test('a failed grade puts the card back on the queue', () async {

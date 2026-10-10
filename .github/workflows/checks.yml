@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Pinned to the version the project is developed on; the Android
-      # toolchain sits on this release's minimums (see SETUP.md).
+      # toolchain sits on this release's minimums (see docs/SETUP.md).
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.0'
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # SETUP.md tells people to paste all_migrations.sql into the SQL editor,
+      # docs/SETUP.md tells people to paste all_migrations.sql into the SQL editor,
       # so a migration added without regenerating it would silently be skipped
       # on every fresh project.
       - name: Compare

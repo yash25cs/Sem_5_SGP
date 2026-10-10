@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Adaptive-icon background: the app's primary gradient, drawn as a vector so
      it stays sharp at every mask shape the launcher applies. The foreground
-     PNGs are generated (see FLOW.md); this one is hand-written because a
+     PNGs are generated (see docs/FLOW.md); this one is hand-written because a
      gradient fill is cheaper as a vector than as five more bitmaps. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"

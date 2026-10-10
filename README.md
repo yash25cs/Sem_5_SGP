@@ -7,15 +7,26 @@ quizzes, progress insights, and cited AI help.
 ## Repository layout
 
 ```text
-studytrail_flutter/  Flutter application
-supabase/            PostgreSQL migrations, RLS, Storage policies, RPCs, Edge Functions
-SGP/                 Project proposal and academic context
-studytrail_ui.html   Earlier browser UI prototype (kept unchanged)
-FLOW.md              Runtime and data-flow documentation
-DECISIONS.md         Architecture decisions and trade-offs
-OWNERSHIP.md         Module ownership and security boundaries
-REVIEW.md            Known review findings and recommended fixes
-DAILY_PLAN.md        Small, pushable daily delivery plan
+studytrail_flutter/      Flutter application (Android)
+  lib/                   screens, widgets, stores, repositories, models, services
+  test/                  unit and widget tests
+  android/               Android project, incl. home-screen widgets and calendar sync
+supabase/                backend
+  migrations/            PostgreSQL schema, RLS, RPCs — applied in order
+  all_migrations.sql     every migration in one file (CI checks it matches)
+  functions/             Edge Functions (all Gemini calls happen here)
+docs/                    project documentation
+  SETUP.md               setting up Supabase, building, and the device checklist
+  FLOW.md                runtime and data flow, plus the change log
+  DECISIONS.md           architecture decisions and trade-offs
+  OWNERSHIP.md           module ownership and security boundaries
+  REVIEW.md              review findings and how they were fixed
+  DAILY_PLAN.md          the day-by-day delivery plan
+  PLAY_STORE.md          Play Store listing and data-safety answers
+  privacy-policy.md      privacy policy
+  delete-account.md      how to delete an account
+studytrail_ui.html       original browser UI prototype — the design reference (kept unchanged)
+.github/workflows/       CI: analyze, test, and the migrations check
 ```
 
 ## Run the Flutter app
@@ -37,8 +48,8 @@ DAILY_PLAN.md        Small, pushable daily delivery plan
    flutter run --dart-define-from-file=dart_define.json
    ```
 
-For the complete Supabase setup, see [SETUP.md](SETUP.md) and
-[supabase/README.md](supabase/README.md). Sections 7 and 8 of `SETUP.md` cover
+For the complete Supabase setup, see [docs/SETUP.md](docs/SETUP.md) and
+[supabase/README.md](supabase/README.md). Sections 7 and 8 of `docs/SETUP.md` cover
 release builds, signing, and the manual device checklist.
 
 ## What the app collects
@@ -58,7 +69,7 @@ system document picker and photos through the system camera app, neither of
 which needs a permission of its own.
 
 Everything below lives in the Supabase project **you** create, under Row Level
-Security scoped to the signed-in user (`OWNERSHIP.md`):
+Security scoped to the signed-in user (`docs/OWNERSHIP.md`):
 
 - **Account** — email, password (hashed by Supabase Auth, never seen by the app),
   the full name typed at signup, and the academic profile asked for right after
@@ -109,7 +120,7 @@ Two third parties are involved, both server-side:
 - **Google Gemini** receives material text (during ingestion and generation),
   chat questions, doubts, and answers to be marked — including answer photos —
   from the Edge Functions only. The Gemini key never reaches the
-  app (`DECISIONS.md` D-006), and nothing is sent to Gemini except in service of a
+  app (`docs/DECISIONS.md` D-006), and nothing is sent to Gemini except in service of a
   request the student made.
 
 **Deleting an account:** Settings → **Delete account**. The `delete-account`
@@ -127,6 +138,6 @@ only on the account whose token made the request.
 
 ## Development cadence
 
-Follow [DAILY_PLAN.md](DAILY_PLAN.md): one focused change per day, one
+Follow [docs/DAILY_PLAN.md](docs/DAILY_PLAN.md): one focused change per day, one
 descriptive commit, then update the flow and decision documentation when a
 meaningful path or trade-off changes.

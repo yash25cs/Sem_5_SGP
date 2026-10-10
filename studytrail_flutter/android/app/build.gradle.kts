@@ -9,7 +9,7 @@ plugins {
 }
 
 // Release signing values live in android/key.properties, which is gitignored
-// (root .gitignore ignores `key.properties` and `*.keystore`) — see SETUP.md for
+// (root .gitignore ignores `key.properties` and `*.keystore`) — see docs/SETUP.md for
 // the keytool command that creates the store. When the file is absent the
 // release build falls back to the debug key, so a fresh clone can still run
 // `flutter build apk --release`; it just produces an APK nobody can publish.
