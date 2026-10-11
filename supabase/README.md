@@ -48,6 +48,8 @@ supabase/
 | `0031_speed_answer_change.sql` | `answer_room_quiz_question()` lets a speed-round answer change until its window closes (points from the answer that stands, at the time it was given); the round ends on the clock rather than when everyone has answered the last question |
 | `0032_quiz_xp_first_attempt.sql` | `quizzes.xp_paid_at`: `finish_quiz_attempt` pays XP on a quiz's first finished attempt only (retakes are practice; deleting attempts doesn't reset it); speed-round points 10 + up to 10 |
 | `0033_roadmap_replace_tasks.sql` | Deleting a roadmap task (as regenerating does) deletes its unfinished `daily_tasks` copy too; unfinished tasks already cut loose are removed. Finished ones stay for badges |
+| `0034_goal_daily_minutes_grant.sql` | Grants `update (daily_minutes)` on `goals` — 0029's custom pace was unsaveable ("permission denied") |
+| `0035_goal_delete_keeps_notes.sql` | `materials.goal_id` and `chat_threads.goal_id` become `on delete set null`: deleting a goal keeps its notes and chats instead of deleting them and stranding the files |
 | `0012_rewards_store.sql` | `reward_catalog` + `reward_redemptions`, `get_reward_wallet()` / `redeem_reward()` (balance = XP earned − XP spent), streak freezes consumed inside `log_activity`, `get_class_leaderboard()` ranked by total XP with `golden_border` |
 
 All files are idempotent — safe to re-run.

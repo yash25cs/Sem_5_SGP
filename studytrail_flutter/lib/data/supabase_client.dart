@@ -1,9 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// Stands in for the app's client in the live end-to-end tests
+/// (`test/live/`), so the real repositories and stores run against the hosted
+/// project as a throwaway account. Never set by the app.
+@visibleForTesting
+SupabaseClient? debugClientOverride;
 
 /// Shortcut to the initialised Supabase client.
 ///
 /// Valid only after `Supabase.initialize` has completed in `main()`.
-SupabaseClient get db => Supabase.instance.client;
+SupabaseClient get db => debugClientOverride ?? Supabase.instance.client;
 
 /// The signed-in user's id, or null when signed out.
 String? get currentUserId => db.auth.currentUser?.id;

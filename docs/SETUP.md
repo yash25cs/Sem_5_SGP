@@ -170,6 +170,10 @@ most likely to break on a phone (a real keyboard, a real network, a real
 `file_picker` sheet) are exactly the parts a widget test can't see. Run the whole
 list on a physical device before calling a build good.
 
+The live end-to-end tests already cover the server rules (XP, isolation between
+students, limits) — see [TEST_PLAN.md](TEST_PLAN.md), which also lists the
+newer features and phone-only edge cases to check after this list.
+
 **Onboarding, on a fresh install and a brand-new email**
 
 1. Welcome → **Next** → **Create account**. The name, email, and password fields
@@ -193,8 +197,9 @@ timer, study rooms, achievements, leaderboard, rewards and analytics open from
 the **+** button.
 
 7. **Home** — **Plan day** pulls the next unfinished milestone into today's list.
-   Tick one: the checkbox sticks, XP and the streak chip move, and the Roadmap
-   tab shows that checkbox ticked too. Untick it and both go back.
+   Tick one: the checkbox sticks, XP and the streak chip move, an **Undo** bar
+   shows for a few seconds, and the Roadmap tab shows that checkbox ticked too.
+   After that, reopening a task is a long-press with a confirmation.
 8. **Roadmap** — the timeline shows weeks with their state dots. Ticking a task
    here moves Home's copy as well. The sparkle button at the top regenerates,
    warning first that it replaces the current plan; the milestone count doesn't
@@ -221,7 +226,8 @@ the **+** button.
 15. A taps **Change** under the timer and picks 45 min focus / 10 min break:
     both phones show `45 min focus` and 45:00 (B has no **Change**). A starts the
     timer. B's timer starts at the same time and counts down with it (never
-    jumps to 00:00). A pauses: B pauses at the same second.
+    jumps to 00:00). A pauses: B pauses at the same second. B has *Ask host
+    to pause* instead of the controls.
 16. With A's timer running, B leaves and rejoins. B's timer picks up at A's
     time instead of restarting.
 17. Chat both ways. Each message appears once on both phones, with the local

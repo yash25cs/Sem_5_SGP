@@ -64,7 +64,7 @@ material.
 |---|---|
 | App | Flutter 3.47 (Dart 3.11), Provider for state, Material 3 |
 | Backend | Supabase: PostgreSQL with Row Level Security, Auth, Storage, Realtime |
-| Server logic | 33 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
+| Server logic | 35 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
 | AI | Google Gemini (`gemini-3.5-flash-lite` for text, `gemini-embedding-2` for search), called only from Edge Functions |
 | Android | Kotlin for the home-screen widgets and calendar sync; local notifications |
 | CI | GitHub Actions: `flutter analyze`, `flutter test`, and a migrations check |
@@ -167,7 +167,7 @@ flutter test
 253 unit and widget tests cover the stores, repositories, onboarding, practice,
 rooms, rewards and screen layouts down to a 320 dp phone. A few live tests
 against a real Supabase project are skipped unless configured. CI runs the same
-checks on every push.
+checks on every push. A live end-to-end suite (`test/live`, 74 tests) runs the real repositories against a Supabase project with throwaway accounts — see [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
 
 ## What the app collects
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
@@ -225,6 +226,9 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
                   _Label('Exam / goal name'),
                   TextFormField(
                     controller: _name,
+                    // The goals table holds up to 120 characters; past that
+                    // the save failed with a database error.
+                    inputFormatters: [LengthLimitingTextInputFormatter(120)],
                     textCapitalization: TextCapitalization.words,
                     textInputAction: TextInputAction.next,
                     style: TextStyle(color: p.ink, fontSize: 14.5),

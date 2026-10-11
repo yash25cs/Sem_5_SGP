@@ -232,7 +232,9 @@ class _FakeQuizzes extends QuizRepository {
         quizId: 'qa',
         score: 8,
         total: 10,
-        completedAt: DateTime.now().subtract(const Duration(minutes: 5)),
+        // Now, not "5 minutes ago": just after midnight that was yesterday and
+        // the "Last attempt: Today" check failed.
+        completedAt: DateTime.now(),
       ),
     ),
     const Quiz(id: 'qb', title: 'Never tried', length: 1),

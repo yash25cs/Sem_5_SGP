@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
@@ -276,6 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _SheetField(
               initialValue: goal.name,
               label: 'Goal name',
+              maxLength: 120,
               onChanged: (v) => name = v),
           const SizedBox(height: 18),
           PillButton('Save',
@@ -849,11 +851,16 @@ class _SheetField extends StatelessWidget {
     required this.initialValue,
     required this.label,
     required this.onChanged,
+    this.maxLength,
   });
 
   final String initialValue;
   final String label;
   final ValueChanged<String> onChanged;
+
+  /// What the column behind the field holds; longer input is cut off here
+  /// rather than refused by the database on save.
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -863,6 +870,9 @@ class _SheetField extends StatelessWidget {
       child: TextFormField(
         initialValue: initialValue,
         onChanged: onChanged,
+        inputFormatters: [
+          if (maxLength != null) LengthLimitingTextInputFormatter(maxLength),
+        ],
         textCapitalization: TextCapitalization.words,
         style: TextStyle(color: p.ink, fontSize: 14.5),
         decoration: InputDecoration(
