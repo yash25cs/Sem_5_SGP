@@ -9,6 +9,10 @@
 # of truth and these image-heavy design exports do not need to be versioned.
 stitch_ref/
 
+# The public website is kept locally and published separately, not versioned
+# with the app.
+website/
+
 # Flutter, Dart, Android, and platform build outputs
 **/.dart_tool/
 **/.flutter-plugins

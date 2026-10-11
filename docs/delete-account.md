@@ -5,7 +5,7 @@ This removes the files you uploaded, then your account, and every record of
 yours goes with it: goals, tasks, quizzes, flashcards, chat, study-room
 messages, doubts and answers. It can't be undone.
 
-**Without the app:** email yash@charusat.edu.in from the address you signed up
+**Without the app:** email yashahir240106@gmail.com from the address you signed up
 with, asking for your StudyTrail account to be deleted. It is deleted the same
 way, and you get a reply when it's done.
 

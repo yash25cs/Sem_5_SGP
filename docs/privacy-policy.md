@@ -67,4 +67,4 @@ then your account; every record of yours is deleted with it. See
 
 ## Contact
 
-yash@charusat.edu.in
+yashahir240106@gmail.com

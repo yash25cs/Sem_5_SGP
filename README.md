@@ -1,11 +1,12 @@
 # StudyTrail
 
 StudyTrail is an Android exam-preparation app for students, built with Flutter
-and Supabase as an SGP project. A student adds their subjects, exam dates and
-notes; StudyTrail turns them into a week-by-week roadmap and daily tasks, writes
-quizzes, flashcards and exam questions from those notes, marks written answers
-like an examiner, and answers questions with citations from the student's own
-material.
+and Supabase. A student adds their subjects, exam dates and notes; StudyTrail
+turns them into a week-by-week roadmap and daily tasks, writes quizzes,
+flashcards and exam questions from those notes, marks written answers like an
+examiner, and answers questions with citations from the student's own material.
+
+It's free, has no ads, and works in English, Hindi and Gujarati.
 
 ## Features
 
@@ -15,7 +16,10 @@ material.
 - **Roadmap** — a weekly plan to the last exam, sized to the student's pace:
   Relaxed, Steady, Intense, or a custom time a day. A catch-up plan when they
   fall behind.
-- **Daily tasks** on Home, ticked off to earn XP and keep the streak.
+- **Daily tasks** on Home, ticked off to earn XP (once per task) and keep the
+  streak. A tick can be undone for a few seconds; after that, reopening a task
+  is a long-press with a confirmation, so a stray tap can't undo progress.
+  Regenerating the roadmap clears the old plan's tasks from Today.
 - **Reminders** at a time the student picks, a "streak at risk" nudge, and a
   Sunday weekly report.
 - **Calendar sync** — exams, roadmap weeks and tasks written straight into the
@@ -25,14 +29,16 @@ material.
 **Learn from your own notes**
 - **Library** — PDFs, photos of handwritten pages, and YouTube videos or whole
   playlists (read from their captions), up to 20 items.
-- **AI tutor (chat)** — answers from the student's notes with citations, and
-  suggested follow-ups.
+- **AI tutor (chat)** — answers from the student's notes with citations,
+  suggested follow-ups, and *save as flashcards*. A new chat offers starter
+  questions written from the student's own files, units and weak spots.
 - **Summaries** of any material.
 - Explanations in **English, Hindi or Gujarati**.
 
 **Practise**
 - **Quizzes** written from the notes, with a "My mistakes" deck of every wrong
-  answer, and a history of past attempts.
+  answer and a history of past attempts. XP is paid on a quiz's first attempt;
+  retakes are practice. A 50:50 lifeline can be bought with XP.
 - **Flashcards** with spaced repetition, usable offline.
 - Quizzes, attempts, decks and single cards can each be deleted, or all at
   once.
@@ -44,9 +50,11 @@ material.
   exam weighted the same way.
 
 **Together**
-- **Study rooms** — a shared focus timer, live chat, group quizzes and speed
-  rounds; members share notes that anyone in the room can save to their own
-  library; a room history with each room's materials and quiz results.
+- **Study rooms** (2–6 people, a 6-letter code) — a shared focus timer kept in
+  step for everyone, live chat, group quizzes and speed rounds (answers can be
+  changed until time runs out); members can ask the host to pause; notes shared
+  into a room can be saved to anyone's library; a room history with each
+  room's materials and quiz results. Report, block and host removal.
 - **Doubt board** — ask any student; an AI first answer from your notes;
   upvotes and "solved".
 - **Leaderboard** across every StudyTrail student.
@@ -57,6 +65,9 @@ material.
 - **XP, levels, badges with progress, streaks** and a **rewards store** (streak
   freeze, focus boost, golden border and more).
 - **Focus timer** (Pomodoro) with custom presets.
+
+Deleting a goal keeps its notes and chats; deleting the account removes
+everything.
 
 ## Tech stack
 
@@ -97,7 +108,7 @@ the server, so it can't be edited from the phone. More detail:
 ```text
 studytrail_flutter/      Flutter application (Android)
   lib/                   screens, widgets, stores, repositories, models, services
-  test/                  unit and widget tests
+  test/                  unit and widget tests; test/live/ runs against a real project
   android/               Android project, incl. home-screen widgets and calendar sync
 supabase/                backend
   migrations/            PostgreSQL schema, RLS, RPCs — applied in order
@@ -109,6 +120,7 @@ docs/                    project documentation
   DECISIONS.md           architecture decisions and trade-offs
   OWNERSHIP.md           module ownership and security boundaries
   REVIEW.md              review findings and how they were fixed
+  TEST_PLAN.md           what the tests cover, and the phone checklist
   DAILY_PLAN.md          the day-by-day delivery plan
   PLAY_STORE.md          Play Store listing and data-safety answers
   privacy-policy.md      privacy policy
@@ -165,9 +177,21 @@ flutter test
 ```
 
 253 unit and widget tests cover the stores, repositories, onboarding, practice,
-rooms, rewards and screen layouts down to a 320 dp phone. A few live tests
-against a real Supabase project are skipped unless configured. CI runs the same
-checks on every push. A live end-to-end suite (`test/live`, 74 tests) runs the real repositories against a Supabase project with throwaway accounts — see [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
+rooms, rewards and screen layouts down to a 320 dp phone. CI runs `flutter
+analyze` and `flutter test` on every push.
+
+The live end-to-end suite (74 tests) runs the app's real repositories against a
+Supabase project as throwaway accounts that delete themselves — the whole study
+journey, isolation between students, the shared features and odd input. It
+needs `dart_define.json` and makes real AI requests, so it is opt-in and best
+run one file at a time:
+
+```bash
+STUDYTRAIL_LIVE=1 flutter test test/live --concurrency=1
+```
+
+What it covers, and the checks that need a real phone, are in
+[docs/TEST_PLAN.md](docs/TEST_PLAN.md).
 
 ## What the app collects
 
@@ -267,3 +291,8 @@ Follow [docs/DAILY_PLAN.md](docs/DAILY_PLAN.md): one focused change per day, one
 descriptive commit, then update [docs/FLOW.md](docs/FLOW.md) and
 [docs/DECISIONS.md](docs/DECISIONS.md) when a meaningful path or trade-off
 changes.
+
+## Contact
+
+Questions, account-deletion requests or anything else:
+[yashahir240106@gmail.com](mailto:yashahir240106@gmail.com).

@@ -60,7 +60,7 @@ void main() {
     expect(p.xp, 0);
 
     final updated = await profiles.updateProfile(
-        branch: 'Computer Engineering', college: 'CHARUSAT');
+        branch: 'Computer Engineering', college: 'Example University');
     expect(updated.branch, 'Computer Engineering');
     expect((await profiles.setAnswerLanguage(AnswerLanguage.hindi))
         .answerLanguage, AnswerLanguage.hindi);
@@ -441,7 +441,7 @@ void main() {
     final pdf = await tempFile(
         'dbms_2025.pdf',
         simplePdf([
-          'CHARUSAT University - B.Tech Sem 5 - DBMS - 2025',
+          'Example University - B.Tech Sem 5 - DBMS - 2025',
           'Q1 (a) Explain 2NF and 3NF with an example. [6 marks]',
           'Q1 (b) What is a transitive dependency? [3 marks]',
           'Q2 (a) Explain two-phase locking. [6 marks]',

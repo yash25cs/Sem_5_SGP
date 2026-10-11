@@ -1,10 +1,11 @@
 -- StudyTrail — seed catalog data (badges + a default class).
 -- Idempotent: safe to re-run.
 
--- Default class for the CSPIT / Charusat cohort so the leaderboard has a home.
+-- A default class so the leaderboard had a home. Classes are unused since 0029
+-- (one community for everyone); 0036 renames the row older projects got here.
 insert into classes (name, college, branch, batch)
-select 'CE-A 2025', 'CSPIT, Charusat University', 'Computer Engineering', '2025'
-where not exists (select 1 from classes where name = 'CE-A 2025');
+select 'Default class', null, null, null
+where not exists (select 1 from classes where name = 'Default class');
 
 -- Achievement catalog. icon_key / color_key mirror the UI's token names.
 insert into badges (key, name, icon_key, color_key, description) values

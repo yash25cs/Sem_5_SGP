@@ -824,7 +824,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         : _deleteAccount),
                 const SizedBox(height: 12),
                 Center(
-                  child: Text('StudyTrail v1.0 · SGP project',
+                  child: Text('StudyTrail v1.0',
                       style: TextStyle(color: p.ink3, fontSize: 12)),
                 ),
               ],

@@ -284,7 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: context.watch<AuthStore>().busy ? null : _confirmLogout),
           const SizedBox(height: 12),
           Center(
-            child: Text('StudyTrail v1.0 · SGP project',
+            child: Text('StudyTrail v1.0',
                 style: TextStyle(color: p.ink3, fontSize: 12)),
           ),
         ],

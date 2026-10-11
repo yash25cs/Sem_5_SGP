@@ -167,7 +167,7 @@ yet, and the device pass has to come first.
 - Fixed a visual glitch in `FlashcardsScreen` by isolating the flip animation into a separate `_FlipCard` widget, ensuring smooth transitions without revealing answers prematurely.
 - Implemented the `delete-account` Edge Function using a strict leaf-first foreign key deletion order and integrated it with the Settings UI.
 - Constrained the chat citation UI (`SoftChip`) to safely wrap and truncate long PDF filenames instead of overflowing the screen.
-- Implemented the `summarize-material` Edge Function and a visual Study Streak Heatmap on the Profile screen to close out major SGP Quick Wins.
+- Implemented the `summarize-material` Edge Function and a visual Study Streak Heatmap on the Profile screen to close out the major quick wins.
 
 ## Day 9 - Notifications & Gamification Polish
 
@@ -316,7 +316,7 @@ yet, and the device pass has to come first.
   - Automatically prompts new students immediately after creating their account / ID to fill out their academic information before proceeding to material upload and goal planning.
   - Form gathers:
     - **Full Name** (prefilled or editable)
-    - **College / University Name** (e.g. CSPIT, Charusat University)
+    - **College / University Name** (e.g. the student's university)
     - **Program & Branch / Major** (e.g. B.Tech Computer Engineering, IT)
     - **Student ID / Roll No / Enrollment ID** (e.g. 22CS045, D25CS118)
     - **Current Semester** (dropdown: Semester 1 through 8)
