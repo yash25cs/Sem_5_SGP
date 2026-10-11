@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/nav.dart';
 import '../widgets/room_materials.dart';
 import 'room_quiz_screen.dart';
@@ -326,6 +327,13 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
     }
   }
 
+  void _askPause() {
+    final store = context.read<RoomStore>();
+    _toast(store.requestPause()
+        ? 'Asked the host to pause.'
+        : store.error ?? 'Could not ask right now.');
+  }
+
   Future<void> _refreshRoom() async {
     final store = context.read<RoomStore>();
     final ok = await store.refreshRoom();
@@ -346,6 +354,14 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
         if (!mounted) return;
         context.read<RoomStore>().clearFocusReward();
         _toast(reward);
+      });
+    }
+    final timerNotice = store.timerNotice;
+    if (timerNotice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<RoomStore>().clearTimerNotice();
+        _toast(timerNotice);
       });
     }
 
@@ -644,6 +660,12 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
 
                       // Host controls
                       if (isHost) ...[
+                        for (final r in store.pauseRequests)
+                          _PauseRequestBanner(
+                            name: r.name,
+                            onPause: store.pauseTimer,
+                            onDecline: () => store.declinePause(r.userId),
+                          ),
                         Row(
                           children: [
                             Expanded(
@@ -695,8 +717,21 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                           ],
                         ),
                       ] else ...[
+                        if (store.timerRunning)
+                          PillButton(
+                            store.pauseRequested
+                                ? 'Asked the host to pause…'
+                                : 'Ask host to pause',
+                            icon: store.pauseRequested
+                                ? Symbols.hourglass_top
+                                : Symbols.pan_tool,
+                            variant: PillVariant.outline,
+                            onTap: store.pauseRequested ? null : _askPause,
+                          ),
+                        const SizedBox(height: 8),
                         Text(
                           'Host controls the shared timer for the room.',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                               color: p.ink3,
                               fontSize: 12,
@@ -822,17 +857,20 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
                   )
                 else
                   for (final msg in store.messages) ...[
-                    GestureDetector(
-                      onLongPress: msg.userId == currentUserId || msg.pending
-                          ? null
-                          : () => _personActions(
-                                userId: msg.userId,
-                                name: msg.senderName ?? 'Student',
-                                messageId: msg.id,
-                              ),
-                      child: _ChatMessageBubble(
-                        message: msg,
-                        isMe: msg.userId == currentUserId,
+                    AppearIn(
+                      key: ValueKey(msg.id),
+                      child: GestureDetector(
+                        onLongPress: msg.userId == currentUserId || msg.pending
+                            ? null
+                            : () => _personActions(
+                                  userId: msg.userId,
+                                  name: msg.senderName ?? 'Student',
+                                  messageId: msg.id,
+                                ),
+                        child: _ChatMessageBubble(
+                          message: msg,
+                          isMe: msg.userId == currentUserId,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -899,6 +937,53 @@ class _StudyRoomScreenState extends State<StudyRoomScreen> {
           ),
         ],
       ),
+      ),
+    );
+  }
+}
+
+/// Host only: a member asked to pause, with Pause and Not now.
+class _PauseRequestBanner extends StatelessWidget {
+  const _PauseRequestBanner({
+    required this.name,
+    required this.onPause,
+    required this.onDecline,
+  });
+
+  final String name;
+  final VoidCallback onPause;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: p.amberSoft,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(Symbols.pan_tool, size: 20, color: p.onAmber),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('${name.split(' ').first} asks to pause',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: p.onAmber,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+          ),
+          TextButton(
+            onPressed: onDecline,
+            child: Text('Not now',
+                style: TextStyle(color: p.onAmber, fontSize: 12.5)),
+          ),
+          PillButton('Pause', expand: false, onTap: onPause),
+        ],
       ),
     );
   }

@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
@@ -193,6 +194,7 @@ class _ExamPapersScreenState extends State<ExamPapersScreen> {
                       Expanded(
                         child: PillButton('Upload a paper',
                             icon: Symbols.upload_file,
+                            loading: store.busy,
                             onTap: store.busy || store.atLimit
                                 ? null
                                 : () => _add(camera: false)),
@@ -285,10 +287,13 @@ class _ExamPapersScreenState extends State<ExamPapersScreen> {
                     ],
                     CardHeader('Your papers'),
                     for (final paper in store.papers) ...[
-                      _PaperTile(
-                        paper: paper,
-                        onRetry: store.busy ? null : () => store.analyze(paper),
-                        onRemove: store.busy ? null : () => store.remove(paper),
+                      AppearIn(
+                        key: ValueKey(paper.id),
+                        child: _PaperTile(
+                          paper: paper,
+                          onRetry: store.busy ? null : () => store.analyze(paper),
+                          onRemove: store.busy ? null : () => store.remove(paper),
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],

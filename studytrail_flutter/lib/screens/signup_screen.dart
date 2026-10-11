@@ -158,6 +158,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     ),
                     const SizedBox(height: 22),
                     PillButton(busy ? 'Creating…' : 'Create account',
+                        loading: busy,
                         trailingIcon: Symbols.arrow_forward,
                         onTap: busy ? null : _submit),
                     const SizedBox(height: 20),

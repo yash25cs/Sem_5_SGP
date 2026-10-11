@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/expandable_item_card.dart';
 import '../widgets/nav.dart';
@@ -143,6 +144,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
     final nameController = TextEditingController(text: 'Study Session');
     int maxMembers = 4;
     String? sheetError;
+    var creating = false;
 
     final created = await showModalBottomSheet<StudyRoom>(
       context: context,
@@ -265,8 +267,9 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                 const SizedBox(height: 10),
               ],
               PillButton(
-                'Create & Enter Room',
+                creating ? 'Creating room…' : 'Create & Enter Room',
                 icon: Symbols.groups,
+                loading: creating,
                 onTap: () async {
                   final name = nameController.text.trim();
                   if (name.isEmpty) {
@@ -274,6 +277,10 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     return;
                   }
 
+                  setModalState(() {
+                    creating = true;
+                    sheetError = null;
+                  });
                   final store = sheetCtx.read<RoomStore>();
                   final room = await store.createRoom(
                     name: name,
@@ -284,8 +291,10 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                   if (room != null) {
                     Navigator.of(sheetCtx).pop(room);
                   } else {
-                    setModalState(() => sheetError =
-                        store.error ?? 'Could not create the room.');
+                    setModalState(() {
+                      creating = false;
+                      sheetError = store.error ?? 'Could not create the room.';
+                    });
                   }
                 },
               ),
@@ -402,6 +411,7 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                         PillButton(
                           'Join',
                           expand: false,
+                          loading: roomStore.busy,
                           onTap: _joinByCode,
                         ),
                       ],
@@ -500,9 +510,12 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                     )
                   else
                     for (final r in activeRooms) ...[
-                      _RoomTile(
-                        room: r,
-                        onJoin: roomStore.busy ? null : () => _joinFromLobby(r),
+                      AppearIn(
+                        key: ValueKey(r.id),
+                        child: _RoomTile(
+                          room: r,
+                          onJoin: roomStore.busy ? null : () => _joinFromLobby(r),
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -541,9 +554,12 @@ class _BuddyRoomScreenState extends State<BuddyRoomScreen> {
                           for (final h in _allHistory
                               ? roomStore.history
                               : roomStore.history.take(_historyPreview))
-                            _HistoryRow(
-                              entry: h,
-                              onTap: () => _openHistory(h),
+                            AppearIn(
+                              key: ValueKey(h.roomId),
+                              child: _HistoryRow(
+                                entry: h,
+                                onTap: () => _openHistory(h),
+                              ),
                             ),
                           if (roomStore.history.length > _historyPreview)
                             TextButton(

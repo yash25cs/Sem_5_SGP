@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/generate_sheet.dart';
 import '../widgets/nav.dart';
 
@@ -269,7 +270,6 @@ class _NoQuiz extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.p;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -287,24 +287,9 @@ class _NoQuiz extends StatelessWidget {
         if (store.isHost) ...[
           const SizedBox(height: 14),
           if (store.quizWorking)
-            Row(
-              children: [
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2.4, color: p.primary),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Writing the questions…',
-                      style: TextStyle(
-                          color: p.ink2,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ],
-            )
+            const AiWorking(
+                messages: WorkingMessages.groupQuiz,
+                hint: 'Everyone gets asked once the questions are ready')
           else
             PillButton(
               'Start a group quiz',

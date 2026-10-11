@@ -7,6 +7,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import 'common.dart';
 import 'expandable_item_card.dart';
+import 'working.dart';
 
 /// Copies [share] into the student's library, with the library limit checked
 /// first and the library re-read afterwards. Shows its own snackbar; returns
@@ -257,6 +258,7 @@ class RoomMaterialsCard extends StatelessWidget {
               PillButton('Share',
                   icon: Symbols.add,
                   expand: false,
+                  loading: rooms.busy,
                   onTap: rooms.busy ? null : () => _share(context)),
             ],
           ),
@@ -272,14 +274,17 @@ class RoomMaterialsCard extends StatelessWidget {
             )
           else
             for (final s in shared)
-              SharedMaterialTile(
-                share: s,
-                mine: s.sharedBy == me,
-                saving: rooms.isSaving(s.id),
-                onSave: () => saveSharedToLibrary(context, s),
-                onRemove: rooms.canUnshare(s) && !rooms.busy
-                    ? () => _remove(context, s)
-                    : null,
+              AppearIn(
+                key: ValueKey(s.id),
+                child: SharedMaterialTile(
+                  share: s,
+                  mine: s.sharedBy == me,
+                  saving: rooms.isSaving(s.id),
+                  onSave: () => saveSharedToLibrary(context, s),
+                  onRemove: rooms.canUnshare(s) && !rooms.busy
+                      ? () => _remove(context, s)
+                      : null,
+                ),
               ),
         ],
       ),

@@ -9,6 +9,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
@@ -485,9 +486,12 @@ class _HomeScreenState extends State<HomeScreen> {
             )
           else
             for (final task in store.tasks)
-              _TaskTile(
-                task: task,
-                onToggle: () => _toggle(task),
+              AppearIn(
+                key: ValueKey(task.id),
+                child: _TaskTile(
+                  task: task,
+                  onToggle: () => _toggle(task),
+                ),
               ),
           const SizedBox(height: 20),
 

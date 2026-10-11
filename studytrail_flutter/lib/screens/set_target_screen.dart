@@ -321,6 +321,7 @@ class _SetTargetScreenState extends State<SetTargetScreen> {
             child: PillButton(
                 store.busy ? 'Saving…' : 'Generate my roadmap',
                 icon: Symbols.auto_awesome,
+                loading: store.busy,
                 onTap: store.busy ? null : _save),
           ),
         ],

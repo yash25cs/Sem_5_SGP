@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 
 /// Roadmap tab — a vertical timeline of weekly milestones with day tasks.
@@ -190,25 +191,11 @@ class _RoadmapScreenState extends State<RoadmapScreen>
               if (store.generating)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 14),
-                  child: AppCard(
-                    padding: const EdgeInsets.all(14),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              color: p.primary, strokeWidth: 2.2),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                              'Writing your weekly plan… this can take up to a '
-                              'minute.',
-                              style:
-                                  TextStyle(color: p.ink2, fontSize: 13)),
-                        ),
-                      ],
+                  child: const AppCard(
+                    padding: EdgeInsets.fromLTRB(16, 20, 16, 18),
+                    child: AiWorking(
+                      icon: Symbols.route,
+                      messages: WorkingMessages.roadmap,
                     ),
                   ),
                 ),

@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/material_tile.dart';
 import '../widgets/nav.dart';
@@ -114,13 +115,15 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
   /// One file or video row — playlists build theirs through this too.
   Widget _tile(StudyMaterial material) {
     final store = context.read<OnboardingStore>();
-    return MaterialTile(
+    return AppearIn(
       key: ValueKey(material.id),
-      material: material,
-      onRetry: store.busy ? null : () => _retry(material),
-      onRemove: store.busy ? null : () => store.removeMaterial(material),
-      onSummarize: () => SummarySheet.show(context,
-          materialId: material.id, title: material.displayName),
+      child: MaterialTile(
+        material: material,
+        onRetry: store.busy ? null : () => _retry(material),
+        onRemove: store.busy ? null : () => store.removeMaterial(material),
+        onSummarize: () => SummarySheet.show(context,
+            materialId: material.id, title: material.displayName),
+      ),
     );
   }
 

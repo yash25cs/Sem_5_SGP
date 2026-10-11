@@ -145,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 22),
                     PillButton(busy ? 'Signing in…' : 'Sign in',
-                        onTap: busy ? null : _submit),
+                        loading: busy, onTap: busy ? null : _submit),
                     const SizedBox(height: 20),
                     const OrDivider(),
                     const SizedBox(height: 20),

@@ -7,6 +7,7 @@ import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/expandable_item_card.dart';
 import '../widgets/generate_sheet.dart';
@@ -406,25 +407,28 @@ class _FlashcardsScreenState extends State<FlashcardsScreen> {
               ...store.decks.where((d) => d.isMistakes),
               ...store.decks.where((d) => !d.isMistakes),
             ])
-              _DeckRow(
-                deck: deck,
-                expanded: _openDeck == deck.id,
-                onToggle: () => setState(
-                    () => _openDeck = _openDeck == deck.id ? null : deck.id),
-                onReview: store.busy || inSession
-                    ? null
-                    : () {
-                        setState(() => _openDeck = null);
-                        _startSession(deckId: deck.id, deckName: deck.name);
-                      },
-                onPractice: store.busy || inSession
-                    ? null
-                    : () => _practice(deck),
-                onCards: store.busy || store.offline || inSession
-                    ? null
-                    : () => _showCards(deck),
-                onDelete: store.busy ? null : () => _delete(deck),
-            ),
+              AppearIn(
+                key: ValueKey(deck.id),
+                child: _DeckRow(
+                  deck: deck,
+                  expanded: _openDeck == deck.id,
+                  onToggle: () => setState(
+                      () => _openDeck = _openDeck == deck.id ? null : deck.id),
+                  onReview: store.busy || inSession
+                      ? null
+                      : () {
+                          setState(() => _openDeck = null);
+                          _startSession(deckId: deck.id, deckName: deck.name);
+                        },
+                  onPractice: store.busy || inSession
+                      ? null
+                      : () => _practice(deck),
+                  onCards: store.busy || store.offline || inSession
+                      ? null
+                      : () => _showCards(deck),
+                  onDelete: store.busy ? null : () => _delete(deck),
+              ),
+              ),
         ],
       ),
     ),

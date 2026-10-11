@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
@@ -235,15 +236,24 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                       onRemove: (i) => setState(() => _pages.removeAt(i)),
                     ),
                     const SizedBox(height: 14),
-                    PillButton(
-                      store.busy
-                          ? 'Reading your handwriting…'
-                          : _pages.length > 1
-                              ? 'Grade my ${_pages.length} pages'
-                              : 'Grade my handwriting',
-                      icon: store.busy ? null : Symbols.grading,
-                      onTap: store.busy || _pages.isEmpty ? null : _submitPhotos,
-                    ),
+                    if (store.busy)
+                      const AiWorking(
+                        icon: Symbols.grading,
+                        messages: [
+                          'Reading your handwriting…',
+                          'Checking it against your notes…',
+                          'Marking point by point…',
+                          'Writing feedback…',
+                        ],
+                      )
+                    else
+                      PillButton(
+                        _pages.length > 1
+                            ? 'Grade my ${_pages.length} pages'
+                            : 'Grade my handwriting',
+                        icon: Symbols.grading,
+                        onTap: _pages.isEmpty ? null : _submitPhotos,
+                      ),
                     const SizedBox(height: 8),
                     Center(
                       child: TextButton(
@@ -288,11 +298,16 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                       style: TextStyle(color: p.ink3, fontSize: 12),
                     ),
                     const SizedBox(height: 14),
-                    PillButton(
-                      store.busy ? 'Grading…' : 'Submit for grading',
-                      icon: store.busy ? null : Symbols.grading,
-                      onTap: store.busy || _words < 5 ? null : _submit,
-                    ),
+                    if (store.busy)
+                      const AiWorking(
+                          icon: Symbols.grading,
+                          messages: WorkingMessages.grading)
+                    else
+                      PillButton(
+                        'Submit for grading',
+                        icon: Symbols.grading,
+                        onTap: _words < 5 ? null : _submit,
+                      ),
                     const SizedBox(height: 8),
                     Center(
                       child: TextButton(

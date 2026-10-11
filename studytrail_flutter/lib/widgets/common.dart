@@ -90,6 +90,7 @@ class PillButton extends StatelessWidget {
     this.onTap,
     this.variant = PillVariant.primary,
     this.expand = true,
+    this.loading = false,
   });
 
   final String label;
@@ -98,6 +99,10 @@ class PillButton extends StatelessWidget {
   final VoidCallback? onTap;
   final PillVariant variant;
   final bool expand;
+
+  /// Something is being created: a spinner takes the icon's place and taps
+  /// are ignored, so a slow save can't be sent twice.
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -130,7 +135,7 @@ class PillButton extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: loading ? null : onTap,
         borderRadius: BorderRadius.circular(999),
         child: Ink(
           decoration: BoxDecoration(
@@ -151,10 +156,33 @@ class PillButton extends StatelessWidget {
               final content = Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (icon != null) ...[
-                    Icon(icon, size: 20, color: fg),
-                    const SizedBox(width: 8),
-                  ],
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, a) =>
+                          ScaleTransition(scale: a, child: child),
+                      child: loading
+                          ? Padding(
+                              key: const ValueKey('loading'),
+                              padding: const EdgeInsets.only(right: 10),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.4, color: fg),
+                              ),
+                            )
+                          : icon != null
+                              ? Padding(
+                                  key: ValueKey(icon),
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Icon(icon, size: 20, color: fg),
+                                )
+                              : const SizedBox.shrink(key: ValueKey('none')),
+                    ),
+                  ),
                   Text(label,
                       maxLines: 1,
                       softWrap: false,

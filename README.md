@@ -164,7 +164,7 @@ flutter analyze
 flutter test
 ```
 
-225 unit and widget tests cover the stores, repositories, onboarding, practice,
+240 unit and widget tests cover the stores, repositories, onboarding, practice,
 rooms, rewards and screen layouts down to a 320 dp phone. A few live tests
 against a real Supabase project are skipped unless configured. CI runs the same
 checks on every push.

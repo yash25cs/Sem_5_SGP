@@ -12,7 +12,13 @@ import 'async_store.dart';
 /// Three realtime paths share one channel per room:
 /// * **broadcast `timer`** — the host is the only writer; members mirror it.
 ///   Payloads carry the seconds left rather than a wall-clock end time, so two
-///   phones with different clocks still agree.
+///   phones with different clocks still agree. Each carries a `seq` (the
+///   host's clock in ms) so a late message can't undo a newer one, and the
+///   host re-sends the state every [timerHeartbeat] — a missed pause or
+///   resume is put right within seconds instead of never.
+/// * **broadcast `timer_request`** — a member asks the host for the current
+///   state (`sync`, on joining the channel or refreshing) or to pause
+///   (`pause`); the host answers a pause request with `timer_answer`.
 /// * **broadcast `room`** — the host announces a close, so members are told
 ///   instead of sitting in a dead room.
 /// * **broadcast `quiz`** — whoever changes a group quiz (proposes, votes,
@@ -33,6 +39,7 @@ class RoomStore extends AsyncStore {
     ProfileRepository? profileRepo,
     GamificationRepository? game,
     this.quizPollInterval = const Duration(seconds: 15),
+    this.timerHeartbeat = const Duration(seconds: 5),
   })  : _roomRepo = roomRepo ?? const RoomRepository(),
         _profileRepo = profileRepo ?? const ProfileRepository(),
         _game = game ?? const GamificationRepository();
@@ -44,6 +51,13 @@ class RoomStore extends AsyncStore {
   /// How often an open quiz is re-read in case a ping was missed. Null turns
   /// polling off (tests).
   final Duration? quizPollInterval;
+
+  /// How often the host re-sends the timer while in a room. Null turns it off
+  /// (tests).
+  final Duration? timerHeartbeat;
+
+  /// How long a member waits between pause requests.
+  static const pauseRequestCooldown = Duration(seconds: 30);
 
   /// Room sizes the create sheet offers; `create_study_room` allows 2 to 6.
   static const roomSizes = [2, 3, 4, 5, 6];
@@ -130,6 +144,29 @@ class RoomStore extends AsyncStore {
   bool _timerRunning = false;
   String _timerPhase = 'focus'; // 'focus' | 'break'
   Timer? _ticker;
+  Timer? _heartbeat;
+
+  /// The newest host message applied here; older ones are ignored.
+  int _lastTimerSeq = 0;
+
+  // ── Pause requests ──
+  /// Members asking the host to pause, oldest first (host only).
+  List<({String userId, String name})> _pauseRequests = const [];
+  List<({String userId, String name})> get pauseRequests => _pauseRequests;
+
+  /// When this member last asked, for the cooldown and the "Asked" state.
+  DateTime? _pauseAskedAt;
+
+  /// Redraws once the cooldown ends, so "Asked…" turns back into a button.
+  Timer? _pauseCooldown;
+  bool get pauseRequested =>
+      _pauseAskedAt != null &&
+      DateTime.now().difference(_pauseAskedAt!) < pauseRequestCooldown;
+
+  /// One-shot line for the room screen to show ("The host paused the timer").
+  String? _timerNotice;
+  String? get timerNotice => _timerNotice;
+  void clearTimerNotice() => _timerNotice = null;
 
   int get secondsLeft => _secondsLeft;
   int get totalSeconds => _totalSeconds;
@@ -291,6 +328,10 @@ class RoomStore extends AsyncStore {
 
     _currentRoom = room;
     _closedNotice = null;
+    _lastTimerSeq = 0;
+    _pauseRequests = const [];
+    _pauseAskedAt = null;
+    _timerNotice = null;
     _timerPhase = 'focus';
     _totalSeconds = room.timerDurationMin * 60;
     _secondsLeft = _totalSeconds;
@@ -335,6 +376,8 @@ class RoomStore extends AsyncStore {
 
     channel
       ..onBroadcast(event: 'timer', callback: _onTimerMessage)
+      ..onBroadcast(event: 'timer_request', callback: _onTimerRequest)
+      ..onBroadcast(event: 'timer_answer', callback: _onTimerAnswer)
       ..onBroadcast(event: 'room', callback: _onRoomMessage)
       ..onBroadcast(event: 'quiz', callback: _onQuizMessage)
       ..onBroadcast(
@@ -385,6 +428,13 @@ class RoomStore extends AsyncStore {
     channel.subscribe((status, _) {
       if (status == RealtimeSubscribeStatus.subscribed) {
         _trackPresence();
+        // Also after a reconnect: whatever was missed meanwhile comes back.
+        if (isHost) {
+          _broadcastTimer('sync');
+          _startHeartbeat();
+        } else {
+          requestTimerSync();
+        }
       }
     });
   }
@@ -471,6 +521,18 @@ class RoomStore extends AsyncStore {
     final action = data['action'] as String?;
     if (action == null) return;
 
+    // Out of order (a heartbeat overtaken by a newer command): ignore it.
+    final seq = (data['seq'] as num?)?.toInt();
+    if (seq != null) {
+      if (seq < _lastTimerSeq) return;
+      _lastTimerSeq = seq;
+    }
+
+    // A heartbeat that agrees with this phone changes nothing; skipping it
+    // keeps the ticker from restarting (and the second hand from jumping)
+    // every few seconds.
+    if (action == 'sync' && _matchesTimer(data)) return;
+
     // The host's end-of-block broadcast can land a moment before this
     // device's own countdown reaches zero; that still counts as finishing.
     // The host's focus and break lengths ride along, so a change made inside
@@ -504,6 +566,8 @@ class RoomStore extends AsyncStore {
       'sync' => data['running'] == true,
       _ => false, // pause, reset, switch_phase
     };
+    // The host paused: any request this member made is answered.
+    if (_timerRunning && !running) _pauseAskedAt = null;
     _timerRunning = running;
     if (running) {
       _startTicker();
@@ -512,6 +576,19 @@ class RoomStore extends AsyncStore {
     }
     _trackPresence();
     notifyListeners();
+  }
+
+  /// Same phase, same running state, and within a second of the host's count.
+  bool _matchesTimer(Map<String, dynamic> data) {
+    final phase = data['phase'] == 'break' ? 'break' : 'focus';
+    final running = data['running'] == true;
+    final remaining = (data['remaining_secs'] as num?)?.toInt();
+    final total = (data['total_secs'] as num?)?.toInt();
+    return phase == _timerPhase &&
+        running == _timerRunning &&
+        remaining != null &&
+        (remaining - _secondsLeft).abs() <= 1 &&
+        (total == null || total == _totalSeconds);
   }
 
   int _phaseSeconds() =>
@@ -532,7 +609,12 @@ class RoomStore extends AsyncStore {
     if (!isHost) return;
     _timerRunning = false;
     _ticker?.cancel();
+    final asked = _pauseRequests;
+    _pauseRequests = const [];
     _afterHostChange('pause');
+    for (final r in asked) {
+      _answerPause(r.userId, accepted: true);
+    }
   }
 
   void toggleTimer() => _timerRunning ? pauseTimer() : startTimer();
@@ -649,9 +731,14 @@ class RoomStore extends AsyncStore {
   }
 
   void _broadcastTimer(String action) {
+    // Never smaller than the last one sent, even if the phone's clock steps
+    // back.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _lastTimerSeq = now > _lastTimerSeq ? now : _lastTimerSeq + 1;
     _channel?.sendBroadcastMessage(
       event: 'timer',
       payload: {
+        'seq': _lastTimerSeq,
         'action': action,
         'phase': _timerPhase,
         'remaining_secs': _secondsLeft,
@@ -664,6 +751,123 @@ class RoomStore extends AsyncStore {
       },
     ).ignore();
   }
+
+  /// Host only: re-sends the timer every [timerHeartbeat] while in the room.
+  void _startHeartbeat() {
+    final every = timerHeartbeat;
+    if (every == null || !isHost) return;
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(every, (_) {
+      if (_currentRoom == null || !isHost) {
+        _heartbeat?.cancel();
+        return;
+      }
+      _broadcastTimer('sync');
+    });
+  }
+
+  /// Member: asks the host to send the current timer.
+  void requestTimerSync() {
+    if (isHost || _currentRoom == null) return;
+    _channel?.sendBroadcastMessage(
+      event: 'timer_request',
+      payload: {'kind': 'sync', 'user_id': _me ?? ''},
+    ).ignore();
+  }
+
+  /// Member: asks the host to pause the running timer. False (with the
+  /// reason in [error]) if it can't be asked right now.
+  bool requestPause() {
+    if (isHost || _currentRoom == null) return false;
+    if (!_timerRunning) {
+      setError('The timer is already paused.');
+      return false;
+    }
+    if (pauseRequested) {
+      setError('You asked a moment ago — give the host a few seconds.');
+      return false;
+    }
+    final ch = _channel;
+    if (ch == null) {
+      setError('Not connected to the room. Try refreshing.');
+      return false;
+    }
+    _pauseAskedAt = DateTime.now();
+    _pauseCooldown?.cancel();
+    _pauseCooldown = Timer(pauseRequestCooldown, notifyListeners);
+    ch.sendBroadcastMessage(
+      event: 'timer_request',
+      payload: {
+        'kind': 'pause',
+        'user_id': _me ?? '',
+        'name': (_myPresence?['full_name'] as String?) ?? 'Student',
+      },
+    ).ignore();
+    notifyListeners();
+    return true;
+  }
+
+  /// Host: a member asked to pause, or for the current timer.
+  @visibleForTesting
+  void onTimerRequestData(Map<String, dynamic> data) {
+    if (!isHost) return;
+    final userId = data['user_id'] as String?;
+    switch (data['kind']) {
+      case 'sync':
+        _broadcastTimer('sync');
+      case 'pause' when userId != null && userId.isNotEmpty:
+        if (!_timerRunning) {
+          // Already paused: say so rather than leave them waiting.
+          _answerPause(userId, accepted: true);
+          return;
+        }
+        if (_pauseRequests.any((r) => r.userId == userId)) return;
+        final name = ((data['name'] as String?) ?? '').trim();
+        _pauseRequests = [
+          ..._pauseRequests,
+          (
+            userId: userId,
+            name: name.isEmpty ? (_nameFor(userId) ?? 'Student') : name,
+          ),
+        ];
+        notifyListeners();
+    }
+  }
+
+  void _onTimerRequest(Map<String, dynamic> message) =>
+      onTimerRequestData(unwrapBroadcast(message));
+
+  /// Host: turns down one member's request; the timer keeps running.
+  void declinePause(String userId) {
+    if (!isHost) return;
+    _pauseRequests = [
+      for (final r in _pauseRequests)
+        if (r.userId != userId) r,
+    ];
+    notifyListeners();
+    _answerPause(userId, accepted: false);
+  }
+
+  void _answerPause(String userId, {required bool accepted}) {
+    _channel?.sendBroadcastMessage(
+      event: 'timer_answer',
+      payload: {'user_id': userId, 'accepted': accepted},
+    ).ignore();
+  }
+
+  /// Member: the host's answer to this student's pause request.
+  @visibleForTesting
+  void onTimerAnswerData(Map<String, dynamic> data) {
+    if (isHost || data['user_id'] != _me) return;
+    _pauseAskedAt = null;
+    _timerNotice = data['accepted'] == true
+        ? 'The host paused the timer.'
+        : 'The host kept the timer running.';
+    notifyListeners();
+  }
+
+  void _onTimerAnswer(Map<String, dynamic> message) =>
+      onTimerAnswerData(unwrapBroadcast(message));
 
   void _onRoomMessage(Map<String, dynamic> message) {
     if (isHost) return;
@@ -1027,6 +1231,11 @@ class RoomStore extends AsyncStore {
           if (m.pending && !known.contains(m.id)) m,
       ];
       _shared = results[2] as List<RoomSharedMaterial>;
+      if (isHost) {
+        _broadcastTimer('sync');
+      } else {
+        requestTimerSync();
+      }
       await refreshQuiz();
       return true;
     } catch (e) {
@@ -1122,6 +1331,10 @@ class RoomStore extends AsyncStore {
 
   Future<void> leaveCurrentRoom() async {
     _ticker?.cancel();
+    _heartbeat?.cancel();
+    _heartbeat = null;
+    _pauseRequests = const [];
+    _pauseAskedAt = null;
     _timerRunning = false;
     _focusSeen = 0;
     final room = _currentRoom;
@@ -1161,6 +1374,8 @@ class RoomStore extends AsyncStore {
   @override
   void dispose() {
     _ticker?.cancel();
+    _heartbeat?.cancel();
+    _pauseCooldown?.cancel();
     _quizPoll?.cancel();
     _clock.dispose();
     final ch = _channel;

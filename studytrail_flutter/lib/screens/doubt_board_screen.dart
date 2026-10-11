@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
@@ -232,7 +233,11 @@ class _DoubtBoardScreenState extends State<DoubtBoardScreen> {
                     )
                   else
                     for (final d in store.doubts) ...[
-                      _DoubtTile(doubt: d, onTap: () => _openThread(d.id)),
+                      AppearIn(
+                        key: ValueKey(d.id),
+                        child: _DoubtTile(
+                            doubt: d, onTap: () => _openThread(d.id)),
+                      ),
                       const SizedBox(height: 10),
                     ],
                 ],
@@ -448,7 +453,9 @@ class _AskSheetState extends State<_AskSheet> {
             ],
             const SizedBox(height: 12),
             PillButton(busy ? 'Posting…' : 'Post doubt',
-                icon: busy ? null : Symbols.send, onTap: busy ? null : _post),
+                icon: Symbols.send,
+                loading: busy,
+                onTap: busy ? null : _post),
           ],
         ),
       ),
@@ -656,12 +663,26 @@ class _DoubtThreadScreenState extends State<DoubtThreadScreen> {
                       child: Container(
                         width: 44,
                         height: 44,
+                        alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: p.primary,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Symbols.send,
-                            color: Colors.white, size: 20),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: store.busy
+                              ? const SizedBox(
+                                  key: ValueKey('sending'),
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.4, color: Colors.white),
+                                )
+                              : const Icon(Symbols.send,
+                                  key: ValueKey('send'),
+                                  color: Colors.white,
+                                  size: 20),
+                        ),
                       ),
                     ),
                   ],

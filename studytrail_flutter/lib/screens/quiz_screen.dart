@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/expandable_item_card.dart';
 import '../widgets/generate_sheet.dart';
@@ -304,25 +305,28 @@ class _QuizPickerState extends State<_QuizPicker> {
           )
         else
           for (final quiz in store.available)
-            _QuizTile(
-              quiz: quiz,
-              expanded: _open == quiz.id,
-              onToggle: () =>
-                  setState(() => _open = _open == quiz.id ? null : quiz.id),
-              onStart: store.busy ? null : () => widget.onStart(quiz),
-              onHistory: store.busy
-                  ? null
-                  : () => showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: context.p.card,
-                        shape: const RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.vertical(top: Radius.circular(28)),
+            AppearIn(
+              key: ValueKey(quiz.id),
+              child: _QuizTile(
+                quiz: quiz,
+                expanded: _open == quiz.id,
+                onToggle: () =>
+                    setState(() => _open = _open == quiz.id ? null : quiz.id),
+                onStart: store.busy ? null : () => widget.onStart(quiz),
+                onHistory: store.busy
+                    ? null
+                    : () => showModalBottomSheet<void>(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: context.p.card,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.vertical(top: Radius.circular(28)),
+                          ),
+                          builder: (_) => _AttemptsSheet(quiz: quiz),
                         ),
-                        builder: (_) => _AttemptsSheet(quiz: quiz),
-                      ),
-              onDelete: store.busy ? null : () => _delete(quiz),
+                onDelete: store.busy ? null : () => _delete(quiz),
+              ),
             ),
       ],
     );
