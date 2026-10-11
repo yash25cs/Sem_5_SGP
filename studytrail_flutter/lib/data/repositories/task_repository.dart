@@ -7,12 +7,19 @@ class TaskRepository {
 
   /// Tasks for a given day, newest-first within the day. Embeds the subject
   /// name so the list can show it without a second round-trip.
+  ///
+  /// Only tasks still linked to the roadmap: every daily task comes from it,
+  /// and regenerating cuts the old plan's ones loose (`on delete set null`).
+  /// The unfinished ones are deleted then (0033); the finished ones are kept
+  /// for badges and the record, but they belong to a plan that's gone and
+  /// were showing up beside the new one.
   Future<List<DailyTask>> getTasksForDate(DateTime date) async {
     final day = _dateOnly(date);
     final rows = await db
         .from('daily_tasks')
         .select('*, subjects(name)')
         .eq('scheduled_date', day)
+        .not('milestone_task_id', 'is', null)
         .order('done', ascending: true)
         .order('tag', ascending: true);
     return rows.map(DailyTask.fromMap).toList();
@@ -27,6 +34,7 @@ class TaskRepository {
         .select('*, subjects(name)')
         .gte('scheduled_date', _dateOnly(DateTime.now()))
         .eq('done', false)
+        .not('milestone_task_id', 'is', null)
         .order('scheduled_date', ascending: true)
         .limit(limit);
     return rows.map(DailyTask.fromMap).toList();

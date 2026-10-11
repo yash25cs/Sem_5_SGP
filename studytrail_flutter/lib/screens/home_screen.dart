@@ -13,6 +13,7 @@ import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
+import '../widgets/task_done.dart';
 import '../widgets/syllabus_sheet.dart';
 import 'flashcards_screen.dart';
 import 'profile_screen.dart';
@@ -118,6 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await context.read<FlashcardStore>().load();
       messenger.showSnackBar(SnackBar(
         content: Text('$saved cards on your weak spots, due now.'),
+        persist: false,
         action: SnackBarAction(
           label: 'Review',
           onPressed: () => Navigator.of(context).push(MaterialPageRoute(
@@ -315,6 +317,43 @@ class _HomeScreenState extends State<HomeScreen> {
     await context.read<RoadmapStore>().load();
   }
 
+  /// Tap: a pending task is ticked, with Undo for a few seconds. A done task
+  /// stays done — reopening it is a long-press, so a stray tap can't undo it.
+  Future<void> _tapTask(DailyTask task) async {
+    if (task.done) {
+      showTaskAlreadyDoneHint(context);
+      return;
+    }
+    final store = context.read<HomeStore>();
+    // The tick is on screen as soon as the toggle starts (it's optimistic), so
+    // Undo appears with it rather than after the save and the roadmap reload.
+    final saving = _toggle(task);
+    final bar = showTaskDoneSnack(context, title: task.title, onUndo: () async {
+      // Undo tapped while the tick is still saving: one write at a time, so
+      // wait for it rather than have the store turn the undo away.
+      await saving;
+      final now = store.tasks.where((t) => t.id == task.id).firstOrNull;
+      if (now != null && now.done && mounted) await _toggle(now);
+    });
+    await saving;
+    if (!mounted) return;
+    // The save failed and the tick went back: nothing to undo.
+    final saved = store.tasks.where((t) => t.id == task.id).firstOrNull;
+    if (saved == null || !saved.done) bar.close();
+  }
+
+  /// Long-press: a done task goes back on the list, after asking.
+  Future<void> _reopenTask(DailyTask task) async {
+    if (!task.done) return;
+    if (!await confirmReopenTask(context, task.title) || !mounted) return;
+    final now = context
+        .read<HomeStore>()
+        .tasks
+        .where((t) => t.id == task.id)
+        .firstOrNull;
+    if (now != null && now.done) await _toggle(now);
+  }
+
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -490,7 +529,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: ValueKey(task.id),
                 child: _TaskTile(
                   task: task,
-                  onToggle: () => _toggle(task),
+                  onTap: () => _tapTask(task),
+                  onLongPress: () => _reopenTask(task),
                 ),
               ),
           const SizedBox(height: 20),
@@ -878,10 +918,17 @@ class _HeroStat extends StatelessWidget {
 }
 
 class _TaskTile extends StatelessWidget {
-  const _TaskTile({required this.task, required this.onToggle});
+  const _TaskTile({
+    required this.task,
+    required this.onTap,
+    required this.onLongPress,
+  });
 
   final DailyTask task;
-  final VoidCallback onToggle;
+  final VoidCallback onTap;
+
+  /// Reopens a done task (after a confirmation).
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -902,7 +949,8 @@ class _TaskTile extends StatelessWidget {
     ].join(' · ');
 
     return InkWell(
-      onTap: onToggle,
+      onTap: onTap,
+      onLongPress: done ? onLongPress : null,
       borderRadius: BorderRadius.circular(20),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
@@ -914,11 +962,19 @@ class _TaskTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            IconTile(
-              done ? Symbols.check : style.icon,
-              bg: done ? p.card2 : style.color.withValues(alpha: 0.14),
-              fg: done ? p.ink3 : style.color,
-              size: 46,
+            // The tick pops in, so finishing a task feels like something.
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              transitionBuilder: (child, a) => ScaleTransition(
+                  scale: CurvedAnimation(parent: a, curve: Curves.easeOutBack),
+                  child: child),
+              child: IconTile(
+                done ? Symbols.check : style.icon,
+                key: ValueKey(done),
+                bg: done ? p.greenSoft : style.color.withValues(alpha: 0.14),
+                fg: done ? p.green : style.color,
+                size: 46,
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(

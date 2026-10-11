@@ -43,6 +43,8 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       context.read<ChatStore>().load();
+      // Starter questions about the student's own files.
+      context.read<ChatStore>().loadStarters();
       // The header's count comes from this, and the sheet needs it loaded before
       // it opens rather than after.
       context.read<OnboardingStore>().load();
@@ -188,7 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: LoadingBlock(height: 140),
                 )
               : store.messages.isEmpty
-                  ? _EmptyThread(onAsk: _send)
+                  ? _EmptyThread(onAsk: _send, starters: store.starters)
                   : ListView.separated(
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
@@ -248,6 +250,20 @@ class _ChatScreenState extends State<ChatScreen> {
                               small: true,
                               onTap:
                                   store.sending ? null : () => _send(label)),
+                          const SizedBox(width: 8),
+                        ]
+                      else if (store.starters.isNotEmpty)
+                        // Before an answer: questions about the student's
+                        // own files. The chip is short; the full question is
+                        // what gets sent.
+                        for (final starter in store.starters.take(3)) ...[
+                          SoftChip(starter.label,
+                              icon: _starterIcon(starter.kind),
+                              tone: ChipTone.neutral,
+                              small: true,
+                              onTap: store.sending
+                                  ? null
+                                  : () => _send(starter.prompt)),
                           const SizedBox(width: 8),
                         ]
                       else
@@ -414,16 +430,27 @@ class _SendButton extends StatelessWidget {
   }
 }
 
-/// First-run state — a nudge plus starter questions.
+/// The icon for a starter question, by what it asks for.
+IconData _starterIcon(String? kind) => switch (kind) {
+      'weak' => Symbols.target,
+      'summary' => Symbols.summarize,
+      'exam' => Symbols.quiz,
+      'compare' => Symbols.compare_arrows,
+      _ => Symbols.lightbulb,
+    };
+
+/// First-run state — a nudge plus starter questions. With ready files these
+/// are about them ([starters]); without, general ones.
 class _EmptyThread extends StatelessWidget {
-  const _EmptyThread({required this.onAsk});
+  const _EmptyThread({required this.onAsk, this.starters = const []});
 
   final ValueChanged<String> onAsk;
+  final List<ChatStarter> starters;
 
-  static const _starters = [
-    'Explain the difference between 2NF and 3NF',
+  static const _general = [
     'What should I revise first this week?',
-    'Give me a quick summary of my weakest subject',
+    'How do I make a study plan for my exams?',
+    'Give me tips to remember what I study',
   ];
 
   @override
@@ -460,7 +487,9 @@ class _EmptyThread extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: p.ink3, fontSize: 13, height: 1.5)),
         const SizedBox(height: 22),
-        for (final starter in _starters)
+        for (final (starter, icon) in starters.isNotEmpty
+            ? [for (final s in starters.take(3)) (s.prompt, _starterIcon(s.kind))]
+            : [for (final g in _general) (g, Symbols.auto_awesome)])
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: InkWell(
@@ -474,7 +503,7 @@ class _EmptyThread extends StatelessWidget {
                   boxShadow: p.shadowSm,
                 ),
                 child: Row(children: [
-                  Icon(Symbols.auto_awesome, color: p.primary, size: 20),
+                  Icon(icon, color: p.primary, size: 20),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(starter,

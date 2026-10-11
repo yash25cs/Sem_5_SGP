@@ -4,6 +4,7 @@ library;
 export 'academic_program.dart';
 export 'answer_practice.dart';
 export 'chat.dart';
+export 'chat_starter.dart';
 export 'doubt.dart';
 export 'enums.dart';
 export 'exam_paper.dart';

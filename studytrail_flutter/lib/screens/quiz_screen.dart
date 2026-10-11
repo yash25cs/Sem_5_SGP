@@ -136,6 +136,7 @@ class _QuizScreenState extends State<QuizScreen> {
             child: _showResults
                 ? _Results(
                     attempt: store.attempt,
+                    practice: store.practiceRun,
                     onDone: _backToList,
                     onRetake: store.quiz == null || store.busy
                         ? null
@@ -149,6 +150,7 @@ class _QuizScreenState extends State<QuizScreen> {
                         score: store.runningScore,
                         hidden: store.hiddenOptions,
                         lifelines: store.lifelines,
+                        practice: store.practiceRun,
                         onLifeline: store.canUseLifeline && !store.busy
                             ? _useLifeline
                             : null,
@@ -392,7 +394,8 @@ class _QuizTile extends StatelessWidget {
               // rather than an ellipsis, so the time is never cut off.
               Expanded(
                 child: Text(
-                    'Last attempt: ${whenLabel(finishedAt, DateTime.now())}',
+                    'Last attempt: ${whenLabel(finishedAt, DateTime.now())} · '
+                    'retakes are practice, no XP',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -601,6 +604,7 @@ class _QuestionView extends StatelessWidget {
     this.hidden = const {},
     this.lifelines = 0,
     this.onLifeline,
+    this.practice = false,
   });
 
   final QuizQuestion question;
@@ -615,6 +619,9 @@ class _QuestionView extends StatelessWidget {
   final int lifelines;
   final VoidCallback? onLifeline;
 
+  /// A retake: no XP, so the chip says Practice instead of +10 XP.
+  final bool practice;
+
   @override
   Widget build(BuildContext context) {
     final p = context.p;
@@ -625,8 +632,11 @@ class _QuestionView extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
       children: [
         Row(children: [
-          SoftChip('+${question.xpReward} XP',
-              icon: Symbols.bolt, tone: ChipTone.amber, small: true),
+          practice
+              ? SoftChip('Practice',
+                  icon: Symbols.replay, tone: ChipTone.neutral, small: true)
+              : SoftChip('+${question.xpReward} XP',
+                  icon: Symbols.bolt, tone: ChipTone.amber, small: true),
           const SizedBox(width: 8),
           SoftChip('$score correct',
               icon: Symbols.check_circle, tone: ChipTone.green, small: true),
@@ -709,9 +719,17 @@ class _QuestionView extends StatelessWidget {
 
 /// Server-scored result of the attempt.
 class _Results extends StatelessWidget {
-  const _Results({required this.attempt, required this.onDone, this.onRetake});
+  const _Results({
+    required this.attempt,
+    required this.onDone,
+    this.onRetake,
+    this.practice = false,
+  });
 
   final QuizAttempt? attempt;
+
+  /// A retake: scored, but the quiz's XP was paid on its first attempt.
+  final bool practice;
   final VoidCallback onDone;
   final VoidCallback? onRetake;
 
@@ -763,8 +781,11 @@ class _Results extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _ResultStat(Symbols.bolt, '+${attempt?.xpEarned ?? 0}',
-                  'XP earned', p.onAmber),
+              child: practice
+                  ? _ResultStat(
+                      Symbols.replay, 'Practice', 'No XP on a retake', p.ink2)
+                  : _ResultStat(Symbols.bolt, '+${attempt?.xpEarned ?? 0}',
+                      'XP earned', p.onAmber),
             ),
           ],
         ),

@@ -15,8 +15,8 @@ import {
 ///
 /// `{ action: 'question', unitLabel?, count?, kind? }` writes `count` (1–5,
 /// default 1) different exam-style questions from the student's notes —
-/// `kind` 'theory' (default, descriptive 5/10 marks) or 'nep' (a case-based,
-/// application question in lettered parts, 4–10 marks) — for that unit,
+/// `kind` 'theory' (default, descriptive, 3, 4 or 6 marks) or 'nep' (a
+/// case-based application question in lettered parts, 3–6 marks) — for that unit,
 /// or spread over their weakest units, or over the units their notes cover —
 /// and saves nothing. The reply lists them in `questions`, and also carries
 /// the first one as `question`/`marks`/`unitLabel`, the shape app builds
@@ -71,13 +71,15 @@ const QUESTION_INSTRUCTION = `You set university exam questions from a \
 student's own notes.
 
 - Write exactly the number of questions asked for, each a descriptive question \
-worth 5 or 10 marks — explain, compare, derive, or describe with an example. Not \
-a one-word recall question and not multiple choice.
+worth 3, 4 or 6 marks — explain, compare, derive, or describe with an example. \
+Not a one-word recall question and not multiple choice.
 - Every question asks about something different; no two may overlap.
 - Spread them across the units listed, as evenly as their excerpts allow. unit \
 is the name of the unit a question comes from, exactly as listed.
 - Each must be answerable from the excerpts alone.
-- marks is 5 or 10, matching how much a full answer needs to cover.`;
+- marks is 3, 4 or 6, matching how much a full answer needs to cover: 3 for \
+one idea explained, 4 for an explanation with an example or a short \
+comparison, 6 for a fuller answer covering several points. Never more than 6.`;
 
 /// The NEP kind: the case-based, competency-style question an outcome-based
 /// paper under India's NEP 2020 sets — application and analysis, not recall.
@@ -88,15 +90,15 @@ they can repeat it. You write them from the student's own notes.
 
 - Each question is a short real-world case or scenario (a company, an app, a \
 hospital, a farm, a lab, a city — whatever suits the unit) with concrete \
-numbers, observations or constraints, followed by 2 to 4 lettered parts: \
-a), b), c), d).
+numbers, observations or constraints, followed by 2 or 3 lettered parts: \
+a), b), c).
 - The parts ask the student to apply, analyse, compare, choose between \
 options, estimate, diagnose or justify using evidence from the scenario. \
 "Choose one and justify", "which of these two and why", "calculate and \
 explain what it implies", "would you accept or reject this proposal" are the \
 shapes to use. Never "define" or "list".
 - Put the marks for each part at the end of its line, like (2). The question's \
-marks is the sum of its parts, between 4 and 10.
+marks is the sum of its parts, between 3 and 6 — never more than 6.
 - Write the scenario and every part inside the question field, with a line \
 break before each lettered part.
 - Each case is about something different and may not copy the wording of the \
@@ -455,9 +457,11 @@ async function writeQuestions(
     const unit = text(item?.unit).toLowerCase();
     questions.push({
       question,
+      // Generated questions are short-answer: 6 marks at most. (A past
+      // paper's own questions keep their real marks.)
       marks: nep
-        ? Math.min(10, Math.max(4, Math.round(Number(item?.marks)) || 4))
-        : Number(item?.marks) === 10 ? 10 : 5,
+        ? Math.min(6, Math.max(3, Math.round(Number(item?.marks)) || 4))
+        : [3, 4, 6].includes(Number(item?.marks)) ? Number(item?.marks) : 4,
       // The model's unit when it is one we gave it; else the first.
       unitLabel: units.find((u) => u.toLowerCase() === unit) ?? units[0],
     });

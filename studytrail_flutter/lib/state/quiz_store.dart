@@ -92,6 +92,10 @@ class QuizStore extends AsyncStore {
 
   /// Loads a quiz and opens an attempt row. The lifeline count comes along;
   /// failing to read it just means no 50:50 this time.
+  /// The quiz being taken had already paid its XP, so this run earns none.
+  /// Read when it started, so the results still say so afterwards.
+  bool get practiceRun => _quiz?.practiceOnly ?? false;
+
   Future<bool> start(String quizId) => runMutation(() async {
         final lifelines =
             _quizzes.lifelinesLeft().catchError((Object _) => 0);

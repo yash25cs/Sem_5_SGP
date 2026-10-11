@@ -16,6 +16,40 @@ class ChatRepository {
   /// open a fresh thread on every New chat tap, so there are empty ones.
   /// `ascending: true` on the messages is needed: postgrest-dart orders
   /// descending by default, which would preview the *latest* question.
+  /// The student's ready materials and the unit headings read from each, for
+  /// the starter questions. Two reads, both under owner-only RLS; only the
+  /// labels come back, not the chunk text.
+  Future<List<StarterSource>> getStarterSources() async {
+    final results = await Future.wait([
+      db
+          .from('materials')
+          .select('id, title, storage_path, external_url')
+          .eq('status', 'embedded')
+          .order('created_at', ascending: false)
+          .limit(20),
+      db
+          .from('material_chunks')
+          .select('material_id, unit_label')
+          .not('unit_label', 'is', null)
+          .order('chunk_index', ascending: true)
+          .limit(1000),
+    ]);
+    final units = <String, List<String>>{};
+    for (final c in results[1]) {
+      (units[c['material_id'] as String] ??= []).add(c['unit_label'] as String);
+    }
+    return [
+      for (final m in results[0])
+        StarterSource(
+          title: StudyMaterial.fromMap({
+            ...m,
+            'source_type': 'notes',
+          }).displayName,
+          units: units[m['id'] as String] ?? const [],
+        ),
+    ];
+  }
+
   Future<List<ChatThread>> getHistory({int limit = 50}) async {
     final rows = await db
         .from('chat_threads')

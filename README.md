@@ -36,7 +36,7 @@ material.
 - **Flashcards** with spaced repetition, usable offline.
 - Quizzes, attempts, decks and single cards can each be deleted, or all at
   once.
-- **Answer practice** — Theory (5/10-mark) or Practical (NEP-style case
+- **Answer practice** — Theory (3–6 marks) or Practical (NEP-style case
   questions in lettered parts), from all notes, one subject or one file;
   answers typed or photographed on paper, marked against the notes with
   feedback and a full-marks outline.
@@ -64,7 +64,7 @@ material.
 |---|---|
 | App | Flutter 3.47 (Dart 3.11), Provider for state, Material 3 |
 | Backend | Supabase: PostgreSQL with Row Level Security, Auth, Storage, Realtime |
-| Server logic | 31 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
+| Server logic | 33 SQL migrations (tables, RLS policies, RPCs) and 11 Edge Functions (Deno/TypeScript) |
 | AI | Google Gemini (`gemini-3.5-flash-lite` for text, `gemini-embedding-2` for search), called only from Edge Functions |
 | Android | Kotlin for the home-screen widgets and calendar sync; local notifications |
 | CI | GitHub Actions: `flutter analyze`, `flutter test`, and a migrations check |
@@ -164,7 +164,7 @@ flutter analyze
 flutter test
 ```
 
-240 unit and widget tests cover the stores, repositories, onboarding, practice,
+253 unit and widget tests cover the stores, repositories, onboarding, practice,
 rooms, rewards and screen layouts down to a 320 dp phone. A few live tests
 against a real Supabase project are skipped unless configured. CI runs the same
 checks on every push.

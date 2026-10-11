@@ -1,6 +1,6 @@
 /// What sort of written question this is.
 enum AnswerKind {
-  /// A descriptive 5- or 10-mark answer: explain, compare, derive.
+  /// A descriptive 3-, 4- or 6-mark answer: explain, compare, derive.
   theory,
 
   /// A case-based application question in lettered parts, the way an

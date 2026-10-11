@@ -8,6 +8,7 @@ class Quiz {
     this.timerSec = 30,
     this.questions = const [],
     this.lastAttempt,
+    this.xpPaid = false,
   });
 
   final String id;
@@ -23,6 +24,13 @@ class Quiz {
 
   /// Finished at least once — the list offers Retake instead of Start.
   bool get attempted => lastAttempt?.completedAt != null;
+
+  /// XP for this quiz has been paid (`quizzes.xp_paid_at`, 0032): only the
+  /// first finished attempt earns it, so another go is practice.
+  final bool xpPaid;
+
+  /// Taking it now earns no XP.
+  bool get practiceOnly => xpPaid || attempted;
 
   factory Quiz.fromMap(Map<String, dynamic> m) {
     final raw = m['quiz_questions'];
@@ -44,6 +52,7 @@ class Quiz {
       lastAttempt: attempts is List && attempts.isNotEmpty
           ? QuizAttempt.fromMap(attempts.first as Map<String, dynamic>)
           : null,
+      xpPaid: m['xp_paid_at'] != null,
     );
   }
 
@@ -57,6 +66,7 @@ class Quiz {
         timerSec: timerSec,
         questions: questions,
         lastAttempt: attempt,
+        xpPaid: true,
       );
 }
 

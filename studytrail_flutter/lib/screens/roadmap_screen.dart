@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/task_done.dart';
 import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 
@@ -85,6 +86,48 @@ class _RoadmapScreenState extends State<RoadmapScreen>
 
     if (!store.lastToggleTouchedDailyTask) return;
     await context.read<HomeStore>().load();
+  }
+
+  /// The task as it is now in the store, after any reload.
+  (Milestone, MilestoneTask)? _current(String milestoneId, String taskId) {
+    final m = context
+        .read<RoadmapStore>()
+        .milestones
+        .where((m) => m.id == milestoneId)
+        .firstOrNull;
+    final t = m?.tasks.where((t) => t.id == taskId).firstOrNull;
+    return m == null || t == null ? null : (m, t);
+  }
+
+  /// Tap: a pending task is ticked, with Undo for a few seconds. A done task
+  /// stays done — reopening it is a long-press.
+  Future<void> _tapTask(Milestone milestone, MilestoneTask task) async {
+    if (task.done) {
+      showTaskAlreadyDoneHint(context);
+      return;
+    }
+    // Optimistic tick, so Undo appears with it, not after the save.
+    final saving = _toggle(milestone, task);
+    final bar = showTaskDoneSnack(context, title: task.name, onUndo: () async {
+      await saving; // one write at a time — see Home's _tapTask
+      if (!mounted) return;
+      final again = _current(milestone.id, task.id);
+      if (again != null && again.$2.done && mounted) {
+        _toggle(again.$1, again.$2);
+      }
+    });
+    await saving;
+    if (!mounted) return;
+    final now = _current(milestone.id, task.id);
+    if (now == null || !now.$2.done) bar.close();
+  }
+
+  /// Long-press: a done task goes back on the list, after asking.
+  Future<void> _reopenTask(Milestone milestone, MilestoneTask task) async {
+    if (!task.done) return;
+    if (!await confirmReopenTask(context, task.name) || !mounted) return;
+    final now = _current(milestone.id, task.id);
+    if (now != null && now.$2.done) await _toggle(now.$1, now.$2);
   }
 
   Future<bool> _confirmReplace() async {
@@ -245,7 +288,9 @@ class _RoadmapScreenState extends State<RoadmapScreen>
                     weekNumber: i + 1,
                     collapsed:
                         _collapsedMilestones.contains(store.milestones[i].id),
-                    onToggle: (task) => _toggle(store.milestones[i], task),
+                    onToggle: (task) => _tapTask(store.milestones[i], task),
+                    onReopen: (task) =>
+                        _reopenTask(store.milestones[i], task),
                     onExpand: () {
                       setState(() {
                         final id = store.milestones[i].id;
@@ -534,6 +579,7 @@ class _MilestoneTile extends StatelessWidget {
     required this.milestone,
     required this.color,
     required this.onToggle,
+    required this.onReopen,
     required this.weekNumber,
     this.collapsed = false,
     required this.onExpand,
@@ -543,6 +589,9 @@ class _MilestoneTile extends StatelessWidget {
   final Milestone milestone;
   final Color color;
   final ValueChanged<MilestoneTask> onToggle;
+
+  /// Long-press on a done task.
+  final ValueChanged<MilestoneTask> onReopen;
   final int weekNumber;
   final bool collapsed;
   final VoidCallback onExpand;
@@ -752,6 +801,7 @@ class _MilestoneTile extends StatelessWidget {
                                 task: tasks[i],
                                 color: color,
                                 onTap: () => onToggle(tasks[i]),
+                                onLongPress: () => onReopen(tasks[i]),
                               ),
                             ],
                           ],
@@ -781,11 +831,13 @@ class _MiniTask extends StatelessWidget {
     required this.task,
     required this.color,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final MilestoneTask task;
   final Color color;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -793,6 +845,7 @@ class _MiniTask extends StatelessWidget {
     final done = task.done;
     return InkWell(
       onTap: onTap,
+      onLongPress: done ? onLongPress : null,
       borderRadius: BorderRadius.circular(10),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -805,7 +858,10 @@ class _MiniTask extends StatelessWidget {
         child: Row(
           children: [
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 260),
+              transitionBuilder: (child, a) => ScaleTransition(
+                  scale: CurvedAnimation(parent: a, curve: Curves.easeOutBack),
+                  child: child),
               child: Icon(
                 done ? Symbols.check_circle : Symbols.circle,
                 key: ValueKey(done),

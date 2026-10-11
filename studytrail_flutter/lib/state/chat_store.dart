@@ -1,6 +1,7 @@
 import '../data/repositories.dart';
 import '../models/models.dart';
 import 'async_store.dart';
+import 'chat_starters.dart';
 
 /// Backs the Chat screen. The answer comes from the `chat` Edge Function, which
 /// writes both turns server-side; this store shows optimistic bubbles and then
@@ -15,13 +16,40 @@ class ChatStore extends AsyncStore {
     ChatRepository? chat,
     GoalRepository? goals,
     FlashcardRepository? cards,
+    QuizRepository? quizzes,
   })  : _chat = chat ?? const ChatRepository(),
         _goals = goals ?? const GoalRepository(),
-        _cards = cards ?? const FlashcardRepository();
+        _cards = cards ?? const FlashcardRepository(),
+        _quizzes = quizzes ?? const QuizRepository();
 
   final ChatRepository _chat;
   final GoalRepository _goals;
   final FlashcardRepository _cards;
+  final QuizRepository _quizzes;
+
+  /// Questions offered before the first message, written from the student's
+  /// own files and weak spots ([loadStarters]). Empty until loaded, or with
+  /// no ready files — the screen then shows general ones.
+  List<ChatStarter> _starters = const [];
+  List<ChatStarter> get starters => _starters;
+
+  /// Re-reads the files and picks a fresh mix. Quiet on failure: the general
+  /// starters stand in.
+  Future<void> loadStarters() async {
+    try {
+      final results = await Future.wait([
+        _chat.getStarterSources(),
+        _quizzes.getWeakTopics(limit: 3).catchError((_) => <WeakTopic>[]),
+      ]);
+      _starters = buildChatStarters(
+        sources: results[0] as List<StarterSource>,
+        weak: results[1] as List<WeakTopic>,
+      );
+      notifyListeners();
+    } catch (_) {
+      // Keep whatever was there.
+    }
+  }
 
   /// Follow-up questions offered after the latest answer. Cleared on the next
   /// send and on a new thread, so they never describe an older answer.
@@ -134,6 +162,8 @@ class ChatStore extends AsyncStore {
     _suggestions = const [];
     clearError();
     notifyListeners();
+    // A new chat gets a fresh mix of questions about the student's files.
+    loadStarters().ignore();
   }
 
   /// Reads the student's past chats for the history panel.

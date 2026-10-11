@@ -13,7 +13,7 @@ import '../widgets/working.dart';
 import '../widgets/data_states.dart';
 import '../widgets/nav.dart';
 
-/// Writing practice for 5- and 10-mark questions, graded like an examiner
+/// Writing practice for short-answer questions (up to 6 marks), graded like an examiner
 /// would against the student's own notes — typed, or written on paper and
 /// photographed, the way the real exam is.
 class AnswerPracticeScreen extends StatefulWidget {
@@ -133,6 +133,16 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
               : "Couldn't open your photos.")));
     }
   }
+
+  /// How long an answer for [marks] usually runs. Past-paper questions can
+  /// be worth more than the generated ones' 6.
+  String _wordGuide(double marks) => switch (marks) {
+        <= 3 => 'a 3-mark answer is usually 60–100',
+        <= 4 => 'a 4-mark answer is usually 100–150',
+        <= 6 => 'a 6-mark answer is usually 150–250',
+        <= 10 => 'a 10-mark answer is usually 250–400',
+        _ => 'a long answer is usually 400 or more',
+      };
 
   String _marks(double m) =>
       m == m.roundToDouble() ? m.toInt().toString() : m.toStringAsFixed(1);
@@ -292,9 +302,7 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                       question.kind == AnswerKind.nep
                           ? '$_words words · answer each part (a, b, c…) '
                               'separately and give a reason from the case'
-                          : question.marks >= 10
-                              ? '$_words words · a 10-mark answer is usually 250–400'
-                              : '$_words words · a 5-mark answer is usually 120–200',
+                          : '$_words words · ${_wordGuide(question.marks)}',
                       style: TextStyle(color: p.ink3, fontSize: 12),
                     ),
                     const SizedBox(height: 14),
@@ -401,7 +409,7 @@ class _SetPicker extends StatelessWidget {
                   ? 'Case-based questions in the NEP style: a real situation, '
                       'then parts that ask you to choose, estimate, analyse '
                       'and justify. Marked part by part.'
-                  : 'Get 5 or 10-mark questions from your weakest units, write '
+                  : 'Get 3 to 6-mark questions from your weakest units, write '
                       'your answers, and see what an examiner would give each '
                       'one — and what was missing.',
               style: TextStyle(color: p.ink2, fontSize: 13, height: 1.45)),
