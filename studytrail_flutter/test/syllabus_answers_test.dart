@@ -190,7 +190,7 @@ void main() {
       expect(find.text('How many questions?'), findsOneWidget);
     });
 
-    testWidgets('theory is the default; Practical (NEP) asks for NEP',
+    testWidgets('theory is the default; Scenario based asks for scenario',
         (tester) async {
       final answers = _FakeAnswers();
       await _phone(
@@ -205,7 +205,7 @@ void main() {
       expect(find.text('Type of question'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('kind-nep')));
       await tester.pump();
-      expect(find.textContaining('NEP style'), findsOneWidget);
+      expect(find.textContaining('Scenario based questions:'), findsOneWidget);
       await tester.tap(find.text('Give me 3 questions'));
       await tester.pumpAndSettle();
       expect(answers.kinds, [AnswerKind.nep]);

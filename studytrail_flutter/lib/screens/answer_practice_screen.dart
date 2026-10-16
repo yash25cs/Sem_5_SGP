@@ -40,7 +40,7 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
   /// How many questions the next set has; the student picks 1–5.
   int _count = 3;
 
-  /// Descriptive theory answers, or case-based NEP application questions.
+  /// Descriptive theory answers, or scenario based application questions.
   AnswerKind _kind = AnswerKind.theory;
 
   /// Which notes the questions come from.
@@ -352,8 +352,8 @@ class _AnswerPracticeScreenState extends State<AnswerPracticeScreen> {
                 ],
                 if (store.history.isNotEmpty) ...[
                   const SizedBox(height: 26),
-                  CardHeader('Recent answers'),
-                  for (final a in store.history.take(10)) ...[
+                  CardHeader('Past answers'),
+                  for (final a in store.history) ...[
                     _HistoryRow(attempt: a, marks: _marks),
                     const SizedBox(height: 8),
                   ],
@@ -406,7 +406,7 @@ class _SetPicker extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
               kind == AnswerKind.nep
-                  ? 'Case-based questions in the NEP style: a real situation, '
+                  ? 'Scenario based questions: a real situation, '
                       'then parts that ask you to choose, estimate, analyse '
                       'and justify. Marked part by part.'
                   : 'Get 3 to 6-mark questions from your weakest units, write '
@@ -429,7 +429,7 @@ class _SetPicker extends StatelessWidget {
                       ? ChipTone.primary
                       : ChipTone.neutral,
                   onTap: busy ? null : () => onKind(AnswerKind.theory)),
-              SoftChip('Practical (NEP)',
+              SoftChip('Scenario based question',
                   key: const ValueKey('kind-nep'),
                   icon: Symbols.psychology,
                   tone: kind == AnswerKind.nep
@@ -594,7 +594,7 @@ class _QuestionCard extends StatelessWidget {
               SoftChip('${marks(question.marks)} marks',
                   tone: ChipTone.primary, small: true),
               if (question.kind == AnswerKind.nep)
-                const SoftChip('Case-based',
+                const SoftChip('Scenario based',
                     icon: Symbols.psychology, tone: ChipTone.green, small: true),
               if (question.unitLabel != null)
                 SoftChip(question.unitLabel!, icon: Symbols.menu_book, small: true),
@@ -875,7 +875,18 @@ class _HistoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.p;
-    return AppCard(
+    return GestureDetector(
+      key: ValueKey('past-answer-${attempt.id}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: p.bg,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+        builder: (_) => _PastAnswerSheet(attempt: attempt, marks: marks),
+      ),
+      child: AppCard(
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
@@ -887,7 +898,7 @@ class _HistoryRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           if (attempt.kind == AnswerKind.nep) ...[
-            const SoftChip('NEP', tone: ChipTone.green, small: true),
+            const SoftChip('Scenario', tone: ChipTone.green, small: true),
             const SizedBox(width: 6),
           ],
           SoftChip('${marks(attempt.score)}/${marks(attempt.maxMarks)}',
@@ -897,7 +908,67 @@ class _HistoryRow extends StatelessWidget {
                       ? ChipTone.amber
                       : ChipTone.coral,
               small: true),
+          const SizedBox(width: 4),
+          Icon(Symbols.chevron_right, size: 18, color: p.ink3),
         ],
+      ),
+    ),
+    );
+  }
+}
+
+/// A past attempt in full: the question, what the student wrote, and the marking.
+class _PastAnswerSheet extends StatelessWidget {
+  const _PastAnswerSheet({required this.attempt, required this.marks});
+
+  final AnswerAttempt attempt;
+  final String Function(double) marks;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final a = attempt;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                SoftChip('${marks(a.maxMarks)} marks',
+                    tone: ChipTone.primary, small: true),
+                if (a.kind == AnswerKind.nep)
+                  const SoftChip('Scenario based',
+                      icon: Symbols.psychology,
+                      tone: ChipTone.green,
+                      small: true),
+                if (a.unitLabel != null)
+                  SoftChip(a.unitLabel!, icon: Symbols.menu_book, small: true),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _QuestionText(a.question),
+            if (!a.feedback.fromPhoto && a.answer.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text('Your answer',
+                  style: TextStyle(
+                      color: p.ink, fontSize: 14, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              AppCard(
+                padding: const EdgeInsets.all(14),
+                child: SelectableText(a.answer,
+                    style: TextStyle(color: p.ink2, fontSize: 13.5, height: 1.5)),
+              ),
+            ],
+            const SizedBox(height: 18),
+            _ResultCard(attempt: a, marks: marks),
+          ],
+        ),
       ),
     );
   }

@@ -101,7 +101,7 @@ From README "What the app collects" — check them against the build you upload.
 >   become cards in "My mistakes".
 > • Past papers: upload one and see which topics come up most, then take a
 >   mock exam weighted the same way.
-> • Answer practice: theory answers or NEP-style case questions — typed or
+> • Answer practice: theory answers or scenario based questions — typed or
 >   photographed — marked like an examiner would.
 > • Explanations in English, Hindi or Gujarati.
 > • Study rooms with a shared focus timer, chat and group quizzes, including a

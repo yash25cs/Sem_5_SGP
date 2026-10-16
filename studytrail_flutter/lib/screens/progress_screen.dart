@@ -283,7 +283,7 @@ class _AnswerStatsBody extends StatelessWidget {
           Expanded(
             child: Text(
                 'Write an answer in Answer practice and your marks show up '
-                'here, theory and NEP case questions apart.',
+                'here, theory and scenario based questions apart.',
                 style: TextStyle(color: p.ink3, fontSize: 13, height: 1.45)),
           ),
         ],
@@ -306,7 +306,7 @@ class _AnswerStatsBody extends StatelessWidget {
         const SizedBox(height: 14),
         _AccRow('Theory · ${stats.theoryCount}', stats.theoryAverage, p.green),
         const SizedBox(height: 14),
-        _AccRow('NEP case questions · ${stats.nepCount}', stats.nepAverage,
+        _AccRow('Scenario based · ${stats.nepCount}', stats.nepAverage,
             p.coral),
       ],
     );

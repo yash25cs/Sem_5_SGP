@@ -42,10 +42,11 @@ It's free, has no ads, and works in English, Hindi and Gujarati.
 - **Flashcards** with spaced repetition, usable offline.
 - Quizzes, attempts, decks and single cards can each be deleted, or all at
   once.
-- **Answer practice** — Theory (3–6 marks) or Practical (NEP-style case
-  questions in lettered parts), from all notes, one subject or one file;
-  answers typed or photographed on paper, marked against the notes with
-  feedback and a full-marks outline.
+- **Answer practice** — Theory (3–6 marks) or Scenario based questions (a
+  real situation, answered in lettered parts), from all notes, one subject or
+  one file; answers typed or photographed on paper, marked against the notes
+  with feedback and a full-marks outline. Past answers can be opened again in
+  full: the question, the answer, the marks and the feedback.
 - **Past papers** — upload one to see which topics come up most, and take a mock
   exam weighted the same way.
 
@@ -61,7 +62,7 @@ It's free, has no ads, and works in English, Hindi and Gujarati.
 
 **Progress**
 - **Analytics** — study time, quiz accuracy, written-answer marks (theory vs
-  NEP), a week summary and a consistency heatmap.
+  scenario based), a week summary and a consistency heatmap.
 - **XP, levels, badges with progress, streaks** and a **rewards store** (streak
   freeze, focus boost, golden border and more).
 - **Focus timer** (Pomodoro) with custom presets.
@@ -226,7 +227,7 @@ Security scoped to the signed-in user (`docs/OWNERSHIP.md`):
   UTC, so streaks follow the student's own day.
 - **Chat** — questions asked, answers received, and which chunks were cited.
 - **Exam practice** — past papers uploaded and the questions read from them,
-  and written answers (theory or NEP) with the AI's marks and feedback. A photo
+  and written answers (theory or scenario based) with the AI's marks and feedback. A photo
   of a handwritten answer is read, marked and deleted; what was read from it is
   kept with the grade.
 - **Doubt board** — doubts posted and answers written, upvotes, and any reports.

@@ -39,3 +39,9 @@ hs_err_pid*.log
 *.log
 .DS_Store
 Thumbs.db
+
+# /brag launch-video output (plan, composition, rendered video)
+brag-output*/
+
+# Screenshots used as source material for the launch video (not app assets)
+brag-shots/

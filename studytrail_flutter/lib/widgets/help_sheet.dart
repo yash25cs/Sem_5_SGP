@@ -34,7 +34,7 @@ class _HelpSheet extends StatelessWidget {
     (
       'How is a written answer marked?',
       'Against your own notes, like an examiner would, in steps of half a '
-          'mark. Theory and NEP case questions are both marked part by part '
+          'mark. Theory and scenario based questions are both marked part by part '
           'where they have parts.',
     ),
     (
