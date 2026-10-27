@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../screens/pomodoro_screen.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 
@@ -18,11 +19,23 @@ import '../theme/app_theme.dart';
 /// * the bar is laid out in a [Column] above the page rather than stacked over
 ///   it, so it pushes headers down instead of hiding them;
 /// * the completion popup is an in-tree [Stack] child, not a `showDialog` route,
-///   because `Navigator.of` from here reaches past the app's own navigator.
+///   because `Navigator.of` from here reaches past the app's own navigator;
+/// * nothing here may need an [Overlay] — no tooltips, no menus. The only one
+///   is the navigator's, below this widget, and a tooltip in the bar is what
+///   put "No Overlay widget found" on screen.
+///
+/// It also keeps a locked focus block (see [PomodoroStore.locked]) on its own
+/// screen: whenever one is running and no timer screen is mounted — a break
+/// handing over to focus while the student is elsewhere, or a `popUntil` that
+/// skipped the screen's back guard — the screen is pushed again through
+/// [navigatorKey].
 class PomodoroOverlay extends StatefulWidget {
-  const PomodoroOverlay({super.key, required this.child});
+  const PomodoroOverlay({super.key, required this.child, this.navigatorKey});
 
   final Widget child;
+
+  /// The app's navigator, for opening the timer screen from up here.
+  final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
   State<PomodoroOverlay> createState() => _PomodoroOverlayState();
@@ -40,6 +53,10 @@ class _PomodoroOverlayState extends State<PomodoroOverlay> {
   _Completion? _completion;
   Timer? _countdown;
   int _secondsToClose = _autoCloseSeconds;
+
+  /// A timer screen has been pushed and hasn't mounted yet, so the rebuild
+  /// every tick brings doesn't push a second one.
+  bool _openingTimer = false;
 
   @override
   void dispose() {
@@ -84,6 +101,14 @@ class _PomodoroOverlayState extends State<PomodoroOverlay> {
     setState(() => _completion = null);
   }
 
+  void _openTimer() {
+    final navigator = widget.navigatorKey?.currentState;
+    if (navigator == null || _openingTimer) return;
+    _openingTimer = true;
+    navigator.push(MaterialPageRoute(
+        builder: (_) => PomodoroScreen(onBack: navigator.pop)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = context.watch<PomodoroStore>();
@@ -96,6 +121,14 @@ class _PomodoroOverlayState extends State<PomodoroOverlay> {
       });
     }
 
+    if (store.onTimerScreen) {
+      _openingTimer = false;
+    } else if (store.locked && !_openingTimer) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && store.locked && !store.onTimerScreen) _openTimer();
+      });
+    }
+
     // The Pomodoro screen already shows the dial full size; duplicating it in a
     // bar above would just be noise.
     final showBar = store.inProgress && !store.onTimerScreen;
@@ -105,7 +138,7 @@ class _PomodoroOverlayState extends State<PomodoroOverlay> {
       children: [
         Column(
           children: [
-            if (showBar) const _TimerBanner(),
+            if (showBar) _TimerBanner(onOpen: _openTimer),
             Expanded(
               // The bar has already paid the status-bar inset, so the page's own
               // `TopInset` must collapse or the content sits too low.
@@ -143,9 +176,12 @@ class _Completion {
   final int? loggedMinutes;
 }
 
-/// The slim bar at the top of every page while a block is in progress.
+/// The slim bar at the top of every page while a block is in progress. Tapping
+/// it opens the timer screen.
 class _TimerBanner extends StatelessWidget {
-  const _TimerBanner();
+  const _TimerBanner({required this.onOpen});
+
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -158,7 +194,9 @@ class _TimerBanner extends StatelessWidget {
 
     return Material(
       color: p.card,
-      child: Container(
+      child: InkWell(
+        onTap: onOpen,
+        child: Container(
         decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: p.line)),
         ),
@@ -192,18 +230,22 @@ class _TimerBanner extends StatelessWidget {
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600)),
               ),
-              // Pause only — reopening the screen from above the navigator would
-              // need a navigator key, and pausing is what the bar is for.
+              // No `tooltip:` — a tooltip needs an Overlay, and this bar sits
+              // above the navigator's. The label goes to screen readers via
+              // the icon instead.
               IconButton(
                 onPressed: store.toggle,
                 visualDensity: VisualDensity.compact,
                 icon: Icon(store.running ? Symbols.pause : Symbols.play_arrow,
-                    color: accent, size: 24, fill: 1),
-                tooltip: store.running ? 'Pause' : 'Resume',
+                    color: accent,
+                    size: 24,
+                    fill: 1,
+                    semanticLabel: store.running ? 'Pause' : 'Resume'),
               ),
             ],
           ),
         ),
+      ),
       ),
     );
   }

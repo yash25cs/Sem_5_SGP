@@ -15,6 +15,11 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  /// For tests: a stand-in that overrides what it needs, so nothing reaches
+  /// the platform plugin.
+  @visibleForTesting
+  NotificationService.forTesting();
+
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
@@ -33,6 +38,11 @@ class NotificationService {
   /// Sunday 19:00: the weekly report is ready. Opens it when tapped.
   static const int _weeklyReportId = 300;
   static const String weeklyReportPayload = 'weekly_report';
+
+  /// The ongoing "focus session running" notice. Shown and cleared by
+  /// `PomodoroStore`; never scheduled, so [_cancelReminders] leaves it alone.
+  static const int _focusSessionId = 400;
+  static const String focusSessionPayload = 'focus_session';
 
   /// The payload of a notification the student tapped, until the shell
   /// handles it — including the one that launched the app.
@@ -56,6 +66,9 @@ class NotificationService {
         onDidReceiveNotificationResponse: (response) =>
             opened.value = response.payload,
       );
+      // A focus notice can only outlive its session if the process was killed
+      // mid-block, and the timer died with it.
+      await _notificationsPlugin.cancel(id: _focusSessionId);
       final launch =
           await _notificationsPlugin.getNotificationAppLaunchDetails();
       if (launch?.didNotificationLaunchApp ?? false) {
@@ -75,6 +88,58 @@ class NotificationService {
     final plugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await plugin?.requestNotificationsPermission();
+  }
+
+  /// Shows (or updates) the ongoing notice for a focus block in progress.
+  ///
+  /// Ongoing and not auto-cancelled, so it can't be swiped away while the
+  /// block runs — except on Android 14+, where the system lets the student
+  /// dismiss any ongoing notification; the next pause or resume puts it back.
+  /// With [endsAt] the notice counts down on its own; without it (paused) it
+  /// shows [body] as is.
+  ///
+  /// Never throws: the session must not fail over a notification.
+  Future<void> showFocusSession({
+    required String title,
+    required String body,
+    DateTime? endsAt,
+  }) async {
+    try {
+      final details = AndroidNotificationDetails(
+        'focus_session',
+        'Focus session',
+        channelDescription: 'Shows while a focus block is running',
+        importance: Importance.low,
+        priority: Priority.low,
+        ongoing: true,
+        autoCancel: false,
+        onlyAlertOnce: true,
+        playSound: false,
+        enableVibration: false,
+        category: AndroidNotificationCategory.progress,
+        showWhen: endsAt != null,
+        when: endsAt?.millisecondsSinceEpoch,
+        usesChronometer: endsAt != null,
+        chronometerCountDown: endsAt != null,
+      );
+      await _notificationsPlugin.show(
+        id: _focusSessionId,
+        title: title,
+        body: body,
+        notificationDetails: NotificationDetails(android: details),
+        payload: focusSessionPayload,
+      );
+    } catch (e) {
+      debugPrint('Focus notice failed: $e');
+    }
+  }
+
+  Future<void> cancelFocusSession() async {
+    try {
+      await _notificationsPlugin.cancel(id: _focusSessionId);
+    } catch (e) {
+      debugPrint('Focus notice cancel failed: $e');
+    }
   }
 
   /// Replaces every scheduled reminder with the week ahead.

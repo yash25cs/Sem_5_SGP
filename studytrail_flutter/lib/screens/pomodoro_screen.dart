@@ -18,6 +18,11 @@ import '../widgets/nav.dart';
 /// The countdown itself lives in [PomodoroStore] rather than this widget, so
 /// leaving the screen mid-block doesn't cancel the session.
 ///
+/// While a focus block is locked ([PomodoroStore.locked]) the screen can't be
+/// left: system and predictive back and the back button all open the end-early
+/// sheet instead, which only ends the block once the student ticks that it
+/// won't count.
+///
 /// The body scrolls. Every earlier version laid the dial, the controls and the
 /// footer tiles out with `Spacer`s in a fixed-height `Column`, which is what put
 /// "BOTTOM OVERFLOWED BY 2.0 PIXELS" across the middle of the screen on a short
@@ -63,6 +68,49 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Back while a block is locked opens the end-early sheet, and leaves only
+  /// if the student goes through with it.
+  void _onBack() {
+    if (context.read<PomodoroStore>().locked) {
+      _confirmEndEarly(leave: true);
+      return;
+    }
+    _leave();
+  }
+
+  void _leave() {
+    final onBack = widget.onBack;
+    if (onBack != null) {
+      onBack();
+    } else {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  /// The terminate option. "End session" stays disabled until the student
+  /// ticks that the block won't count, so it can't be ended by a stray tap.
+  Future<void> _confirmEndEarly({required bool leave}) async {
+    final store = context.read<PomodoroStore>();
+    final p = context.p;
+
+    final end = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (_) => const _EndEarlySheet(),
+    );
+
+    // The block may have finished on its own while the sheet was up; it
+    // counted, and there's nothing left to end.
+    if (end != true || !mounted || !store.locked) return;
+    store.endEarly();
+    _toast('Focus block ended early — not counted.');
+    if (leave) _leave();
   }
 
   /// Lets the student tag the block with a subject, so the logged session
@@ -140,7 +188,9 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
     final store = context.read<PomodoroStore>();
     if (store.phase == phase) return;
     if (!store.switchTo(phase)) {
-      _toast('Pause the timer to switch modes.');
+      _toast(store.locked
+          ? 'Finish or end this focus block to switch modes.'
+          : 'Pause the timer to switch modes.');
     }
   }
 
@@ -162,7 +212,9 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
     final p = context.p;
 
     if (!store.canConfigure) {
-      _toast('Pause the timer to change its length.');
+      _toast(store.locked
+          ? 'Finish or end this focus block to change its length.'
+          : 'Pause the timer to change its length.');
       return;
     }
 
@@ -298,7 +350,14 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
     final dial =
         math.min(260.0, MediaQuery.sizeOf(context).width - 96).clamp(180.0, 260.0);
 
-    return Scaffold(
+    // Back is refused while the block is locked; the attempt opens the
+    // end-early sheet, which pops the screen itself if the block is ended.
+    return PopScope(
+      canPop: !store.locked,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmEndEarly(leave: true);
+      },
+      child: Scaffold(
       backgroundColor: p.bg,
       body: Column(
         children: [
@@ -307,7 +366,7 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
             padding: const EdgeInsets.fromLTRB(12, 4, 20, 6),
             child: Row(
               children: [
-                RoundIconButton(Symbols.arrow_back, onTap: widget.onBack),
+                RoundIconButton(Symbols.arrow_back, onTap: _onBack),
                 const SizedBox(width: 8),
                 Text('Focus session',
                     style: TextStyle(
@@ -426,17 +485,28 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // A locked focus block ends only through the confirm
+                      // sheet; a break still stops straight away.
                       _ControlButton(
                         icon: Symbols.stop,
-                        label: 'Stop',
+                        label: store.locked ? 'End' : 'Stop',
                         // Nothing to stop on an untouched focus dial.
-                        onTap: store.inProgress ? store.stop : null,
+                        onTap: store.locked
+                            ? () => _confirmEndEarly(leave: false)
+                            : store.inProgress
+                                ? store.stop
+                                : null,
                       ),
                       const SizedBox(width: 10),
                       _ControlButton(
                           icon: Symbols.refresh,
                           label: 'Reset',
-                          onTap: store.reset),
+                          // Restarting a locked block would end it unconfirmed.
+                          onTap: store.locked
+                              ? () => _toast(
+                                  'Use End to stop this focus block early.')
+                              : store.reset,
+                          dimmed: store.locked),
                       const SizedBox(width: 10),
                       _ControlButton(
                           icon: Symbols.tune,
@@ -468,6 +538,73 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
             ),
           ),
         ],
+      ),
+    ),
+    );
+  }
+}
+
+/// The end-early confirmation: what ending costs, a tick to confirm it, and the
+/// button that only works once ticked. Pops true to end the block.
+class _EndEarlySheet extends StatefulWidget {
+  const _EndEarlySheet();
+
+  @override
+  State<_EndEarlySheet> createState() => _EndEarlySheetState();
+}
+
+class _EndEarlySheetState extends State<_EndEarlySheet> {
+  bool _understood = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('End this focus block?',
+                style: TextStyle(
+                    color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text(
+                "A block ended early isn't counted: no XP, no focused "
+                'minutes, and nothing towards your streak.',
+                style: TextStyle(color: p.ink2, fontSize: 13.5, height: 1.45)),
+            const SizedBox(height: 8),
+            CheckboxListTile(
+              value: _understood,
+              onChanged: (v) => setState(() => _understood = v ?? false),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              activeColor: p.error,
+              title: Text("I understand this session won't be counted",
+                  style: TextStyle(
+                      color: p.ink,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(height: 12),
+            // Faded until ticked: the pill itself looks the same either way.
+            AnimatedOpacity(
+              opacity: _understood ? 1 : 0.45,
+              duration: const Duration(milliseconds: 150),
+              child: PillButton('End session',
+                  icon: Symbols.stop,
+                  variant: PillVariant.danger,
+                  onTap: _understood
+                      ? () => Navigator.of(context).pop(true)
+                      : null),
+            ),
+            const SizedBox(height: 8),
+            PillButton('Keep focusing',
+                variant: PillVariant.outline,
+                onTap: () => Navigator.of(context).pop(false)),
+          ],
+        ),
       ),
     );
   }

@@ -89,6 +89,7 @@ class StudyTrailApp extends StatelessWidget {
               ? _SignedInScope(
                   userId: context.select<AuthStore, String?>((a) => a.user?.id),
                   child: PomodoroOverlay(
+                    navigatorKey: rootNavigatorKey,
                     child: navigator ?? const SizedBox.shrink(),
                   ),
                 )

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import '../data/local_prefs.dart';
 import '../data/repositories.dart';
 import '../models/models.dart';
+import '../services/notification_service.dart';
 import 'async_store.dart';
 
 /// Which half of the timer is running.
@@ -20,12 +22,30 @@ enum PomodoroPhase { focus, shortBreak }
 /// the screen doesn't cancel the block — which is what lets `PomodoroOverlay`
 /// keep showing it from anywhere in the app.
 class PomodoroStore extends AsyncStore {
-  PomodoroStore({GamificationRepository? game, GoalRepository? goals})
-      : _game = game ?? const GamificationRepository(),
-        _goals = goals ?? const GoalRepository();
+  PomodoroStore({
+    GamificationRepository? game,
+    GoalRepository? goals,
+    NotificationService? notifications,
+  })  : _game = game ?? const GamificationRepository(),
+        _goals = goals ?? const GoalRepository(),
+        _notifications = notifications ?? NotificationService();
 
   final GamificationRepository _game;
   final GoalRepository _goals;
+  final NotificationService _notifications;
+
+  /// What the ongoing notice last showed, so a tick that changes nothing the
+  /// notice displays doesn't repost it. Null while no notice is up.
+  String? _noticeKey;
+
+  /// Notice calls run one after another: a cancel overtaking the show before
+  /// it would leave a notice up for a session that already ended.
+  Future<void> _noticeQueue = Future.value();
+  bool _askedNoticePermission = false;
+
+  /// Set on dispose; a late write finishing afterwards must not repost the
+  /// notice.
+  bool _closed = false;
 
   Timer? _ticker;
 
@@ -45,7 +65,10 @@ class PomodoroStore extends AsyncStore {
 
   bool _running = false;
   String? _subjectId;
-  bool _onTimerScreen = false;
+  /// Timer screens currently mounted. A count, not a flag: a screen popped by
+  /// `popUntil` is disposed only after its exit animation, which can be after
+  /// a new one has mounted, and a flag would then read "off screen".
+  int _timerScreens = 0;
 
   int _completionTick = 0;
   PomodoroPhase? _lastCompletedPhase;
@@ -72,12 +95,22 @@ class PomodoroStore extends AsyncStore {
 
   /// Changing durations is only allowed between blocks. Doing it mid-run was the
   /// reported bug: the dial no longer described the block actually being timed.
-  bool get canConfigure => !_running;
+  /// Also refused while a focus block is [locked] but paused: applying a
+  /// preset resets the dial, which would end the block without the terminate
+  /// confirmation.
+  bool get canConfigure => !_running && !locked;
 
   /// True once a block has been started and not yet finished or reset — what the
   /// global bar keys off. A freshly loaded dial that nobody touched isn't
   /// "in progress" and shouldn't follow the student around the app.
   bool get inProgress => _running || _secondsLeft < _phaseTotalSeconds;
+
+  /// A focus block has been started and is neither finished nor ended — paused
+  /// counts. While locked the student can't leave the timer screen, the
+  /// ongoing notice is up, and the only way out before the block finishes is
+  /// [endEarly]: stop, reset, switching mode and changing the preset all
+  /// refuse, since each of them would end the block too.
+  bool get locked => isFocus && inProgress;
 
   String? get subjectId => _subjectId;
 
@@ -89,7 +122,7 @@ class PomodoroStore extends AsyncStore {
 
   /// Set by the Pomodoro screen while it's on top, so the global bar doesn't
   /// duplicate the dial the student is already looking at.
-  bool get onTimerScreen => _onTimerScreen;
+  bool get onTimerScreen => _timerScreens > 0;
 
   /// Bumped once per phase that runs to completion.
   ///
@@ -192,10 +225,11 @@ class PomodoroStore extends AsyncStore {
     notifyListeners();
   }
 
+  /// Called with true as a timer screen mounts and false as it goes.
   void setOnTimerScreen(bool value) {
-    if (_onTimerScreen == value) return;
-    _onTimerScreen = value;
-    notifyListeners();
+    final before = onTimerScreen;
+    _timerScreens = value ? _timerScreens + 1 : math.max(0, _timerScreens - 1);
+    if (onTimerScreen != before) notifyListeners();
   }
 
   /// Switches the timer to [preset] and remembers the choice.
@@ -268,7 +302,9 @@ class PomodoroStore extends AsyncStore {
   void toggle() => _running ? pause() : start();
 
   /// Restarts the block on screen from its full length, without logging it.
+  /// Refused while [locked] — see there.
   void reset() {
+    if (locked) return;
     _ticker?.cancel();
     _running = false;
     _setPhaseDuration();
@@ -278,8 +314,20 @@ class PomodoroStore extends AsyncStore {
   /// Ends the session: back to an untouched focus block, nothing logged.
   ///
   /// Distinct from [reset], which keeps the current phase — stopping during a
-  /// break shouldn't leave the student on a break.
+  /// break shouldn't leave the student on a break. Refused while [locked]: a
+  /// focus block ends early only through [endEarly].
   void stop() {
+    if (locked) return;
+    _end();
+  }
+
+  /// The terminate option, once the student has ticked that the block won't
+  /// count. Nothing is logged — no XP, no focused minutes, no streak — since
+  /// [_logSession] is only ever reached from [_tick] hitting zero. Ending also
+  /// takes the ongoing notice down, through [notifyListeners].
+  void endEarly() => _end();
+
+  void _end() {
     _ticker?.cancel();
     _running = false;
     _phase = PomodoroPhase.focus;
@@ -297,7 +345,7 @@ class PomodoroStore extends AsyncStore {
   /// the point — it's a different block now.
   bool switchTo(PomodoroPhase phase) {
     if (_phase == phase) return true;
-    if (_running) return false;
+    if (_running || locked) return false;
     _phase = phase;
     _setPhaseDuration();
     notifyListeners();
@@ -363,9 +411,67 @@ class PomodoroStore extends AsyncStore {
     notifyListeners();
   }
 
+  /// Every state change passes through here, so the ongoing notice follows
+  /// the timer without each mutator having to remember it.
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    _syncNotice();
+  }
+
+  /// Shows, updates or clears the ongoing notice to match [locked].
+  void _syncNotice() {
+    if (_closed) return;
+    final subject = selectedSubject?.name;
+    final String? key = !locked
+        ? null
+        // Running: the notice counts itself down, so only a change of what it
+        // says reposts it. Paused: it shows the frozen time left.
+        : _running
+            ? 'run|$subject'
+            : 'pause|$_secondsLeft|$subject';
+    if (key == _noticeKey) return;
+    _noticeKey = key;
+
+    if (key == null) {
+      _enqueueNotice(_notifications.cancelFocusSession);
+      return;
+    }
+    final what = subject ?? '${_preset.focusMinutes}-min focus block';
+    final title = _running ? 'Focus session running' : 'Focus session paused';
+    final body = _running
+        ? "$what · ending early won't count"
+        : '$what · $display left';
+    final endsAt =
+        _running ? DateTime.now().add(Duration(seconds: _secondsLeft)) : null;
+    final askFirst = !_askedNoticePermission;
+    _askedNoticePermission = true;
+    _enqueueNotice(() async {
+      // Android 13+ hides the notice until notifications are allowed; reminders
+      // only ask when the student turns them on, so the first block asks too.
+      if (askFirst) {
+        try {
+          await _notifications.requestPermissions();
+        } catch (_) {}
+      }
+      await _notifications.showFocusSession(
+          title: title, body: body, endsAt: endsAt);
+    });
+  }
+
+  void _enqueueNotice(Future<void> Function() action) {
+    _noticeQueue = _noticeQueue.then((_) => action());
+  }
+
   @override
   void dispose() {
     _ticker?.cancel();
+    _closed = true;
+    // A store dropped mid-block (signing out) takes its timer with it.
+    if (_noticeKey != null) {
+      _noticeKey = null;
+      _enqueueNotice(_notifications.cancelFocusSession);
+    }
     super.dispose();
   }
 }
