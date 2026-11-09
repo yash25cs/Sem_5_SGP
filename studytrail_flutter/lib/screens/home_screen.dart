@@ -4,6 +4,7 @@ import 'package:confetti/confetti.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../data/repositories.dart';
 import '../models/models.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
@@ -11,12 +12,14 @@ import '../theme/subject_style.dart';
 import '../widgets/common.dart';
 import '../widgets/working.dart';
 import '../widgets/data_states.dart';
+import '../widgets/goal_result_sheet.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/streak_modal.dart';
 import '../widgets/task_done.dart';
 import '../widgets/syllabus_sheet.dart';
 import 'flashcards_screen.dart';
 import 'profile_screen.dart';
+import 'revision_sheet_screen.dart';
 import 'set_target_screen.dart';
 
 /// Home / dashboard tab — greeting, streak, today's plan, and subject progress.
@@ -171,6 +174,63 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) await context.read<ProfileStore>().reloadGoals();
   }
 
+  /// Due flashcards, straight from the final-stretch card.
+  void _openDueCards() => Navigator.of(context).push(MaterialPageRoute(
+        builder: (routeCtx) =>
+            FlashcardsScreen(onBack: () => Navigator.of(routeCtx).pop()),
+      ));
+
+  /// A past paper's most-asked unit: its revision sheet, from whichever of
+  /// the student's files has that unit.
+  Future<void> _sheetForUnit(String unit) async {
+    String? materialId;
+    try {
+      materialId = await const MaterialRepository().materialForUnit(unit);
+    } catch (_) {}
+    if (!mounted) return;
+    if (materialId == null) {
+      _toast('None of your notes has "$unit" as a heading. Pick a file '
+          'instead.');
+      return;
+    }
+    await RevisionSheetScreen.open(context,
+        materialId: materialId, unitLabel: unit);
+  }
+
+  /// "How did it go?" for a finished goal: marks, how it felt, what was
+  /// hard. The hard units steer the next goal's roadmap.
+  Future<void> _editResult(Goal goal) async {
+    final store = context.read<HomeStore>();
+    final suggestions = <String>{
+      for (final s in store.subjects) s.name,
+      for (final t in context.read<WeakSpotsStore>().topics) t.name,
+    }.toList();
+    final p = context.p;
+    final result = await showModalBottomSheet<GoalResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (_) => GoalResultSheet(
+        goal: goal,
+        existing: store.resultOf(goal),
+        suggestions: suggestions,
+      ),
+    );
+    if (result == null || !mounted) return;
+    final ok = await store.saveResult(result);
+    if (!mounted) return;
+    final hard = result.hardUnits;
+    _toast(!ok
+        ? store.error ?? 'Could not save that. Try again.'
+        : hard.isEmpty
+            ? 'Saved.'
+            : 'Saved. Your next roadmap will give '
+                '${hard.length == 1 ? hard.first : 'those units'} more time.');
+  }
+
   /// Makes [goalId] the selected goal. The Roadmap tab and Settings keep
   /// their own copy of which goal that is, so they're told too.
   Future<void> _switchTo(String goalId) async {
@@ -205,6 +265,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _toast('Generate a roadmap first — it\'s on the Roadmap tab.');
         case PlanDayResult.nothingLeft:
           _toast('Every roadmap topic is already done or scheduled.');
+        case PlanDayResult.revising:
+          _toast('Final stretch: no new topics now. Revise with the card '
+              'above instead.');
         case PlanDayResult.failed:
           _toast(store.error ?? 'Could not plan today.');
       }
@@ -391,6 +454,9 @@ class _HomeScreenState extends State<HomeScreen> {
               store: store,
               finished: finished,
               nextGoal: store.nextOpenGoal,
+              result: store.resultOf(goal),
+              focusMinutes: store.goalFocusMinutes,
+              onResult: store.busy ? null : () => _editResult(goal),
               onNewGoal: store.busy ? null : _createGoal,
               onSwitch: store.busy ? null : _switchTo,
             ),
@@ -398,9 +464,30 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 10),
             _NextExamStrip(subject: next),
           ],
+          if (store.finalStretch case final stretch?) ...[
+            const SizedBox(height: 12),
+            _FinalStretchCard(
+              stretch: stretch,
+              dueCards: store.dueCards,
+              askedMost: store.askedMost,
+              hasWeakSpots:
+                  context.watch<WeakSpotsStore>().topics.isNotEmpty,
+              onWeakQuiz: () => _practiceWeak(quiz: true),
+              onQuiz: widget.onOpenQuiz,
+              onCards: _openDueCards,
+              onSheet: () => showRevisionSheetPicker(context,
+                  goalId: stretch.goal.id, subjectId: stretch.subject?.id),
+              onUnit: _sheetForUnit,
+            ),
+          ],
           const SizedBox(height: 22),
 
-          if (store.pace case final pace? when pace.needsCatchUp && !finished) ...[
+          // No catch-up — that's more new topics — once the selected goal's
+          // paper is two days off.
+          if (store.pace case final pace?
+              when pace.needsCatchUp &&
+                  !finished &&
+                  !(goal != null && store.inFinalStretch(goal))) ...[
             _CatchUpBanner(
               pace: pace,
               busy: store.busy,
@@ -854,7 +941,29 @@ class _HeroCard extends StatelessWidget {
     this.nextGoal,
     this.onNewGoal,
     this.onSwitch,
+    this.result,
+    this.focusMinutes,
+    this.onResult,
   });
+
+  /// How the exam went, once said ([finished] only).
+  final GoalResult? result;
+
+  /// Minutes focused on the goal's subjects ([finished] only).
+  final int? focusMinutes;
+
+  /// Opens the "How did it go?" sheet.
+  final VoidCallback? onResult;
+
+  /// "78% · Felt good · Hard: SQL, Joins".
+  static String _resultLine(GoalResult r) {
+    final line = [
+      if (r.score case final s?) '${(s * 100).round()}%',
+      if (r.feelingLabel case final f?) 'Felt ${f.toLowerCase()}',
+      if (r.hardUnits.isNotEmpty) 'Hard: ${r.hardUnits.take(3).join(', ')}',
+    ].join(' · ');
+    return line.isEmpty ? 'Your result is saved' : line;
+  }
 
   final Goal goal;
   final HomeStore store;
@@ -977,15 +1086,30 @@ class _HeroCard extends StatelessWidget {
           if (finished) ...[
             Row(
               children: [
+                if (result?.marksLabel case final marks?)
+                  _HeroStat(marks, 'Scored'),
                 _HeroStat('$covered%', 'Roadmap covered'),
-                _HeroStat('${store.streak.bestStreak}', 'Best streak'),
-                if (exam != null)
+                if (focusMinutes case final m? when m > 0)
+                  _HeroStat(focusTimeLabel(m), 'Focused')
+                else
+                  _HeroStat('${store.streak.bestStreak}', 'Best streak'),
+                if (result?.marksLabel == null && exam != null)
                   _HeroStat(
                       '${exam.day} ${_HomeScreenState._monthNames[exam.month - 1]}',
                       'Exam date'),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            // How it went: asked once, then shown, and editable.
+            _HeroLink(
+              icon: result == null ? Symbols.rate_review : Symbols.edit,
+              text: switch (result) {
+                null => 'How did it go? Add your marks and what was hard',
+                final r => _resultLine(r),
+              },
+              onTap: onResult,
+            ),
+            const SizedBox(height: 14),
             if (nextGoal case final next?)
               PillButton('Continue: ${next.name}',
                   icon: Symbols.arrow_forward,
@@ -1036,6 +1160,211 @@ class _HeroCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A tappable line on the hero card's gradient.
+class _HeroLink extends StatelessWidget {
+  const _HeroLink({required this.icon, required this.text, this.onTap});
+
+  final IconData icon;
+  final String text;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700)),
+              ),
+              if (onTap != null)
+                const Icon(Symbols.chevron_right,
+                    color: Colors.white, size: 18),
+            ],
+          ),
+        ),
+      );
+}
+
+/// A paper in the next two days: what to do instead of new topics.
+class _FinalStretchCard extends StatelessWidget {
+  const _FinalStretchCard({
+    required this.stretch,
+    required this.dueCards,
+    required this.askedMost,
+    required this.hasWeakSpots,
+    required this.onWeakQuiz,
+    required this.onCards,
+    required this.onSheet,
+    required this.onUnit,
+    this.onQuiz,
+  });
+
+  final FinalStretch stretch;
+  final int dueCards;
+  final List<ExamTopic> askedMost;
+  final bool hasWeakSpots;
+  final VoidCallback onWeakQuiz;
+
+  /// The Quiz tab, when there are no weak spots to quiz on yet.
+  final VoidCallback? onQuiz;
+  final VoidCallback onCards;
+  final VoidCallback onSheet;
+  final ValueChanged<String> onUnit;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final today = stretch.days == 0;
+    return AppCard(
+      color: p.coralSoft.withValues(alpha: 0.55),
+      shadow: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Symbols.flag_circle, color: p.coral, size: 26, fill: 1),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Final stretch: ${stretch.paper} ${stretch.when}',
+                        style: TextStyle(
+                            color: p.ink,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(
+                        today
+                            ? 'A light recap, then go. Good luck!'
+                            : 'No new topics now. Revise what you know.',
+                        style: TextStyle(color: p.ink2, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (hasWeakSpots)
+            _StretchAction(
+                icon: Symbols.target,
+                title: 'Quiz your weak spots',
+                subtitle: 'A short quiz on what you keep missing',
+                onTap: onWeakQuiz)
+          else if (onQuiz != null)
+            _StretchAction(
+                icon: Symbols.quiz,
+                title: 'Take a practice quiz',
+                subtitle: 'Check what has stuck',
+                onTap: onQuiz!),
+          if (dueCards > 0)
+            _StretchAction(
+                icon: Symbols.style,
+                title: 'Review $dueCards due card${dueCards == 1 ? '' : 's'}',
+                subtitle: 'Spaced repetition, while it still helps',
+                onTap: onCards),
+          for (final t in askedMost.take(2))
+            _StretchAction(
+                icon: Symbols.history_edu,
+                title: 'Most asked: ${t.unitLabel}',
+                subtitle: 'Asked ${t.timesAsked} time'
+                    '${t.timesAsked == 1 ? '' : 's'} in past papers · '
+                    'revision sheet',
+                onTap: () => onUnit(t.unitLabel)),
+          _StretchAction(
+              icon: Symbols.article,
+              title: 'Read a revision sheet',
+              subtitle: 'One page per unit, from your notes',
+              onTap: onSheet),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Symbols.bedtime, color: p.ink3, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                    today
+                        ? 'Eat, breathe, read each question twice.'
+                        : 'Last focus block by 10 pm, then sleep. Rest is '
+                            'revision too.',
+                    style: TextStyle(color: p.ink3, fontSize: 12)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StretchAction extends StatelessWidget {
+  const _StretchAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            IconTile(icon, bg: p.card, fg: p.coral, size: 34, radius: 10),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.ink,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700)),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.ink3, fontSize: 11.5)),
+                ],
+              ),
+            ),
+            Icon(Symbols.chevron_right, color: p.ink3, size: 18),
+          ],
+        ),
       ),
     );
   }

@@ -380,6 +380,57 @@ class MaterialRepository {
     throw 'The summary came back empty. Try again.';
   }
 
+  /// The unit headings of a material, in document order — what a revision
+  /// sheet can be made for. Empty for a file without headings.
+  Future<List<String>> getUnits(String materialId) async {
+    final rows = await db
+        .from('material_chunks')
+        .select('unit_label')
+        .eq('material_id', materialId)
+        .not('unit_label', 'is', null)
+        .order('chunk_index', ascending: true)
+        .limit(2000);
+    final seen = <String>{};
+    return [
+      for (final r in rows)
+        if (r['unit_label'] case final String u
+            when u.trim().isNotEmpty && seen.add(u.trim().toLowerCase()))
+          u.trim(),
+    ];
+  }
+
+  /// A material holding [unitLabel], for a revision sheet on a unit named
+  /// elsewhere (a past paper's topic). Null when none of the student's files
+  /// has it.
+  Future<String?> materialForUnit(String unitLabel) async {
+    final row = await db
+        .from('material_chunks')
+        .select('material_id')
+        .eq('unit_label', unitLabel)
+        .limit(1)
+        .maybeSingle();
+    return row?['material_id'] as String?;
+  }
+
+  /// Asks the `revision-sheet` Edge Function for a one-page sheet on
+  /// [unitLabel] of a material, or on the whole file without one.
+  Future<RevisionSheet> requestRevisionSheet(String materialId,
+      {String? unitLabel}) async {
+    final res = await db.functions.invoke(
+      'revision-sheet',
+      body: {'materialId': materialId, 'unitLabel': ?unitLabel},
+    );
+    final data = res.data;
+    if (data is Map && data['sheet'] is String) {
+      final sheet = RevisionSheet.parse(data['sheet'] as String,
+          title: (data['title'] as String?) ?? 'Your notes',
+          unit: data['unit'] as String?,
+          pastQuestions: (data['pastQuestions'] as num?)?.toInt() ?? 0);
+      if (sheet.sections.isNotEmpty) return sheet;
+    }
+    throw 'The revision sheet came back empty. Try again.';
+  }
+
   /// Asks the `delete-account` Edge Function to permanently delete all of the
   /// signed-in user's data — materials, goals, progress, and the auth account.
   Future<void> deleteAccount() async {

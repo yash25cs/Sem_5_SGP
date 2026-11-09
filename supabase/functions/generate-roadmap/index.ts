@@ -122,7 +122,10 @@ plan that subject from exactly those units, in that order, and name them in \
 its tasks.
 - Size each week to the student's daily study time: with under an hour a day, \
 keep a week's tasks small and few; with three hours or more, make them \
-substantial and cover more ground each week.`;
+substantial and cover more ground each week.
+- When the student lists units they found hard in their last exam, give those \
+of them that belong to this plan's subjects extra practice and an extra \
+revision pass. Ignore the ones that don't.`;
 
 interface Milestone {
   weekLabel: string;
@@ -200,6 +203,7 @@ serve(async (req) => {
   }
 
   const units = await unitLabels(supa);
+  const hard = await hardUnits(supa, goalId);
   const days = roadmapDays(goal.exam_date, goal.pace);
   const weeks = weekCount(days);
 
@@ -210,7 +214,7 @@ serve(async (req) => {
     temperature: 0.2,
     schema: ROADMAP_SCHEMA,
     input: buildPrompt(String(goal.name ?? '').trim(), subjects, units, weeks,
-      days, goal.exam_date, dailyMinutes(goal)),
+      days, goal.exam_date, dailyMinutes(goal), hard),
     maxOutputTokens: 900 + weeks * 400,
     // Shorter than the quiz's 60 s: this prompt carries headings, not chunk
     // bodies, so a call that hasn't answered by now is one that won't.
@@ -419,6 +423,7 @@ function buildPrompt(
   days: number,
   examDate: unknown,
   minutesADay: number,
+  hard: string[] = [],
 ): string {
   const hours = minutesADay / 60;
   const parts: string[] = [
@@ -439,6 +444,13 @@ function buildPrompt(
       : 'This student has not uploaded any material yet, so plan from the '
         + 'subject names alone and keep the tasks general.',
   );
+
+  if (hard.length > 0) {
+    parts.push(
+      'Units the student found hard in their last exam:\n'
+        + hard.map((unit) => `- ${unit}`).join('\n'),
+    );
+  }
 
   parts.push(`Write exactly ${weeks} weekly milestones.`);
   return parts.join('\n\n');
@@ -470,6 +482,34 @@ async function syllabusUnits(supa: SupabaseClient): Promise<Map<string, string[]
     bySubject.set(key, units);
   }
   return bySubject;
+}
+
+/// What the student said was hard in their other goals' exams (0037), newest
+/// first. Through the caller's client, so RLS keeps it to their own. Empty on
+/// failure or before 0037: the plan just doesn't lean on it.
+async function hardUnits(supa: SupabaseClient, goalId: string): Promise<string[]> {
+  const { data, error } = await supa
+    .from('goal_results')
+    .select('hard_units')
+    .neq('goal_id', goalId)
+    .order('created_at', { ascending: false })
+    .limit(3);
+  if (error) {
+    console.error('Could not read past results', error);
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const row of data ?? []) {
+    for (const raw of Array.isArray(row.hard_units) ? row.hard_units : []) {
+      const unit = String(raw ?? '').trim().slice(0, 80);
+      if (unit.length === 0 || seen.has(unit.toLowerCase())) continue;
+      seen.add(unit.toLowerCase());
+      out.push(unit);
+      if (out.length >= 12) return out;
+    }
+  }
+  return out;
 }
 
 /// Keeps the milestones worth storing.

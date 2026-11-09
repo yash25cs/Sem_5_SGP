@@ -17,8 +17,38 @@ enum PlanDayResult {
   /// Every roadmap task is either done or already scheduled.
   nothingLeft,
 
+  /// Every open goal has a paper within [HomeStore.finalStretchDays]: no new
+  /// topics now, only revision.
+  revising,
+
   /// The write failed; [HomeStore.error] says why.
   failed,
+}
+
+/// A paper close enough that Home stops handing out new topics and switches
+/// to revision: weak spots, due cards, the most-asked units, a revision sheet
+/// and an early night.
+class FinalStretch {
+  const FinalStretch({
+    required this.paper,
+    required this.goal,
+    this.subject,
+    required this.days,
+  });
+
+  /// The subject's name, or the goal's when it has no dated papers.
+  final String paper;
+  final Goal goal;
+  final Subject? subject;
+
+  /// 0 = today.
+  final int days;
+
+  String get when => switch (days) {
+        0 => 'today',
+        1 => 'tomorrow',
+        _ => 'in $days days',
+      };
 }
 
 /// Backs the Home screen: greeting, active goal, today's checklist, focus
@@ -31,7 +61,11 @@ class HomeStore extends AsyncStore {
     GamificationRepository? game,
     RoadmapRepository? roadmap,
     MaterialRepository? materials,
-  })  : _profiles = profiles ?? const ProfileRepository(),
+    FlashcardRepository? cards,
+    ExamPaperRepository? papers,
+  })  : _cards = cards ?? const FlashcardRepository(),
+        _papers = papers ?? const ExamPaperRepository(),
+        _profiles = profiles ?? const ProfileRepository(),
         _goals = goals ?? const GoalRepository(),
         _tasks = tasks ?? const TaskRepository(),
         _game = game ?? const GamificationRepository(),
@@ -48,6 +82,11 @@ class HomeStore extends AsyncStore {
   final GamificationRepository _game;
   final RoadmapRepository _roadmap;
   final MaterialRepository _materials;
+  final FlashcardRepository _cards;
+  final ExamPaperRepository _papers;
+
+  /// How close a paper must be for the final stretch.
+  static const finalStretchDays = 2;
 
   Profile? _profile;
   Goal? _goal;
@@ -61,6 +100,10 @@ class HomeStore extends AsyncStore {
   int _plannedCount = 0;
   String? _plannedFrom;
   RoadmapPace? _pace;
+  Map<String, GoalResult> _results = const {};
+  int _dueCards = 0;
+  List<ExamTopic> _askedMost = const [];
+  int? _goalFocusMinutes;
   Map<String, StudyMaterial> _syllabi = const {};
   String? _readingSyllabusFor;
 
@@ -130,6 +173,60 @@ class HomeStore extends AsyncStore {
   /// Another goal still to work on, for a finished goal's card to point at.
   Goal? get nextOpenGoal =>
       openGoals.where((g) => g.id != _goal?.id).firstOrNull;
+
+  /// The soonest paper of an open goal within [finalStretchDays], if any.
+  FinalStretch? get finalStretch {
+    FinalStretch? best;
+    for (final g in openGoals) {
+      for (final s in _stretchesOf(g)) {
+        if (best == null || s.days < best.days) best = s;
+      }
+    }
+    return best;
+  }
+
+  /// [goal] has a paper within [finalStretchDays]: no new topics for it.
+  bool inFinalStretch(Goal goal) =>
+      !goalOver(goal) && _stretchesOf(goal).isNotEmpty;
+
+  List<FinalStretch> _stretchesOf(Goal goal) {
+    bool near(int? d) => d != null && d >= 0 && d <= finalStretchDays;
+    final dated = [
+      for (final s in _subjectsOf(goal))
+        if (s.examDate != null) s,
+    ];
+    if (dated.isEmpty) {
+      return [
+        if (near(goal.daysLeft))
+          FinalStretch(paper: goal.name, goal: goal, days: goal.daysLeft!),
+      ];
+    }
+    return [
+      for (final s in dated)
+        if (near(s.daysUntilExam()))
+          FinalStretch(
+              paper: s.name, goal: goal, subject: s, days: s.daysUntilExam()!),
+    ];
+  }
+
+  /// Flashcards due now, for the final stretch.
+  int get dueCards => _dueCards;
+
+  /// The units past papers ask most, most first ('Other' left out).
+  List<ExamTopic> get askedMost => _askedMost;
+
+  /// How [goal]'s exam went, once the student has said.
+  GoalResult? resultOf(Goal goal) => _results[goal.id];
+
+  /// Minutes focused on the selected goal's subjects, once its exams are
+  /// over — set against the result. Null before it's known.
+  int? get goalFocusMinutes => _goalFocusMinutes;
+
+  /// Saves how a goal's exam went.
+  Future<bool> saveResult(GoalResult result) => runMutation(() async {
+        final saved = await _goals.saveResult(result);
+        _results = {..._results, saved.goalId: saved};
+      });
 
   /// The goal a task on today's list belongs to, named only when there's
   /// more than one goal on the go — with one, it goes without saying.
@@ -231,6 +328,7 @@ class HomeStore extends AsyncStore {
       _allSubjects = const [];
       _pace = null;
       _syllabi = const {};
+      _results = const {};
     } else {
       final more = await Future.wait<Object?>([
         _goals.getSubjects(goalId),
@@ -243,12 +341,55 @@ class HomeStore extends AsyncStore {
         _goals
             .getAllSubjects()
             .catchError((Object _) => const <Subject>[]),
+        // Extra too, and absent before 0037.
+        _goals
+            .getResults()
+            .catchError((Object _) => const <String, GoalResult>{}),
       ]);
       _subjects = more[0] as List<Subject>;
       _pace = more[1] as RoadmapPace?;
       _syllabi = more[2] as Map<String, StudyMaterial>;
       _allSubjects = more[3] as List<Subject>;
+      _results = more[4] as Map<String, GoalResult>;
     }
+    await _loadExtras();
+  }
+
+  /// What only some states show: the final stretch's due cards and
+  /// most-asked units, and a finished goal's focused time. Extras all — a
+  /// failed read just leaves them out.
+  Future<void> _loadExtras() async {
+    final stretch = finalStretch != null;
+    final finished = examsOver;
+    final ids = {for (final s in _subjects) s.id};
+    final got = await Future.wait<Object?>([
+      stretch
+          ? _cards
+              .getDueCards(limit: 100)
+              .then<Object?>((c) => c.length)
+              .catchError((Object _) => 0)
+          : Future.value(0),
+      stretch
+          ? _papers
+              .getTopics()
+              .then<Object?>((t) => t)
+              .catchError((Object _) => const <ExamTopic>[])
+          : Future.value(const <ExamTopic>[]),
+      finished && ids.isNotEmpty
+          ? _game
+              .getStudySessions(limit: 500)
+              .then<Object?>((all) => all
+                  .where((s) => ids.contains(s.subjectId))
+                  .fold<int>(0, (sum, s) => sum + s.minutes))
+              .catchError((Object _) => null)
+          : Future<Object?>.value(),
+    ]);
+    _dueCards = got[0] as int;
+    _askedMost = [
+      for (final t in got[1] as List<ExamTopic>)
+        if (!t.isOther) t,
+    ]..sort((a, b) => b.timesAsked.compareTo(a.timesAsked));
+    _goalFocusMinutes = got[2] as int?;
   }
 
   /// [subject]'s syllabus, if it has one (`0027`).
@@ -449,11 +590,14 @@ class HomeStore extends AsyncStore {
   Future<PlanDayResult> planDayFromRoadmap({
     int limit = plannedTasksPerDay,
   }) async {
-    final goals = [
+    final open = [
       ...openGoals.where((g) => g.id == _goal?.id),
       ...openGoals.where((g) => g.id != _goal?.id),
     ];
-    if (goals.isEmpty) return PlanDayResult.noRoadmap;
+    if (open.isEmpty) return PlanDayResult.noRoadmap;
+    // A goal with a paper in the next two days gets revision, not new topics.
+    final goals = open.where((g) => !inFinalStretch(g)).toList();
+    if (goals.isEmpty) return PlanDayResult.revising;
 
     _plannedCount = 0;
     _plannedFrom = null;
@@ -491,6 +635,7 @@ class HomeStore extends AsyncStore {
 
     if (!ok) return PlanDayResult.failed;
     if (_plannedCount > 0) return PlanDayResult.added;
+    if (goals.length < open.length) return PlanDayResult.revising;
     return hasRoadmap ? PlanDayResult.nothingLeft : PlanDayResult.noRoadmap;
   }
 

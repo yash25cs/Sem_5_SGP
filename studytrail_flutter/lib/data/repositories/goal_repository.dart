@@ -247,6 +247,24 @@ class GoalRepository {
     return rows.map(Subject.fromMap).toList();
   }
 
+  /// How each finished goal's exam went (0037), keyed by goal id.
+  Future<Map<String, GoalResult>> getResults() async {
+    final rows = await db.from('goal_results').select();
+    return {
+      for (final r in rows.map(GoalResult.fromMap)) r.goalId: r,
+    };
+  }
+
+  /// Saves (or replaces) a goal's result.
+  Future<GoalResult> saveResult(GoalResult result) async {
+    final row = await db
+        .from('goal_results')
+        .upsert(result.toUpsertMap(), onConflict: 'goal_id')
+        .select()
+        .single();
+    return GoalResult.fromMap(row);
+  }
+
   Future<List<Subject>> getSubjects(String goalId) async {
     final rows = await db
         .from('subjects')

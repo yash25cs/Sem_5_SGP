@@ -20,6 +20,7 @@ class MaterialTile extends StatelessWidget {
     this.onRetry,
     this.onRemove,
     this.onSummarize,
+    this.onRevisionSheet,
   });
 
   final StudyMaterial material;
@@ -29,6 +30,10 @@ class MaterialTile extends StatelessWidget {
   /// Called when the student taps the Summarize button. Only visible for
   /// embedded materials — there's nothing to summarize until the chunks exist.
   final VoidCallback? onSummarize;
+
+  /// Opens a one-page revision sheet for the file or one of its units. Like
+  /// [onSummarize], only for a file that has been read.
+  final VoidCallback? onRevisionSheet;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +87,9 @@ class MaterialTile extends StatelessWidget {
             if (material.status == IngestStatus.embedded &&
                 onSummarize != null)
               RoundIconButton(Symbols.summarize, onTap: onSummarize),
+            if (material.status == IngestStatus.embedded &&
+                onRevisionSheet != null)
+              RoundIconButton(Symbols.article, onTap: onRevisionSheet),
             // Retry only on `failed`: nothing else is stuck. A bookmark link
             // never leaves `uploaded`, so it correctly gets no retry either.
             if (material.status == IngestStatus.failed)

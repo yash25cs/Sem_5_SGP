@@ -5,6 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
+import '../services/focus_extras.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../theme/subject_style.dart';
@@ -115,6 +116,96 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
 
   /// Lets the student tag the block with a subject, so the logged session
   /// shows up under the right subject in Progress.
+  /// Do Not Disturb for focus blocks. Turning it on the first time needs the
+  /// phone's permission, which only system settings can give.
+  Future<void> _toggleSilence() async {
+    final store = context.read<PomodoroStore>();
+    if (store.silence) {
+      await store.setSilence(false);
+      return;
+    }
+    if (await store.setSilence(true) || !mounted) return;
+    final p = context.p;
+    final open = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: p.card,
+        title: Text('Let StudyTrail silence your phone',
+            style: TextStyle(color: p.ink, fontWeight: FontWeight.w800)),
+        content: Text(
+            'Android asks you to allow this once. Find StudyTrail on the next '
+            'screen, turn it on, then come back and tap Silence phone again. '
+            'Your phone goes back to normal when each block ends.',
+            style: TextStyle(color: p.ink2, height: 1.4)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text('Not now', style: TextStyle(color: p.ink3)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text('Open settings',
+                style:
+                    TextStyle(color: p.primary, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+    if (open == true) await store.openDndSettings();
+  }
+
+  Future<void> _pickSound() async {
+    final store = context.read<PomodoroStore>();
+    final p = context.p;
+    final picked = await showModalBottomSheet<FocusSound>(
+      context: context,
+      backgroundColor: p.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 2),
+              child: Text('Background sound',
+                  style: TextStyle(
+                      color: p.ink, fontSize: 17, fontWeight: FontWeight.w800)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                  'Plays while a focus block runs and stops on breaks. Made on '
+                  'your phone, so it needs no internet.',
+                  style: TextStyle(color: p.ink3, fontSize: 12.5)),
+            ),
+            for (final s in FocusSound.values)
+              ListTile(
+                leading: Icon(
+                    s == FocusSound.off ? Symbols.volume_off : Symbols.graphic_eq,
+                    color: s == store.sound ? p.primary : p.ink3),
+                title: Text(s.label,
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600)),
+                subtitle: Text(s.description,
+                    style: TextStyle(color: p.ink3, fontSize: 12)),
+                trailing: s == store.sound
+                    ? Icon(Symbols.check, color: p.primary)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(s),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) await store.setSound(picked);
+  }
+
   Future<void> _pickSubject() async {
     final store = context.read<PomodoroStore>();
     final p = context.p;
@@ -517,7 +608,36 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
                           dimmed: !store.canConfigure),
                     ],
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 18),
+
+                  // What the block does to the phone around it.
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      SoftChip(store.silence ? 'Phone silenced' : 'Silence phone',
+                          icon: store.silence
+                              ? Symbols.do_not_disturb_on
+                              : Symbols.do_not_disturb_off,
+                          tone: store.silence
+                              ? ChipTone.primary
+                              : ChipTone.neutral,
+                          onTap: _toggleSilence),
+                      SoftChip(
+                          store.sound == FocusSound.off
+                              ? 'Sound off'
+                              : store.sound.label,
+                          icon: store.sound == FocusSound.off
+                              ? Symbols.volume_off
+                              : Symbols.graphic_eq,
+                          tone: store.sound == FocusSound.off
+                              ? ChipTone.neutral
+                              : ChipTone.primary,
+                          onTap: _pickSound),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
 
                   Row(
                     children: [

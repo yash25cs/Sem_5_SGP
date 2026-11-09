@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import '../data/local_prefs.dart';
 import '../data/repositories.dart';
 import '../models/models.dart';
+import '../services/focus_extras.dart';
 import '../services/notification_service.dart';
 import 'async_store.dart';
 
@@ -26,15 +27,31 @@ class PomodoroStore extends AsyncStore {
     GamificationRepository? game,
     GoalRepository? goals,
     NotificationService? notifications,
+    FocusExtras? extras,
   })  : _game = game ?? const GamificationRepository(),
         _goals = goals ?? const GoalRepository(),
-        _notifications = notifications ?? NotificationService() {
+        _notifications = notifications ?? NotificationService(),
+        _extras = extras ?? const FocusExtras() {
     _noticeActions = _notifications.focusActions.listen(_onNoticeAction);
   }
 
   final GamificationRepository _game;
   final GoalRepository _goals;
   final NotificationService _notifications;
+  final FocusExtras _extras;
+
+  bool _silence = false;
+  FocusSound _sound = FocusSound.off;
+
+  /// What [_syncExtras] last applied, so it only calls out on a change.
+  bool _dndOn = false;
+  FocusSound _playing = FocusSound.off;
+
+  /// Do Not Disturb while a focus block is locked (paused included).
+  bool get silence => _silence;
+
+  /// Background noise while a focus block runs.
+  FocusSound get sound => _sound;
 
   /// The notice's Pause / Resume button.
   late final StreamSubscription<String> _noticeActions;
@@ -243,12 +260,33 @@ class PomodoroStore extends AsyncStore {
     if (_presetsLoaded) return;
     _presetsLoaded = true;
 
+    _silence = await LocalPrefs.focusSilence();
+    _sound = FocusSound.fromName(await LocalPrefs.focusSound());
     _customPresets = await LocalPrefs.getTimerPresets();
     final activeId = await LocalPrefs.getActiveTimerId();
     if (activeId == null || _running || inProgress) return;
 
     final match = savedPresets.where((p) => p.id == activeId).firstOrNull;
     if (match != null) _adoptPreset(match);
+  }
+
+  /// Turns Do Not Disturb for focus blocks on or off. Returns false, and
+  /// changes nothing, when it's being turned on without the phone's
+  /// permission — the screen then sends the student to grant it.
+  Future<bool> setSilence(bool on) async {
+    if (on && !await _extras.hasDndAccess()) return false;
+    _silence = on;
+    notifyListeners();
+    await LocalPrefs.setFocusSilence(on);
+    return true;
+  }
+
+  Future<void> openDndSettings() => _extras.openDndSettings();
+
+  Future<void> setSound(FocusSound sound) async {
+    _sound = sound;
+    notifyListeners();
+    await LocalPrefs.setFocusSound(sound.name);
   }
 
   void selectSubject(String? subjectId) {
@@ -448,6 +486,23 @@ class PomodoroStore extends AsyncStore {
   void notifyListeners() {
     super.notifyListeners();
     _syncNotice();
+    _syncExtras();
+  }
+
+  /// Do Not Disturb follows [locked]; the sound plays only while a focus
+  /// block is actually running.
+  void _syncExtras() {
+    if (_closed) return;
+    final dnd = _silence && locked;
+    if (dnd != _dndOn) {
+      _dndOn = dnd;
+      unawaited(_extras.setDnd(dnd));
+    }
+    final play = _running && isFocus ? _sound : FocusSound.off;
+    if (play != _playing) {
+      _playing = play;
+      unawaited(_extras.playSound(play));
+    }
   }
 
   /// The notice's button. Only a locked block has a notice to press.
@@ -517,6 +572,10 @@ class PomodoroStore extends AsyncStore {
     _ticker?.cancel();
     _noticeActions.cancel();
     _closed = true;
+    if (_dndOn) unawaited(_extras.setDnd(false));
+    if (_playing != FocusSound.off) {
+      unawaited(_extras.playSound(FocusSound.off));
+    }
     // A store dropped mid-block (signing out) takes its timer with it.
     if (_noticeKey != null) {
       _noticeKey = null;

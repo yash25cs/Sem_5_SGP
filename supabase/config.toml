@@ -98,6 +98,9 @@ verify_jwt = true
 [functions.doubt-ai]
 verify_jwt = true
 
+[functions.revision-sheet]
+verify_jwt = true
+
 [analytics]
 enabled = false
 

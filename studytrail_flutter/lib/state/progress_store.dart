@@ -8,11 +8,19 @@ class ProgressStore extends AsyncStore {
   ProgressStore({
     AnalyticsRepository? analytics,
     GamificationRepository? game,
+    GoalRepository? goals,
   })  : _analytics = analytics ?? const AnalyticsRepository(),
-        _game = game ?? const GamificationRepository();
+        _game = game ?? const GamificationRepository(),
+        _goals = goals ?? const GoalRepository();
 
   final AnalyticsRepository _analytics;
   final GamificationRepository _game;
+  final GoalRepository _goals;
+
+  FocusBreakdown _focus = const FocusBreakdown();
+
+  /// Where the last 30 days of focus blocks went.
+  FocusBreakdown get focus => _focus;
 
   StudyTotals _totals = const StudyTotals();
   List<ActivityDay> _weekly = const [];
@@ -63,5 +71,26 @@ class ProgressStore extends AsyncStore {
         _heatmap = results[4] as List<ActivityDay>;
         _streak = results[5] as Streak;
         _answers = results[6] as AnswerStats;
+        _focus = await _loadFocus();
       });
+
+  /// An extra on this screen: a failed read leaves the section empty rather
+  /// than failing the whole page.
+  Future<FocusBreakdown> _loadFocus() async {
+    try {
+      final all = await Future.wait<Object>([
+        _game.getStudySessions(limit: 500),
+        _goals.getAllSubjects(),
+        _goals.getGoals(),
+      ]);
+      return FocusBreakdown.from(
+        all[0] as List<StudySession>,
+        all[1] as List<Subject>,
+        all[2] as List<Goal>,
+        DateTime.now(),
+      );
+    } catch (_) {
+      return const FocusBreakdown();
+    }
+  }
 }

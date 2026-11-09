@@ -5,6 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
+import 'revision_sheet_screen.dart';
 import '../state/stores.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
@@ -112,6 +113,10 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
   /// link is kept as a bookmark. See [addVideoLink].
   Future<void> _addLink() => addVideoLink(context, toast: _toast);
 
+  /// A one-page revision sheet for this file, or one of its units.
+  Future<void> _openRevisionSheet(StudyMaterial material) =>
+      showRevisionSheetPicker(context, material: material);
+
   /// One file or video row — playlists build theirs through this too.
   Widget _tile(StudyMaterial material) {
     final store = context.read<OnboardingStore>();
@@ -123,6 +128,7 @@ class _UploadMaterialScreenState extends State<UploadMaterialScreen> {
         onRemove: store.busy ? null : () => store.removeMaterial(material),
         onSummarize: () => SummarySheet.show(context,
             materialId: material.id, title: material.displayName),
+        onRevisionSheet: () => _openRevisionSheet(material),
       ),
     );
   }

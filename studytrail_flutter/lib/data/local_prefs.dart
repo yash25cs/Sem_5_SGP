@@ -124,6 +124,47 @@ class LocalPrefs {
     }
   }
 
+  static const String _focusSilenceKey = 'focus_silence_v1';
+  static const String _focusSoundKey = 'focus_sound_v1';
+
+  /// Do Not Disturb during focus blocks. Off until the student turns it on.
+  static Future<bool> focusSilence() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_focusSilenceKey) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setFocusSilence(bool on) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_focusSilenceKey, on);
+    } catch (_) {
+      // Non-fatal: it still applies for this run.
+    }
+  }
+
+  /// The background sound for focus blocks, by [FocusSound] name; null = off.
+  static Future<String?> focusSound() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_focusSoundKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> setFocusSound(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_focusSoundKey, name);
+    } catch (_) {
+      // Non-fatal: it still applies for this run.
+    }
+  }
+
   static const String _remindersKey = 'daily_reminder_enabled_v1';
 
   /// Whether the 6 PM study reminder is on. Defaults to on, which is what the

@@ -298,7 +298,9 @@ class _Goals extends GoalRepository {
         Subject(
             id: 's1',
             name: 'Database Management Systems and Information Retrieval',
-            examDate: DateTime.now().add(const Duration(days: 2))),
+            // Past the two-day final stretch, which hides the catch-up
+            // banner this test lays out (exam_cycle_test covers that card).
+            examDate: DateTime.now().add(const Duration(days: 4))),
         const Subject(id: 's2', name: 'Machine Learning'),
       ];
 }

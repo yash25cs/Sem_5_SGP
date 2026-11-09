@@ -7,15 +7,18 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
     private val calendar = CalendarChannel(this)
     private val focus by lazy { FocusNotice(applicationContext) }
+    private val extras by lazy { FocusExtras(applicationContext) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         calendar.attach(flutterEngine.dartExecutor.binaryMessenger)
         focus.attach(flutterEngine.dartExecutor.binaryMessenger)
+        extras.attach(flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         focus.detach()
+        extras.detach()
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

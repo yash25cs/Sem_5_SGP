@@ -277,6 +277,8 @@ class StudySession {
     this.sessionsCount,
     this.focusedMin,
     required this.sessionDate,
+    this.startedAt,
+    this.subjectName,
   });
 
   final String id;
@@ -286,6 +288,16 @@ class StudySession {
   final int? focusedMin;
   final DateTime sessionDate;
 
+  /// When the block started, on the phone's clock — for "when do you focus
+  /// best". Null on rows that don't carry it.
+  final DateTime? startedAt;
+
+  /// Joined from `subjects` when the query embeds it.
+  final String? subjectName;
+
+  /// Minutes it counts for: the focused part, else its length.
+  int get minutes => focusedMin ?? lengthMin ?? 0;
+
   factory StudySession.fromMap(Map<String, dynamic> m) => StudySession(
         id: m['id'] as String,
         subjectId: m['subject_id'] as String?,
@@ -293,5 +305,12 @@ class StudySession {
         sessionsCount: (m['sessions_count'] as num?)?.toInt(),
         focusedMin: (m['focused_min'] as num?)?.toInt(),
         sessionDate: DateTime.parse(m['session_date'] as String),
+        startedAt: m['started_at'] == null
+            ? null
+            : DateTime.tryParse(m['started_at'] as String)?.toLocal(),
+        subjectName: switch (m['subjects']) {
+          {'name': final String name} => name,
+          _ => null,
+        },
       );
 }

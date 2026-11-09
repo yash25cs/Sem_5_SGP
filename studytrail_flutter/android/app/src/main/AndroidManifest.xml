@@ -6,6 +6,9 @@
     <!-- Android 16: lets the focus timer show as a Live Update, the countdown
          chip in the status bar (FocusNotice.kt). Granted at install. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS"/>
+    <!-- Do Not Disturb during a focus block, only once the student grants it
+         in system settings and turns it on (FocusExtras.kt). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>
     <!-- Exams and the study plan are written into the phone's calendar
          (CalendarChannel.kt), only after the student turns that on. -->
     <uses-permission android:name="android.permission.READ_CALENDAR"/>

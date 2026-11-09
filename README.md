@@ -141,7 +141,7 @@ studytrail_ui.html       original browser UI prototype — the design reference 
 
    ```bash
    npx --yes supabase@latest secrets set GEMINI_API_KEY=your_key_here --project-ref YOUR_REF
-   npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material analyze-paper grade-answer room-quiz doubt-ai delete-account --use-api --project-ref YOUR_REF
+   npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material analyze-paper grade-answer room-quiz doubt-ai revision-sheet delete-account --use-api --project-ref YOUR_REF
    ```
 
 Full instructions, including Storage and Auth settings, are in

@@ -350,7 +350,7 @@ the **+** button.
   none, but without it Settings → Delete account fails:
 
   ```bash
-  npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material analyze-paper grade-answer room-quiz doubt-ai delete-account --use-api --project-ref tmakrbqggezkxtygythc
+  npx --yes supabase@latest functions deploy embed-material chat generate-roadmap generate-quiz generate-flashcards summarize-material analyze-paper grade-answer room-quiz doubt-ai revision-sheet delete-account --use-api --project-ref tmakrbqggezkxtygythc
   ```
 
   Until both are done, uploads land on **Failed** with a readable reason and Chat

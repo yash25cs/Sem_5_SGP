@@ -167,6 +167,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
             ),
             const SizedBox(height: 20),
 
+            if (!store.focus.isEmpty) ...[
+              CardHeader('Where your time went'),
+              AppCard(child: _FocusBreakdownBody(store.focus)),
+              const SizedBox(height: 20),
+            ],
+
             // accuracy by subject
             CardHeader('Accuracy by subject'),
             AppCard(
@@ -222,6 +228,107 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
 /// One line under the tiles: how many of the 7 days had study, tasks done,
 /// and the daily average.
+/// Focus blocks by subject and goal, the best time of day, and any goal
+/// left untouched this week.
+class _FocusBreakdownBody extends StatelessWidget {
+  const _FocusBreakdownBody(this.focus);
+
+  final FocusBreakdown focus;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final top = focus.bySubject.take(6).toList();
+    final peak = top.isEmpty ? 1 : top.first.$2;
+    final best = focus.bestPart;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+            '${focusTimeLabel(focus.totalMinutes)} focused in the last '
+            '${focus.days} days',
+            style: TextStyle(
+                color: p.ink, fontSize: 14.5, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 14),
+        for (final (name, minutes) in top) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.ink2,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(width: 8),
+              Text(focusTimeLabel(minutes),
+                  style: TextStyle(
+                      color: p.ink3,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: 5),
+          ProgressTrack(minutes / peak, color: p.primary, height: 6),
+          const SizedBox(height: 10),
+        ],
+        if (focus.byGoal.length > 1) ...[
+          const SizedBox(height: 4),
+          Text(
+              [
+                for (final (name, minutes) in focus.byGoal)
+                  '$name ${focusTimeLabel(minutes)}',
+              ].join(' · '),
+              style: TextStyle(color: p.ink2, fontSize: 12.5)),
+          const SizedBox(height: 10),
+        ],
+        if (best != null)
+          _InsightLine(
+            icon: Symbols.schedule,
+            color: p.primary,
+            text: 'You focus most in the ${best.label.toLowerCase()} '
+                '(${best.hours}): ${(focus.bestShare * 100).round()}% of '
+                'your focused time.',
+          ),
+        for (final goal in focus.quietGoals)
+          _InsightLine(
+            icon: Symbols.warning,
+            color: p.coral,
+            text: 'Nothing on $goal this week. A block today keeps it moving.',
+          ),
+      ],
+    );
+  }
+}
+
+class _InsightLine extends StatelessWidget {
+  const _InsightLine(
+      {required this.icon, required this.color, required this.text});
+
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 17, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(text,
+                  style: TextStyle(
+                      color: context.p.ink2, fontSize: 12.5, height: 1.35)),
+            ),
+          ],
+        ),
+      );
+}
+
 class _WeekSummary extends StatelessWidget {
   const _WeekSummary(this.totals);
   final StudyTotals totals;
