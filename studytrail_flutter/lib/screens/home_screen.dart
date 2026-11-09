@@ -362,9 +362,14 @@ class _HomeScreenState extends State<HomeScreen> {
   static String _examLabel(Goal goal) {
     final exam = goal.examDate;
     if (exam == null) return 'No exam date';
-    final left = goal.daysLeft;
     final date = '${_months[exam.month - 1]} ${exam.day}';
-    return left == null || left < 0 ? date : '$date · $left days left';
+    return switch (goal.daysLeft) {
+      _ when goal.examOver => '$date · Finished',
+      0 => '$date · Exam today',
+      1 => '$date · 1 day left',
+      final left? => '$date · $left days left',
+      null => date,
+    };
   }
 
   @override
@@ -373,6 +378,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final store = context.watch<HomeStore>();
     final profile = store.profile;
     final goal = store.goal;
+    // The goal's exams are all sat: no countdown, catch-up, weak spots or
+    // further planning — just the result and a way on to the next goal.
+    final finished = store.examsOver;
 
     final firstName = (profile?.fullName ?? '').trim().split(' ').first;
 
@@ -460,14 +468,19 @@ class _HomeScreenState extends State<HomeScreen> {
               onAction: _createGoal,
             )
           else
-            _HeroCard(goal: goal, store: store),
+            _HeroCard(
+              goal: goal,
+              store: store,
+              finished: finished,
+              onNewGoal: store.busy ? null : _createGoal,
+            ),
           if (store.nextExam case final next?) ...[
             const SizedBox(height: 10),
             _NextExamStrip(subject: next),
           ],
           const SizedBox(height: 22),
 
-          if (store.pace case final pace? when pace.needsCatchUp) ...[
+          if (store.pace case final pace? when pace.needsCatchUp && !finished) ...[
             _CatchUpBanner(
               pace: pace,
               busy: store.busy,
@@ -476,7 +489,9 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 18),
           ],
 
-          // today's plan
+          // today's plan — gone once the goal is finished, unless something
+          // was still left on today's list.
+          if (!finished || store.tasks.isNotEmpty) ...[
           CardHeader(
             'Today’s plan',
             action: Row(
@@ -488,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(
                       color: p.ink3, fontSize: 13, fontWeight: FontWeight.w700),
                 ),
-                if (goal != null) ...[
+                if (goal != null && !finished) ...[
                   const SizedBox(width: 10),
                   SoftChip(
                     _isPlanningDay ? 'Planning...' : 'Plan day',
@@ -534,12 +549,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
           const SizedBox(height: 20),
+          ],
 
-          _WeakSpotsCard(
-            store: context.watch<WeakSpotsStore>(),
-            onQuiz: () => _practiceWeak(quiz: true),
-            onCards: () => _practiceWeak(quiz: false),
-          ),
+          if (!finished)
+            _WeakSpotsCard(
+              store: context.watch<WeakSpotsStore>(),
+              onQuiz: () => _practiceWeak(quiz: true),
+              onCards: () => _practiceWeak(quiz: false),
+            ),
 
           // subject progress
           if (store.subjects.isNotEmpty) ...[
@@ -770,17 +787,39 @@ class _WeakSpotsCard extends StatelessWidget {
 }
 
 class _HeroCard extends StatelessWidget {
-  const _HeroCard({required this.goal, required this.store});
+  const _HeroCard({
+    required this.goal,
+    required this.store,
+    this.finished = false,
+    this.onNewGoal,
+  });
 
   final Goal goal;
   final HomeStore store;
+
+  /// Every exam of the goal is behind the student ([HomeStore.examsOver]).
+  final bool finished;
+
+  /// Opens the new-goal form; offered once the goal is [finished].
+  final VoidCallback? onNewGoal;
 
   @override
   Widget build(BuildContext context) {
     final p = context.p;
     final percent = goal.overallPercent / 100;
+    final covered = goal.overallPercent.round();
     final streak = store.streak.currentStreak;
     final daysLeft = goal.daysLeft;
+    final exam = goal.examDate;
+
+    final String subtitle;
+    if (finished) {
+      subtitle = 'Exam over · you covered $covered% of your roadmap';
+    } else if (covered >= 100) {
+      subtitle = 'Roadmap complete — revise until the exam';
+    } else {
+      subtitle = 'You’re $covered% through your roadmap';
+    }
 
     return AppCard(
       gradient: LinearGradient(
@@ -824,7 +863,18 @@ class _HeroCard extends StatelessWidget {
               ),
               ),
               const SizedBox(width: 10),
-              if ((goal.roadmapDays ?? 0) > 0)
+              if (finished)
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Symbols.verified,
+                      color: Colors.white, size: 16, fill: 1),
+                  const SizedBox(width: 4),
+                  Text('Finished',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800)),
+                ])
+              else if ((goal.roadmapDays ?? 0) > 0)
                 Text('Day ${goal.currentDay} / ${goal.roadmapDays}',
                     style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.85),
@@ -841,7 +891,7 @@ class _HeroCard extends StatelessWidget {
                   fontSize: 20,
                   fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
-          Text('You’re ${goal.overallPercent.round()}% through your roadmap',
+          Text(subtitle,
               style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.85), fontSize: 13)),
           const SizedBox(height: 14),
@@ -855,6 +905,23 @@ class _HeroCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          if (finished) ...[
+            Row(
+              children: [
+                _HeroStat('$covered%', 'Roadmap covered'),
+                _HeroStat('${store.streak.bestStreak}', 'Best streak'),
+                if (exam != null)
+                  _HeroStat(
+                      '${exam.day} ${_HomeScreenState._monthNames[exam.month - 1]}',
+                      'Exam date'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            PillButton('Set your next target',
+                icon: Symbols.flag,
+                variant: PillVariant.coral,
+                onTap: onNewGoal),
+          ] else
           Row(
             children: [
               _HeroStat('${store.doneCount}', 'Done today'),
@@ -869,14 +936,19 @@ class _HeroCard extends StatelessWidget {
                     ),
                     child: Column(
                       children: [
-                        Text('$daysLeft',
+                        Text(daysLeft == 0 ? 'Today' : '$daysLeft',
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 22,
                                 fontWeight: FontWeight.w800,
                                 height: 1.1)),
-                        const Text('Days left!',
-                            style: TextStyle(
+                        Text(
+                            switch (daysLeft) {
+                              0 => 'Exam day!',
+                              1 => 'Day left!',
+                              _ => 'Days left!',
+                            },
+                            style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w700)),

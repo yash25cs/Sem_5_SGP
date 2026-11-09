@@ -175,11 +175,24 @@ class _RoadmapScreenState extends State<RoadmapScreen>
     final store = context.watch<RoadmapStore>();
     final goal = store.goal;
 
+    // "12 days", "Today", "Over"; null without an exam date.
+    final remaining = switch (goal?.daysLeft) {
+      _ when goal?.examOver ?? false => 'Over',
+      0 => 'Today',
+      1 => '1 day',
+      final d? => '$d days',
+      null => null,
+    };
     final subtitle = goal == null
         ? 'No goal set yet'
         : [
             goal.name,
-            if (goal.daysLeft != null) '${goal.daysLeft} days left',
+            if (goal.examOver)
+              'Exam over'
+            else if (goal.daysLeft == 0)
+              'Exam today'
+            else if (remaining != null)
+              '$remaining left',
           ].join(' · ');
 
     // Find current active milestone index
@@ -254,7 +267,8 @@ class _RoadmapScreenState extends State<RoadmapScreen>
                       .where((m) => m.state == MilestoneState.done)
                       .length,
                   currentWeek: activeIndex >= 0 ? activeIndex + 1 : null,
-                  daysLeft: goal?.daysLeft,
+                  remaining: remaining,
+                  examOver: goal?.examOver ?? false,
                 ),
                 const SizedBox(height: 20),
               ],
@@ -334,13 +348,17 @@ class _StatsDashboard extends StatelessWidget {
     required this.totalWeeks,
     required this.doneWeeks,
     this.currentWeek,
-    this.daysLeft,
+    this.remaining,
+    this.examOver = false,
   });
 
   final int totalTasks, doneTasks, totalWeeks, doneWeeks;
   final double progress;
   final int? currentWeek;
-  final int? daysLeft;
+
+  /// Time to the exam, already worded: "12 days", "Today", "Over".
+  final String? remaining;
+  final bool examOver;
 
   @override
   Widget build(BuildContext context) {
@@ -413,14 +431,14 @@ class _StatsDashboard extends StatelessWidget {
                               color: p.primary,
                             ),
                           ),
-                        if (currentWeek != null && daysLeft != null)
+                        if (currentWeek != null && remaining != null)
                           const SizedBox(width: 12),
-                        if (daysLeft != null)
+                        if (remaining != null)
                           Expanded(
                             child: _MiniStat(
                               icon: Symbols.timer,
-                              label: 'Remaining',
-                              value: '$daysLeft days',
+                              label: examOver ? 'Exam' : 'Remaining',
+                              value: remaining!,
                               color: p.amber,
                             ),
                           ),

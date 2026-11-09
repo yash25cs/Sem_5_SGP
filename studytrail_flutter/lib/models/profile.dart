@@ -144,14 +144,24 @@ class Goal {
   /// When the generated roadmap's week 1 began (`0015_catch_up.sql`).
   final DateTime? roadmapStartedOn;
 
-  /// Whole days until the exam, floored at 0. Null when no date is set.
+  /// Whole days until the exam, 0 on the day itself. Null when no date is
+  /// set, and once the exam is behind ([examOver]) — a past exam used to read
+  /// "0 days left" for ever.
   int? get daysLeft {
+    final d = _daysToExam;
+    return d == null || d < 0 ? null : d;
+  }
+
+  /// The exam date has passed: the goal is finished, whatever the roadmap
+  /// says.
+  bool get examOver => (_daysToExam ?? 0) < 0;
+
+  int? get _daysToExam {
     if (examDate == null) return null;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final exam = DateTime(examDate!.year, examDate!.month, examDate!.day);
-    final d = exam.difference(today).inDays;
-    return d < 0 ? 0 : d;
+    return exam.difference(today).inDays;
   }
 
   factory Goal.fromMap(Map<String, dynamic> m) => Goal(

@@ -87,6 +87,18 @@ class HomeStore extends AsyncStore {
     return upcoming.firstOrNull;
   }
 
+  /// Every exam this goal has a date for is behind the student: the goal's
+  /// own and each subject's paper. The test the widgets use (`WidgetData.kt`),
+  /// so Home says "finished" when the home screen does, and stops offering
+  /// catch-ups, weak spots and more planning for an exam that's been sat.
+  bool get examsOver {
+    final goal = _goal;
+    if (goal == null) return false;
+    final dated =
+        goal.examDate != null || _subjects.any((s) => s.examDate != null);
+    return dated && goal.daysLeft == null && nextExam == null;
+  }
+
   /// Dates one subject's exam, then reloads so a pushed-out goal date and the
   /// pace banner reflect it.
   Future<bool> setSubjectExamDate(Subject subject, DateTime? date) async {

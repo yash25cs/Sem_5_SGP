@@ -43,7 +43,9 @@ class NotificationBell extends StatelessWidget {
         alerts.add(_Alert(
           icon: Symbols.timer,
           title: 'Exam approaching',
-          subtitle: 'Only ${goal.daysLeft} days left until your exam!',
+          subtitle: goal.daysLeft == 1
+              ? 'Your exam is tomorrow!'
+              : 'Only ${goal.daysLeft} days left until your exam!',
           color: p.error,
         ));
       } else if (goal.daysLeft! == 0) {
