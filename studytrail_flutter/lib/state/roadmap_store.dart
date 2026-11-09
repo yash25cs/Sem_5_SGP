@@ -42,6 +42,17 @@ class RoadmapStore extends AsyncStore {
   double get overallProgress =>
       totalTasks == 0 ? 0 : doneTasks / totalTasks;
 
+  /// The goal's exam has passed.
+  bool get examOver => _goal?.examOver ?? false;
+
+  /// Every roadmap topic is ticked off.
+  bool get allTopicsDone => totalTasks > 0 && doneTasks == totalTasks;
+
+  /// The goal is done with — [examOver] or [allTopicsDone]. A new roadmap
+  /// would only wipe the record of it, so [generate] refuses: the next exam
+  /// gets a goal of its own.
+  bool get goalFinished => examOver || allTopicsDone;
+
   Future<void> load() => runLoad(() async {
         _goal = await _goals.getActiveGoal();
         final goalId = _goal?.id;
@@ -65,6 +76,7 @@ class RoadmapStore extends AsyncStore {
       setError('Set a study goal first, then generate a roadmap.');
       return false;
     }
+    if (goalFinished) return false;
     _generating = true;
     notifyListeners();
     try {

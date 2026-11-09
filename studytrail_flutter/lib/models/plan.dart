@@ -158,11 +158,16 @@ class DailyTask {
     this.tag = TaskTag.now,
     required this.scheduledDate,
     this.done = false,
+    this.goalId,
   });
 
   final String id;
   final String title;
   final String? subjectId;
+
+  /// The goal whose roadmap the task came from. Today's list holds every
+  /// goal's tasks, not just the selected one's.
+  final String? goalId;
 
   /// Joined from `subjects` when the query embeds it; not a column.
   final String? subjectName;
@@ -188,6 +193,7 @@ class DailyTask {
       tag: TaskTag.fromDb(m['tag'] as String?),
       scheduledDate: DateTime.parse(m['scheduled_date'] as String),
       done: (m['done'] as bool?) ?? false,
+      goalId: m['goal_id'] as String?,
     );
   }
 
@@ -210,5 +216,6 @@ class DailyTask {
         tag: tag ?? this.tag,
         scheduledDate: scheduledDate,
         done: done ?? this.done,
+        goalId: goalId,
       );
 }

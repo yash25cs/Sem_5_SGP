@@ -28,11 +28,16 @@ class PomodoroStore extends AsyncStore {
     NotificationService? notifications,
   })  : _game = game ?? const GamificationRepository(),
         _goals = goals ?? const GoalRepository(),
-        _notifications = notifications ?? NotificationService();
+        _notifications = notifications ?? NotificationService() {
+    _noticeActions = _notifications.focusActions.listen(_onNoticeAction);
+  }
 
   final GamificationRepository _game;
   final GoalRepository _goals;
   final NotificationService _notifications;
+
+  /// The notice's Pause / Resume button.
+  late final StreamSubscription<String> _noticeActions;
 
   /// What the ongoing notice last showed, so a tick that changes nothing the
   /// notice displays doesn't repost it. Null while no notice is up.
@@ -201,9 +206,35 @@ class PomodoroStore extends AsyncStore {
         _minutesToday = minutes;
 
         final goal = await _goals.getActiveGoal();
-        _subjects =
-            goal == null ? const [] : await _goals.getSubjects(goal.id);
+        final own =
+            goal == null ? const <Subject>[] : await _goals.getSubjects(goal.id);
+        // A student keeping two goals may be studying for either.
+        final seen = {for (final s in own) s.name.toLowerCase()};
+        _subjects = [
+          ...own,
+          for (final s in await _otherOpenSubjects(goal?.id))
+            if (seen.add(s.name.toLowerCase())) s,
+        ];
       });
+
+  /// Subjects of the goals other than [selectedId] whose exams aren't over.
+  /// An extra: on a failed read the chip offers the selected goal's only.
+  Future<List<Subject>> _otherOpenSubjects(String? selectedId) async {
+    try {
+      final goals = await _goals.getGoals();
+      final open = {
+        for (final g in goals)
+          if (g.id != selectedId && !g.examOver) g.id,
+      };
+      if (open.isEmpty) return const [];
+      return [
+        for (final s in await _goals.getAllSubjects())
+          if (open.contains(s.goalId)) s,
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
 
   /// Restores the saved presets and the last-used choice. Only applies that
   /// choice to an untouched, idle dial, so reopening the screen mid-block can't
@@ -419,16 +450,28 @@ class PomodoroStore extends AsyncStore {
     _syncNotice();
   }
 
+  /// The notice's button. Only a locked block has a notice to press.
+  void _onNoticeAction(String action) {
+    if (_closed || !locked) return;
+    switch (action) {
+      case 'pause':
+        pause();
+      case 'resume':
+        start();
+    }
+  }
+
   /// Shows, updates or clears the ongoing notice to match [locked].
   void _syncNotice() {
     if (_closed) return;
     final subject = selectedSubject?.name;
     final String? key = !locked
         ? null
-        // Running: the notice counts itself down, so only a change of what it
-        // says reposts it. Paused: it shows the frozen time left.
+        // Running: the notice counts itself down, so it's reposted only to
+        // move its progress bar on, every half minute, or when what it says
+        // changes. Paused: it shows the frozen time left.
         : _running
-            ? 'run|$subject'
+            ? 'run|${_secondsLeft ~/ 30}|$subject'
             : 'pause|$_secondsLeft|$subject';
     if (key == _noticeKey) return;
     _noticeKey = key;
@@ -444,6 +487,8 @@ class PomodoroStore extends AsyncStore {
         : '$what · $display left';
     final endsAt =
         _running ? DateTime.now().add(Duration(seconds: _secondsLeft)) : null;
+    final total = _phaseTotalSeconds;
+    final left = _secondsLeft;
     final askFirst = !_askedNoticePermission;
     _askedNoticePermission = true;
     _enqueueNotice(() async {
@@ -455,7 +500,11 @@ class PomodoroStore extends AsyncStore {
         } catch (_) {}
       }
       await _notifications.showFocusSession(
-          title: title, body: body, endsAt: endsAt);
+          title: title,
+          body: body,
+          endsAt: endsAt,
+          totalSeconds: total,
+          secondsLeft: left);
     });
   }
 
@@ -466,6 +515,7 @@ class PomodoroStore extends AsyncStore {
   @override
   void dispose() {
     _ticker?.cancel();
+    _noticeActions.cancel();
     _closed = true;
     // A store dropped mid-block (signing out) takes its timer with it.
     if (_noticeKey != null) {

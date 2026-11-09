@@ -56,6 +56,12 @@ class _RoadmapScreenState extends State<RoadmapScreen>
       _toast('Set a study goal first, then generate a roadmap.');
       return;
     }
+    if (store.goalFinished) {
+      _toast(store.examOver
+          ? 'This exam is over. Start a new goal from Home for the next one.'
+          : 'Every topic is done, so this roadmap is kept as it is.');
+      return;
+    }
 
     if (store.milestones.isNotEmpty && !await _confirmReplace()) return;
     if (!mounted) return;
@@ -229,13 +235,20 @@ class _RoadmapScreenState extends State<RoadmapScreen>
                       ],
                     ),
                   ),
-                  RoundIconButton(Symbols.auto_awesome,
-                      plain: false,
-                      color: store.generating ? p.ink3 : p.primary,
-                      onTap: store.generating ? null : _generate),
+                  // No regenerating a finished goal's plan.
+                  if (!store.goalFinished)
+                    RoundIconButton(Symbols.auto_awesome,
+                        plain: false,
+                        color: store.generating ? p.ink3 : p.primary,
+                        onTap: store.generating ? null : _generate),
                 ],
               ),
               const SizedBox(height: 16),
+
+              if (goal != null && store.loaded && store.goalFinished) ...[
+                _FinishedNote(examOver: store.examOver),
+                const SizedBox(height: 14),
+              ],
 
               if (store.error != null)
                 ErrorNotice(
@@ -284,14 +297,17 @@ class _RoadmapScreenState extends State<RoadmapScreen>
                       goal == null ? 'No roadmap yet' : 'Roadmap is empty',
                   message: goal == null
                       ? 'Set your exam goal and StudyTrail will plan the weeks for you.'
-                      : 'Generate a roadmap from your syllabus to see weekly milestones here.',
-                  actionLabel: goal == null
+                      : store.examOver
+                          ? 'This exam is over. Start a new goal from Home for your next one.'
+                          : 'Generate a roadmap from your syllabus to see weekly milestones here.',
+                  actionLabel: goal == null || store.examOver
                       ? null
                       : store.generating
                           ? 'Working on it…'
                           : 'Generate my roadmap',
-                  onAction:
-                      goal == null || store.generating ? null : _generate,
+                  onAction: goal == null || store.examOver || store.generating
+                      ? null
+                      : _generate,
                 )
               else
                 for (var i = 0; i < store.milestones.length; i++)
@@ -332,6 +348,40 @@ class _RoadmapScreenState extends State<RoadmapScreen>
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Why a finished goal's roadmap has no generate button any more.
+class _FinishedNote extends StatelessWidget {
+  const _FinishedNote({required this.examOver});
+
+  final bool examOver;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    return AppCard(
+      color: p.greenSoft,
+      shadow: false,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Symbols.verified, color: p.green, size: 22, fill: 1),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              examOver
+                  ? 'This exam is over, so its roadmap stays as a record. '
+                      'Start a new goal from Home for your next exam.'
+                  : 'Every topic is done. Revise with quizzes and flashcards '
+                      'until the exam; the roadmap stays as it is.',
+              style: TextStyle(color: p.ink, fontSize: 13, height: 1.35),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

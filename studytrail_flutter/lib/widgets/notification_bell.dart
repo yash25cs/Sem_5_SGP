@@ -38,24 +38,42 @@ class NotificationBell extends StatelessWidget {
       ));
     }
 
-    if (goal != null && goal.daysLeft != null) {
-      if (goal.daysLeft! <= 7 && goal.daysLeft! > 0) {
-        alerts.add(_Alert(
-          icon: Symbols.timer,
-          title: 'Exam approaching',
-          subtitle: goal.daysLeft == 1
-              ? 'Your exam is tomorrow!'
-              : 'Only ${goal.daysLeft} days left until your exam!',
-          color: p.error,
-        ));
-      } else if (goal.daysLeft! == 0) {
+    // Every goal still on the go, not just the selected one: a student
+    // keeping two has both exams coming. Named once there's more than one.
+    final open = homeStore.openGoals;
+    for (final g in open) {
+      final left = g.daysLeft;
+      if (left == null || left > 7) continue;
+      final exam = open.length > 1 ? g.name : 'your exam';
+      if (left == 0) {
         alerts.add(_Alert(
           icon: Symbols.warning,
-          title: 'Exam day!',
+          title: open.length > 1 ? 'Exam day: ${g.name}' : 'Exam day!',
           subtitle: 'Good luck! You got this.',
           color: p.error,
         ));
+      } else {
+        alerts.add(_Alert(
+          icon: Symbols.timer,
+          title: open.length > 1 ? '${g.name} is close' : 'Exam approaching',
+          subtitle: left == 1
+              ? 'Only a day left until $exam!'
+              : 'Only $left days left until $exam!',
+          color: p.error,
+        ));
       }
+    }
+    // The selected goal is finished but another isn't: say where to go.
+    if (goal != null && homeStore.examsOver) {
+      final next = homeStore.nextOpenGoal;
+      alerts.add(_Alert(
+        icon: Symbols.verified,
+        title: '${goal.name} is finished',
+        subtitle: next == null
+            ? 'Set your next target to keep planning.'
+            : 'Switch to ${next.name} to keep going.',
+        color: p.green,
+      ));
     }
 
     final hasAlerts = alerts.isNotEmpty;

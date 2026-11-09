@@ -3,6 +3,9 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Android 16: lets the focus timer show as a Live Update, the countdown
+         chip in the status bar (FocusNotice.kt). Granted at install. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS"/>
     <!-- Exams and the study plan are written into the phone's calendar
          (CalendarChannel.kt), only after the student turns that on. -->
     <uses-permission android:name="android.permission.READ_CALENDAR"/>
@@ -48,6 +51,8 @@
             </intent-filter>
         </activity>
         
+        <!-- Pause / Resume on the focus timer notification (FocusNotice.kt). -->
+        <receiver android:exported="false" android:name=".FocusNoticeReceiver" />
         <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
         <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
             <intent-filter>

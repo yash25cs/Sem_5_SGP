@@ -171,84 +171,19 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) await context.read<ProfileStore>().reloadGoals();
   }
 
-  /// The goal switcher — every goal the student has, plus a way to add one.
-  Future<void> _switchGoal() async {
+  /// Makes [goalId] the selected goal. The Roadmap tab and Settings keep
+  /// their own copy of which goal that is, so they're told too.
+  Future<void> _switchTo(String goalId) async {
     final store = context.read<HomeStore>();
-    final p = context.p;
-    final activeId = store.goal?.id;
-
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: p.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
-                child: Text('Your study goals',
-                    style: TextStyle(
-                        color: p.ink,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800)),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                    'Keep one per exam. StudyTrail plans against the one you '
-                    'pick here.',
-                    style: TextStyle(color: p.ink3, fontSize: 12.5)),
-              ),
-              for (final g in store.allGoals)
-                ListTile(
-                  leading: Icon(Symbols.flag,
-                      color: g.id == activeId ? p.primary : p.ink3),
-                  title: Text(g.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: p.ink,
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w600)),
-                  subtitle: Text(_examLabel(g),
-                      style: TextStyle(color: p.ink3, fontSize: 12)),
-                  trailing: g.id == activeId
-                      ? Icon(Symbols.check, color: p.primary)
-                      : null,
-                  onTap: () => Navigator.of(sheetContext).pop(g.id),
-                ),
-              ListTile(
-                leading: Icon(Symbols.add, color: p.coral),
-                title: Text('New goal',
-                    style: TextStyle(
-                        color: p.ink,
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w600)),
-                onTap: () => Navigator.of(sheetContext).pop(_newGoalSentinel),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (picked == null || !mounted) return;
-    if (picked == _newGoalSentinel) {
-      await _createGoal();
+    final ok = await store.switchGoal(goalId);
+    if (!mounted) return;
+    if (!ok) {
+      _toast(store.error ?? 'Could not switch goal');
       return;
     }
-    final ok = await store.switchGoal(picked);
-    if (!ok) _toast(store.error ?? 'Could not switch goal');
+    context.read<RoadmapStore>().load();
+    await context.read<ProfileStore>().reloadGoals();
   }
-
-  static const _newGoalSentinel = '__new__';
 
   /// Pulls the next unfinished stretch of the roadmap onto today's list.
   ///
@@ -354,33 +289,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (now != null && now.done) await _toggle(now);
   }
 
-  static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-
-  static String _examLabel(Goal goal) {
-    final exam = goal.examDate;
-    if (exam == null) return 'No exam date';
-    final date = '${_months[exam.month - 1]} ${exam.day}';
-    return switch (goal.daysLeft) {
-      _ when goal.examOver => '$date · Finished',
-      0 => '$date · Exam today',
-      1 => '$date · 1 day left',
-      final left? => '$date · $left days left',
-      null => date,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = context.p;
     final store = context.watch<HomeStore>();
     final profile = store.profile;
     final goal = store.goal;
-    // The goal's exams are all sat: no countdown, catch-up, weak spots or
-    // further planning — just the result and a way on to the next goal.
+    // The selected goal's exams are all sat: no countdown or catch-up for
+    // it — just the result and a way on to the next goal.
     final finished = store.examsOver;
+    // Every goal is finished: nothing left to plan or practise for.
+    final allDone = goal != null && store.openGoals.isEmpty;
 
     final firstName = (profile?.fullName ?? '').trim().split(' ').first;
 
@@ -442,15 +361,14 @@ class _HomeScreenState extends State<HomeScreen> {
               onRetry: () => context.read<HomeStore>().load(),
             ),
 
-          // Goal switcher. Only worth the row once there's a second goal to
-          // switch to — with one, the hero card already names it.
-          if (store.allGoals.length > 1) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: SoftChip(goal?.name ?? 'Pick a goal',
-                  icon: Symbols.flag,
-                  tone: ChipTone.primary,
-                  onTap: store.busy ? null : _switchGoal),
+          // Every goal, one tap to switch, and one to add another.
+          if (goal != null) ...[
+            _GoalBar(
+              goals: store.allGoals,
+              selectedId: goal.id,
+              isOver: store.goalOver,
+              onSwitch: store.busy ? null : _switchTo,
+              onAdd: store.busy ? null : _createGoal,
             ),
             const SizedBox(height: 14),
           ],
@@ -472,7 +390,9 @@ class _HomeScreenState extends State<HomeScreen> {
               goal: goal,
               store: store,
               finished: finished,
+              nextGoal: store.nextOpenGoal,
               onNewGoal: store.busy ? null : _createGoal,
+              onSwitch: store.busy ? null : _switchTo,
             ),
           if (store.nextExam case final next?) ...[
             const SizedBox(height: 10),
@@ -489,9 +409,10 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 18),
           ],
 
-          // today's plan — gone once the goal is finished, unless something
-          // was still left on today's list.
-          if (!finished || store.tasks.isNotEmpty) ...[
+          // today's plan: every open goal's tasks, whichever is selected.
+          // Gone once all of them are finished, unless something was still
+          // left on today's list.
+          if (!allDone || store.tasks.isNotEmpty) ...[
           CardHeader(
             'Today’s plan',
             action: Row(
@@ -503,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(
                       color: p.ink3, fontSize: 13, fontWeight: FontWeight.w700),
                 ),
-                if (goal != null && !finished) ...[
+                if (goal != null && !allDone) ...[
                   const SizedBox(width: 10),
                   SoftChip(
                     _isPlanningDay ? 'Planning...' : 'Plan day',
@@ -533,7 +454,10 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Nothing scheduled',
               message: goal == null
                   ? 'Create a goal to get a daily plan.'
-                  : 'Pull the next few topics off your roadmap and start there.',
+                  : store.openGoals.length > 1
+                      ? "Pull the next few topics off each goal's roadmap "
+                          'and start there.'
+                      : 'Pull the next few topics off your roadmap and start there.',
               actionLabel:
                   goal == null || store.busy || _isPlanningDay ? null : 'Plan today from roadmap',
               onAction: goal == null || store.busy || _isPlanningDay ? null : _planDay,
@@ -544,6 +468,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: ValueKey(task.id),
                 child: _TaskTile(
                   task: task,
+                  goalName: store.goalNameOf(task),
                   onTap: () => _tapTask(task),
                   onLongPress: () => _reopenTask(task),
                 ),
@@ -551,7 +476,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 20),
           ],
 
-          if (!finished)
+          if (!allDone)
             _WeakSpotsCard(
               store: context.watch<WeakSpotsStore>(),
               onQuiz: () => _practiceWeak(quiz: true),
@@ -601,6 +526,141 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ],
   );
+  }
+}
+
+/// One chip per goal (tap to make it the selected one) and "New goal".
+///
+/// Open goals come first. A finished goal keeps its chip, with a tick, so
+/// its record is a tap away; the selected goal's chip is filled.
+class _GoalBar extends StatelessWidget {
+  const _GoalBar({
+    required this.goals,
+    required this.selectedId,
+    required this.isOver,
+    this.onSwitch,
+    this.onAdd,
+  });
+
+  final List<Goal> goals;
+  final String selectedId;
+  final bool Function(Goal) isOver;
+  final ValueChanged<String>? onSwitch;
+  final VoidCallback? onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final ordered = [
+      ...goals.where((g) => !isOver(g)),
+      ...goals.where(isOver),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      child: Row(
+        children: [
+          for (final g in ordered) ...[
+            _GoalChip(
+              label: g.name,
+              selected: g.id == selectedId,
+              done: isOver(g),
+              daysLeft: g.daysLeft,
+              onTap: g.id == selectedId || onSwitch == null
+                  ? null
+                  : () => onSwitch!(g.id),
+            ),
+            const SizedBox(width: 8),
+          ],
+          _GoalChip(label: 'New goal', add: true, onTap: onAdd),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoalChip extends StatelessWidget {
+  const _GoalChip({
+    required this.label,
+    this.selected = false,
+    this.done = false,
+    this.add = false,
+    this.daysLeft,
+    this.onTap,
+  });
+
+  final String label;
+  final bool selected, done, add;
+
+  /// Shown as "12d" beside an open goal's name, so two goals' deadlines can
+  /// be compared at a glance.
+  final int? daysLeft;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.p;
+    final (Color bg, Color fg) = selected
+        ? (p.primary, p.onPrimary)
+        : done
+            ? (p.greenSoft, p.green)
+            : add
+                ? (Colors.transparent, p.coral)
+                : (p.card2, p.ink2);
+    final days = switch (daysLeft) {
+      _ when done || add => null,
+      0 => 'today',
+      final d? => '${d}d',
+      null => null,
+    };
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
+            border: add
+                ? Border.all(color: p.coral.withValues(alpha: 0.5), width: 1.4)
+                : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                  add
+                      ? Symbols.add
+                      : done
+                          ? Symbols.check_circle
+                          : Symbols.flag,
+                  size: 16,
+                  color: fg,
+                  fill: done ? 1 : 0),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: fg, fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+              if (days != null) ...[
+                const SizedBox(width: 6),
+                Text(days,
+                    style: TextStyle(
+                        color: fg.withValues(alpha: 0.75),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -791,7 +851,9 @@ class _HeroCard extends StatelessWidget {
     required this.goal,
     required this.store,
     this.finished = false,
+    this.nextGoal,
     this.onNewGoal,
+    this.onSwitch,
   });
 
   final Goal goal;
@@ -800,8 +862,15 @@ class _HeroCard extends StatelessWidget {
   /// Every exam of the goal is behind the student ([HomeStore.examsOver]).
   final bool finished;
 
+  /// Another goal still to work on. A [finished] card points to it rather
+  /// than to a new goal.
+  final Goal? nextGoal;
+
   /// Opens the new-goal form; offered once the goal is [finished].
   final VoidCallback? onNewGoal;
+
+  /// Selects another goal by id.
+  final ValueChanged<String>? onSwitch;
 
   @override
   Widget build(BuildContext context) {
@@ -917,10 +986,16 @@ class _HeroCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            PillButton('Set your next target',
-                icon: Symbols.flag,
-                variant: PillVariant.coral,
-                onTap: onNewGoal),
+            if (nextGoal case final next?)
+              PillButton('Continue: ${next.name}',
+                  icon: Symbols.arrow_forward,
+                  variant: PillVariant.coral,
+                  onTap: onSwitch == null ? null : () => onSwitch!(next.id))
+            else
+              PillButton('Set your next target',
+                  icon: Symbols.flag,
+                  variant: PillVariant.coral,
+                  onTap: onNewGoal),
           ] else
           Row(
             children: [
@@ -994,9 +1069,13 @@ class _TaskTile extends StatelessWidget {
     required this.task,
     required this.onTap,
     required this.onLongPress,
+    this.goalName,
   });
 
   final DailyTask task;
+
+  /// The goal the task belongs to, when there's more than one on the go.
+  final String? goalName;
   final VoidCallback onTap;
 
   /// Reopens a done task (after a confirmation).
@@ -1016,6 +1095,7 @@ class _TaskTile extends StatelessWidget {
     };
 
     final meta = [
+      ?goalName,
       if ((task.subjectName ?? '').isNotEmpty) task.subjectName!,
       if (task.durationLabel.isNotEmpty) task.durationLabel,
     ].join(' · ');

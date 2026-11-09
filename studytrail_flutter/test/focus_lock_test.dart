@@ -115,6 +115,44 @@ void main() {
   });
 
   testWidgets(
+      'the notice carries the progress, and its Pause / Resume button '
+      'drives the timer', (tester) async {
+    final notices = _FakeNotices();
+    final store = _store(_FakeGame(), notices);
+    addTearDown(store.dispose);
+
+    await store.applyPreset(const TimerPreset(
+        id: 't', label: 'Short', focusMinutes: 1, breakMinutes: 1));
+    store.start();
+    await tester.pump();
+    expect(notices.counting, isTrue);
+    expect(notices.lastTotal, 60);
+
+    // Half a minute in, it's reposted so the bar moves on.
+    await tester.pump(const Duration(seconds: 31));
+    expect(notices.lastLeft, lessThanOrEqualTo(30));
+
+    notices.debugFocusAction('pause');
+    await tester.pump();
+    expect(store.running, isFalse);
+    expect(store.locked, isTrue);
+    expect(notices.counting, isFalse);
+    expect(notices.lastTitle, 'Focus session paused');
+
+    notices.debugFocusAction('resume');
+    await tester.pump();
+    expect(store.running, isTrue);
+    expect(notices.counting, isTrue);
+
+    // No block, no notice to press: a stray press starts nothing.
+    store.endEarly();
+    notices.debugFocusAction('resume');
+    await tester.pump();
+    expect(store.running, isFalse);
+    expect(notices.showing, isFalse);
+  });
+
+  testWidgets(
       'the bar above the navigator renders, and a locked block '
       'brings its screen back', (tester) async {
     final notices = _FakeNotices();
@@ -208,6 +246,8 @@ class _FakeNotices extends NotificationService {
 
   bool showing = false;
   String? lastTitle;
+  int? lastTotal, lastLeft;
+  bool counting = false;
 
   @override
   Future<void> requestPermissions() async {}
@@ -217,9 +257,14 @@ class _FakeNotices extends NotificationService {
     required String title,
     required String body,
     DateTime? endsAt,
+    int totalSeconds = 0,
+    int secondsLeft = 0,
   }) async {
     showing = true;
     lastTitle = title;
+    lastTotal = totalSeconds;
+    lastLeft = secondsLeft;
+    counting = endsAt != null;
   }
 
   @override

@@ -239,6 +239,14 @@ class GoalRepository {
     }).eq('id', subjectId);
   }
 
+  /// Every subject across all the student's goals, for what spans them: the
+  /// widgets' exam list, exam-eve reminders, the focus timer's subject chip.
+  Future<List<Subject>> getAllSubjects() async {
+    final rows =
+        await db.from('subjects').select().order('name', ascending: true);
+    return rows.map(Subject.fromMap).toList();
+  }
+
   Future<List<Subject>> getSubjects(String goalId) async {
     final rows = await db
         .from('subjects')

@@ -17,14 +17,24 @@ class ReminderSync {
   static Future<void> run({
     bool askPermission = false,
     GamificationRepository game = const GamificationRepository(),
+    GoalRepository goals = const GoalRepository(),
   }) async {
     final enabled = await LocalPrefs.remindersEnabled();
     var plan = const ReminderPlan(studiedToday: false, streak: 0);
+    var exams = const GoalExams();
     if (enabled) {
       try {
         plan = ReminderPlan.from(await game.getStreak(), DateTime.now());
       } catch (_) {
         // Offline: keep the plain daily reminder, skip the streak one.
+      }
+      try {
+        final all = await Future.wait(
+            [goals.getGoals(), goals.getAllSubjects()]);
+        exams = GoalExams.from(all[0] as List<Goal>,
+            all[1] as List<Subject>, DateTime.now());
+      } catch (_) {
+        // Offline: no exam-eve reminders this time.
       }
     }
     await NotificationService().scheduleReminders(
@@ -33,7 +43,47 @@ class ReminderSync {
       streak: plan.streak,
       askPermission: askPermission,
       studyMinute: await LocalPrefs.reminderMinute(),
+      goalNames: exams.openGoals,
+      exams: exams.upcoming,
     );
+  }
+}
+
+/// Every goal's exams, for reminders that cover all of them rather than the
+/// one selected on Home.
+@immutable
+class GoalExams {
+  const GoalExams({this.openGoals = const [], this.upcoming = const []});
+
+  /// Names of the goals still on the go: an exam ahead, or no date yet.
+  final List<String> openGoals;
+
+  /// Papers from today on, soonest first: a goal's dated subjects, or its
+  /// own date when none of them has one.
+  final List<(String, DateTime)> upcoming;
+
+  factory GoalExams.from(
+      List<Goal> goals, List<Subject> subjects, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    bool ahead(DateTime d) =>
+        !DateTime(d.year, d.month, d.day).isBefore(today);
+
+    final open = <String>[];
+    final upcoming = <(String, DateTime)>[];
+    for (final g in goals) {
+      final dated = [
+        for (final s in subjects)
+          if (s.goalId == g.id && s.examDate != null) (s.name, s.examDate!),
+      ];
+      final papers = dated.isNotEmpty
+          ? dated
+          : [if (g.examDate != null) (g.name, g.examDate!)];
+      final left = papers.where((e) => ahead(e.$2)).toList();
+      if (papers.isEmpty || left.isNotEmpty) open.add(g.name);
+      upcoming.addAll(left);
+    }
+    upcoming.sort((a, b) => a.$2.compareTo(b.$2));
+    return GoalExams(openGoals: open, upcoming: upcoming);
   }
 }
 

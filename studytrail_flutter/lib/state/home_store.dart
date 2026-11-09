@@ -55,6 +55,9 @@ class HomeStore extends AsyncStore {
   Streak _streak = const Streak();
   List<DailyTask> _tasksToday = const [];
   List<Subject> _subjects = const [];
+
+  /// Every goal's subjects — [_subjects] is only the selected goal's.
+  List<Subject> _allSubjects = const [];
   int _plannedCount = 0;
   String? _plannedFrom;
   RoadmapPace? _pace;
@@ -87,16 +90,52 @@ class HomeStore extends AsyncStore {
     return upcoming.firstOrNull;
   }
 
-  /// Every exam this goal has a date for is behind the student: the goal's
-  /// own and each subject's paper. The test the widgets use (`WidgetData.kt`),
-  /// so Home says "finished" when the home screen does, and stops offering
-  /// catch-ups, weak spots and more planning for an exam that's been sat.
+  /// Every exam the selected goal has a date for is behind the student: the
+  /// goal's own and each subject's paper. The test the widgets use
+  /// (`WidgetData.kt`), so Home says "finished" when the home screen does,
+  /// and stops offering a catch-up for an exam that's been sat. Planning and
+  /// weak spots go only once every goal is over ([openGoals]).
   bool get examsOver {
     final goal = _goal;
-    if (goal == null) return false;
-    final dated =
-        goal.examDate != null || _subjects.any((s) => s.examDate != null);
-    return dated && goal.daysLeft == null && nextExam == null;
+    return goal != null && goalOver(goal);
+  }
+
+  /// [goal]'s exams are all behind the student: its own date and every
+  /// subject paper it has, as [examsOver] says for the selected goal.
+  bool goalOver(Goal goal) {
+    if (goal.daysLeft != null) return false; // today or still ahead
+    final papers = [
+      for (final s in _subjectsOf(goal)) ?s.daysUntilExam(),
+    ];
+    if (papers.any((d) => d >= 0)) return false;
+    return goal.examOver || papers.isNotEmpty;
+  }
+
+  /// The selected goal's subjects come from their own query; the others'
+  /// from [_allSubjects].
+  List<Subject> _subjectsOf(Goal goal) => goal.id == _goal?.id
+      ? _subjects
+      : [
+          for (final s in _allSubjects)
+            if (s.goalId == goal.id) s,
+        ];
+
+  /// Goals still being worked towards, newest first. Each one's tasks count
+  /// on today's list and in reminders, whichever is selected.
+  List<Goal> get openGoals => [
+        for (final g in _allGoals)
+          if (!goalOver(g)) g,
+      ];
+
+  /// Another goal still to work on, for a finished goal's card to point at.
+  Goal? get nextOpenGoal =>
+      openGoals.where((g) => g.id != _goal?.id).firstOrNull;
+
+  /// The goal a task on today's list belongs to, named only when there's
+  /// more than one goal on the go — with one, it goes without saying.
+  String? goalNameOf(DailyTask task) {
+    if (openGoals.length < 2) return null;
+    return _allGoals.where((g) => g.id == task.goalId).firstOrNull?.name;
   }
 
   /// Dates one subject's exam, then reloads so a pushed-out goal date and the
@@ -138,13 +177,22 @@ class HomeStore extends AsyncStore {
 
   /// Hands the home-screen widgets every exam date, the streak, and today's
   /// tasks. All the subject dates, not just the next: the countdown moves on
-  /// to the following paper by itself after each exam day.
+  /// to the following paper by itself after each exam day. Every goal's
+  /// papers, not just the selected one's — a student keeping two goals sits
+  /// both sets.
   void _syncWidget() {
     final goal = _goal;
     HomeWidgetSync.push(
       goalName: goal?.name,
       goalDate: goal?.examDate,
-      subjectExams: [for (final s in _subjects) (s.name, s.examDate)],
+      subjectExams: [
+        for (final g in _allGoals)
+          // A goal without dated papers counts by its own date.
+          if (_subjectsOf(g).any((s) => s.examDate != null))
+            for (final s in _subjectsOf(g)) (s.name, s.examDate)
+          else
+            (g.name, g.examDate),
+      ],
       streak: _streak.currentStreak,
       bestStreak: _streak.bestStreak,
       lastStudied: _streak.lastActiveDate,
@@ -180,6 +228,7 @@ class HomeStore extends AsyncStore {
     final goalId = _goal?.id;
     if (goalId == null) {
       _subjects = const [];
+      _allSubjects = const [];
       _pace = null;
       _syllabi = const {};
     } else {
@@ -190,10 +239,15 @@ class HomeStore extends AsyncStore {
         _materials
             .getSyllabi()
             .catchError((Object _) => _syllabi),
+        // Also an extra: without it the other goals count by their own date.
+        _goals
+            .getAllSubjects()
+            .catchError((Object _) => const <Subject>[]),
       ]);
       _subjects = more[0] as List<Subject>;
       _pace = more[1] as RoadmapPace?;
       _syllabi = more[2] as Map<String, StudyMaterial>;
+      _allSubjects = more[3] as List<Subject>;
     }
   }
 
@@ -363,7 +417,8 @@ class HomeStore extends AsyncStore {
     // Roadmap tab would show a ticked task under an "upcoming" week, and the hero
     // card's percentage wouldn't move, until something recomputed them.
     final milestoneTaskId = task.milestoneTaskId;
-    final goalId = _goal?.id;
+    // The task's own goal: with two on the go it may not be the selected one.
+    final goalId = task.goalId ?? _goal?.id;
     if (milestoneTaskId != null && goalId != null) {
       try {
         await _roadmap.resyncMilestoneForTask(milestoneTaskId);
@@ -387,39 +442,51 @@ class HomeStore extends AsyncStore {
   /// Takes one milestone at a time rather than the whole plan, so a 7-week
   /// roadmap doesn't land on today as 28 tasks, and skips anything already
   /// scheduled on any date so a second tap can't duplicate a topic.
+  ///
+  /// Plans every open goal, the selected one first: a student keeping two
+  /// goals has both to finish, so switching between them mustn't decide
+  /// which one gets studied. A goal whose exams are over gets nothing.
   Future<PlanDayResult> planDayFromRoadmap({
     int limit = plannedTasksPerDay,
   }) async {
-    final goalId = _goal?.id;
-    if (goalId == null) return PlanDayResult.noRoadmap;
+    final goals = [
+      ...openGoals.where((g) => g.id == _goal?.id),
+      ...openGoals.where((g) => g.id != _goal?.id),
+    ];
+    if (goals.isEmpty) return PlanDayResult.noRoadmap;
 
     _plannedCount = 0;
     _plannedFrom = null;
     var hasRoadmap = false;
+    final from = <String>[];
 
     final ok = await runMutation(() async {
-      final milestones = await _roadmap.getMilestones(goalId);
-      hasRoadmap = milestones.isNotEmpty;
-      if (!hasRoadmap) return;
+      for (final goal in goals) {
+        final milestones = await _roadmap.getMilestones(goal.id);
+        if (milestones.isEmpty) continue;
+        hasRoadmap = true;
 
-      final scheduled = await _tasks.getScheduledMilestoneTaskIds(goalId);
+        final scheduled = await _tasks.getScheduledMilestoneTaskIds(goal.id);
 
-      for (final milestone in milestones) {
-        final next = milestone.tasks
-            .where((t) => !t.done && !scheduled.contains(t.id))
-            .take(limit)
-            .toList();
-        if (next.isEmpty) continue;
+        for (final milestone in milestones) {
+          final next = milestone.tasks
+              .where((t) => !t.done && !scheduled.contains(t.id))
+              .take(limit)
+              .toList();
+          if (next.isEmpty) continue;
 
-        final created = await _tasks.createTasksFromRoadmap(
-          goalId: goalId,
-          tasks: next,
-        );
-        _tasksToday = [..._tasksToday, ...created];
-        _plannedCount = created.length;
-        _plannedFrom = milestone.weekLabel ?? milestone.title;
-        return;
+          final created = await _tasks.createTasksFromRoadmap(
+            goalId: goal.id,
+            tasks: next,
+          );
+          _tasksToday = [..._tasksToday, ...created];
+          _plannedCount += created.length;
+          final week = milestone.weekLabel ?? milestone.title;
+          from.add(goals.length > 1 ? '${goal.name} ($week)' : week);
+          break;
+        }
       }
+      _plannedFrom = from.isEmpty ? null : from.join(' and ');
     });
 
     if (!ok) return PlanDayResult.failed;
